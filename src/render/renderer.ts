@@ -1,0 +1,727 @@
+import { Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
+import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
+import type { FlowField } from '../game/flow';
+import {
+  AIR_Z, ARC_HEIGHT, BOLT_NODES, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
+  P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
+} from '../game/sim';
+import { DIRS, MODEL_TOP, dirFrame, type Atlas } from './atlas';
+import { models } from './models';
+import type { Projection } from './projection';
+
+/** A ParticleContainer with a pooled, compacted particle list rebuilt each frame. */
+class ParticleLayer {
+  readonly view: ParticleContainer;
+  private readonly pool: Particle[] = [];
+  private n = 0;
+
+  constructor(private readonly fallback: Texture, additive = false) {
+    this.view = new ParticleContainer({
+      dynamicProperties: { position: true, rotation: true, vertex: true, uvs: true, color: true },
+    });
+    if (additive) this.view.blendMode = 'add';
+  }
+
+  begin(): void {
+    this.n = 0;
+  }
+
+  /** Anchor defaults to the texture's own (baked models anchor at their ground point), else centre. */
+  push(tex: Texture, x: number, y: number, rot: number, sx: number, sy: number, tint: number, alpha: number, ax = -1): void {
+    let p = this.pool[this.n];
+    if (!p) p = this.pool[this.n] = new Particle({ texture: this.fallback });
+    this.n++;
+    const a = ax < 0 ? tex.defaultAnchor : undefined;
+    p.texture = tex;
+    p.x = x;
+    p.y = y;
+    p.rotation = rot;
+    p.scaleX = sx;
+    p.scaleY = sy;
+    p.anchorX = a ? a.x : ax < 0 ? 0.5 : ax;
+    p.anchorY = a ? a.y : 0.5;
+    p.tint = tint;
+    p.alpha = alpha;
+  }
+
+  end(): void {
+    const kids = this.view.particleChildren;
+    kids.length = this.n;
+    for (let k = 0; k < this.n; k++) kids[k] = this.pool[k];
+    this.view.update();
+  }
+
+  get count(): number {
+    return this.n;
+  }
+}
+
+/** Painter's-algorithm ordering via counting sort on iso depth (x + y): O(n), no comparisons. */
+class DepthSorter {
+  private static readonly MIN = -128;
+  private readonly buckets = Math.ceil((MAP_W + MAP_H + 256) / 2);
+  private readonly counts = new Int32Array(this.buckets + 1);
+  private keys = new Int32Array(8192);
+  private codes = new Int32Array(8192);
+  private out = new Int32Array(8192);
+  n = 0;
+
+  reset(): void {
+    this.n = 0;
+  }
+
+  add(depth: number, code: number): void {
+    if (this.n === this.keys.length) {
+      const k = new Int32Array(this.n * 2);
+      const c = new Int32Array(this.n * 2);
+      k.set(this.keys);
+      c.set(this.codes);
+      this.keys = k;
+      this.codes = c;
+      this.out = new Int32Array(this.n * 2);
+    }
+    let b = ((depth - DepthSorter.MIN) / 2) | 0;
+    if (b < 0) b = 0;
+    else if (b >= this.buckets) b = this.buckets - 1;
+    this.keys[this.n] = b;
+    this.codes[this.n++] = code;
+  }
+
+  sort(): Int32Array {
+    const counts = this.counts;
+    counts.fill(0);
+    for (let i = 0; i < this.n; i++) counts[this.keys[i] + 1]++;
+    for (let b = 1; b <= this.buckets; b++) counts[b] += counts[b - 1];
+    for (let i = 0; i < this.n; i++) this.out[counts[this.keys[i]]++] = this.codes[i];
+    return this.out;
+  }
+}
+
+// sort codes: object kind in the high bits, index in the low 16
+const C_ROCK = 0 << 16;
+const C_TOWER = 1 << 16;
+const C_ENEMY = 2 << 16;
+const C_DRONE = 3 << 16;
+const C_MASK = 0xffff;
+
+export interface OverlayState {
+  hoverCol: number; // top-left cell of the 2x2 footprint under the cursor
+  hoverRow: number;
+  cellCol: number; // cell directly under the cursor
+  cellRow: number;
+  placing: number; // tower type or -1
+  selected: Tower | null;
+  aiming: Tower | null; // superweapon waiting for a target
+  aimX: number; // world point under the cursor
+  aimY: number;
+}
+
+/** Turret spin speeds (rad/s) for towers that rotate on their own. */
+const SPIN: Record<string, number> = {
+  tesla: 0.6, emp: 1.5, gravity: 2, repulsor: 1, jammer: 0.8, radar: 1.2, salvage: 0.3, orbital: 0.15, blackhole: 0.8,
+};
+
+const TWO_PI = Math.PI * 2;
+const COIL_TIP_Z = MODEL_TOP.t_tesla - 3;
+
+function lerpAngle(a: number, b: number, t: number): number {
+  let d = (b - a) % TWO_PI;
+  if (d > Math.PI) d -= TWO_PI;
+  else if (d < -Math.PI) d += TWO_PI;
+  return a + d * t;
+}
+
+const dirIndex = (angle: number) => ((Math.round((angle / TWO_PI) * DIRS) % DIRS) + DIRS) % DIRS;
+
+export class GameRenderer {
+  readonly root = new Container();
+  private readonly atlas: Atlas;
+  private readonly sim: Sim;
+  private readonly p: Projection;
+  private readonly iso: boolean;
+
+  // ground plane: children draw in world coordinates through the iso matrix
+  private readonly ground = new Container();
+  private readonly decals: ParticleLayer;
+  private readonly shadows: ParticleLayer;
+  private readonly groundFx: ParticleLayer;
+  private readonly overlay = new Graphics();
+  // upright objects, screen space
+  private readonly world: ParticleLayer;
+  private readonly smoke: ParticleLayer;
+  private readonly proj: ParticleLayer;
+  private readonly air: ParticleLayer;
+  private readonly glow: ParticleLayer;
+  private readonly bars: ParticleLayer;
+  private readonly beams = new Graphics();
+  private readonly ghost = new Container();
+  private readonly ghostBase = new Sprite();
+  private readonly ghostTurret = new Sprite();
+
+  private readonly sorter = new DepthSorter();
+  private readonly airSorter = new DepthSorter();
+  // iso: one frame per heading; top: a single frame rotated at runtime
+  private readonly enemyFrames: Texture[][];
+  private readonly enemyTopTex: Texture[];
+  private readonly enemyTop: number[];
+  private readonly turretFrames: Texture[][];
+  private readonly turretTopTex: Texture[];
+  private readonly baseTex: (Texture | null)[];
+  private readonly rockTex: Texture[];
+  private readonly rotorTex: Texture[];
+  private readonly projTex: Texture[];
+  private readonly projTint: number[];
+  private readonly projScale: number[];
+  private readonly droneFrames: Texture[];
+  private readonly fxTex: Texture[];
+  private readonly fxTexW: number[];
+  private jitter = 1;
+  // visible rectangle in projected screen space, padded for tall sprites; everything else is culled
+  private vx0 = -Infinity;
+  private vy0 = -Infinity;
+  private vx1 = Infinity;
+  private vy1 = Infinity;
+
+  constructor(sim: Sim, atlas: Atlas, background: Texture, projection: Projection) {
+    this.sim = sim;
+    this.atlas = atlas;
+    this.p = projection;
+    this.iso = projection.mode === 'iso';
+    const px = atlas.px;
+    this.decals = new ParticleLayer(px);
+    this.shadows = new ParticleLayer(px);
+    this.groundFx = new ParticleLayer(px, true);
+    this.world = new ParticleLayer(px);
+    this.smoke = new ParticleLayer(px);
+    this.proj = new ParticleLayer(px);
+    this.air = new ParticleLayer(px);
+    this.glow = new ParticleLayer(px, true);
+    this.bars = new ParticleLayer(px);
+    this.beams.blendMode = 'add';
+
+    const frames = (name: string) => Array.from({ length: models[name].dirs }, (_, d) => atlas[`${name}_${d}`]);
+    const view = this.iso ? '0' : 't';
+    this.enemyFrames = ENEMIES.map((e) => frames(e.tex));
+    this.enemyTopTex = ENEMIES.map((e) => atlas[`${e.tex}_t`]);
+    this.enemyTop = ENEMIES.map((e) => MODEL_TOP[e.tex]);
+    this.turretFrames = TOWERS.map((t) => (t.turret ? frames(t.turret) : []));
+    this.turretTopTex = TOWERS.map((t) => (t.turret ? atlas[`${t.turret}_t`] : atlas.px));
+    this.baseTex = TOWERS.map((t, i) => {
+      if (t.turret) return atlas[`base${i}_${view}`];
+      return t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null;
+    });
+    this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
+    this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
+    this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
+    // indexed by projectile kind
+    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas.nukeshell];
+    this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff];
+    this.projScale = [1, 1.1, 1, 1.1, 0.9, 1, 0.7, 1.6, 0.9, 1];
+    this.fxTex = [atlas.glow, atlas.smoke, atlas.spark, atlas.ring, atlas.px];
+    this.fxTexW = this.fxTex.map((t) => t.width);
+
+    this.ghost.addChild(this.ghostBase, this.ghostTurret);
+    this.ghost.alpha = 0.7;
+
+    const bg = new Sprite(background);
+    bg.width = MAP_W;
+    bg.height = MAP_H;
+    this.ground.setFromMatrix(projection.groundMatrix());
+    this.ground.addChild(bg, this.decals.view, this.overlay, this.shadows.view, this.groundFx.view);
+
+    this.root.addChild(
+      this.ground,
+      this.world.view,
+      this.ghost,
+      this.smoke.view,
+      this.proj.view,
+      this.air.view,
+      this.glow.view,
+      this.beams,
+      this.bars.view,
+    );
+  }
+
+  /** Visible area in projected screen coordinates (the camera's view). */
+  setView(x0: number, y0: number, x1: number, y1: number): void {
+    const pad = 90;
+    this.vx0 = x0 - pad;
+    this.vy0 = y0 - pad / 2;
+    this.vx1 = x1 + pad;
+    this.vy1 = y1 + pad * 1.5; // tall models stick up above their ground point
+  }
+
+  private visible(sx: number, sy: number): boolean {
+    return sx > this.vx0 && sx < this.vx1 && sy > this.vy0 && sy < this.vy1;
+  }
+
+  /** The angle a turret faces: tracking turrets follow their target, some spin, some never turn. */
+  private turretAngle(t: Tower, alpha: number, time: number): number {
+    const aim = TOWERS[t.type].aim;
+    if (aim === 'spin') return time * (SPIN[t.kind] ?? 1) + t.id;
+    if (aim === 'static') return 0;
+    return lerpAngle(t.prevAngle, t.angle, alpha);
+  }
+
+  /** Painter's order: iso sorts by x + y, top-down by y (things lower on screen overlap). */
+  private depth(x: number, y: number): number {
+    return this.iso ? x + y : y * 2;
+  }
+
+  /** alpha: interpolation factor between the previous and current sim tick. */
+  render(alpha: number, ov: OverlayState): void {
+    const s = this.sim;
+    const time = s.time + alpha * DT;
+    this.smoke.begin();
+    this.glow.begin();
+
+    // ---- depth-sorted world objects (ground layer) and flying units (air layer)
+    const sorter = this.sorter;
+    const airSorter = this.airSorter;
+    sorter.reset();
+    airSorter.reset();
+    const rocks = s.map.rocks;
+    const p = this.p;
+    for (let r = 0; r < rocks.length; r++) {
+      const c = (rocks[r].c + rocks[r].s / 2) * TILE;
+      const rr = (rocks[r].r + rocks[r].s / 2) * TILE;
+      if (this.visible(p.x(c, rr), p.y(c, rr))) sorter.add(this.depth(c, rr), C_ROCK | r);
+    }
+    this.decals.begin();
+    for (let t = 0; t < s.towers.length; t++) {
+      const tw = s.towers[t];
+      if (!this.visible(p.x(tw.x, tw.y), p.y(tw.x, tw.y))) continue;
+      if (TOWERS[tw.type].walkable || tw.open) this.drawDecal(tw, time);
+      else sorter.add(this.depth(tw.x, tw.y), C_TOWER | t);
+    }
+    this.decals.end();
+    for (let n = 0; n < s.liveCount; n++) {
+      const i = s.live[n];
+      if (!s.eAlive[i]) continue;
+      const x = s.ePx[i] + (s.eX[i] - s.ePx[i]) * alpha;
+      const y = s.ePy[i] + (s.eY[i] - s.ePy[i]) * alpha;
+      if (!this.visible(p.x(x, y), p.y(x, y))) continue;
+      (s.eAir[i] ? airSorter : sorter).add(this.depth(x, y), C_ENEMY | i);
+    }
+
+    for (let d = 0; d < s.drones.length; d++) {
+      const dr = s.drones[d];
+      const x = dr.px + (dr.x - dr.px) * alpha;
+      const y = dr.py + (dr.y - dr.py) * alpha;
+      if (this.visible(p.x(x, y), p.y(x, y))) airSorter.add(this.depth(x, y), C_DRONE | d);
+    }
+
+    this.world.begin();
+    this.air.begin();
+    this.shadows.begin();
+    this.bars.begin();
+    const order = sorter.sort();
+    for (let k = 0; k < sorter.n; k++) this.drawItem(order[k], alpha, time);
+    const airOrder = airSorter.sort();
+    for (let k = 0; k < airSorter.n; k++) this.drawItem(airOrder[k], alpha, time);
+    this.drawZones(alpha);
+    this.world.end();
+    this.air.end();
+    this.shadows.end();
+
+    // ---- projectiles
+    this.proj.begin();
+    for (let p = 0; p < s.pCount; p++) {
+      const x = s.pPx[p] + (s.pX[p] - s.pPx[p]) * alpha;
+      const y = s.pPy[p] + (s.pY[p] - s.pPy[p]) * alpha;
+      if (!this.visible(this.p.x(x, y), this.p.y(x, y))) continue;
+      const k = s.pKind[p];
+      const tex = this.projTex[k];
+      const sc = this.projScale[k];
+      const arcH = ARC_HEIGHT[k];
+      if (arcH !== undefined) {
+        // ballistic arc
+        const f = 1 - Math.max(0, s.pTtl[p] - alpha * DT) / s.pTtl0[p];
+        const arc = Math.sin(f * Math.PI);
+        const rot = k === P_NUKE ? this.p.angle(s.pVx[p], s.pVy[p]) : 0;
+        if (this.iso) {
+          const z = MUZZLE_Z * (1 - f) + arc * arcH;
+          this.proj.push(tex, this.p.x(x, y), this.p.y(x, y) - z, rot, sc, sc, this.projTint[k], 1);
+        } else {
+          // from above, height reads as size
+          const g = 1 + arc * Math.min(1.2, arcH / 65);
+          this.proj.push(tex, x, y, rot, sc * g, sc * g, this.projTint[k], 1);
+        }
+      } else {
+        const rot = this.p.angle(s.pVx[p], s.pVy[p]);
+        const z = k === P_BULLET || k === P_MISSILE || k === P_FLAK ? s.missileZ(p) : 10;
+        const sx = k === P_BULLET ? 1.4 : sc;
+        this.proj.push(tex, this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, rot, sx, sc, this.projTint[k], 1);
+        if (k === P_ACID || k === P_CRYO) this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, 0, 0.25, 0.25, this.projTint[k], 0.6, 0.5);
+      }
+    }
+    this.proj.end();
+
+    // ---- effects
+    this.groundFx.begin();
+    for (let f = 0; f < s.fCount; f++) {
+      const t = 1 - s.fLife[f] / s.fMax[f];
+      const x = s.fPx[f] + (s.fX[f] - s.fPx[f]) * alpha;
+      const y = s.fPy[f] + (s.fY[f] - s.fPy[f]) * alpha;
+      if (!this.visible(this.p.x(x, y), this.p.y(x, y))) continue;
+      const tex = s.fTex[f];
+      const size = s.fS0[f] + (s.fS1[f] - s.fS0[f]) * t;
+      let a = s.fA0[f] * (1 - t);
+      if (tex === FX_RING) {
+        // lies flat on the ground
+        const sc = size / this.fxTexW[tex];
+        this.groundFx.push(this.fxTex[tex], x, y, 0, sc, sc, s.fColor[f], a, 0.5);
+        continue;
+      }
+      let z = s.fZ[f];
+      if (tex === FX_SMOKE) {
+        a = s.fA0[f] * (1 - t) * Math.min(1, t * 6 + 0.3);
+        z += t * 16; // smoke rises
+      }
+      const sx = this.p.x(x, y);
+      const sy = this.p.y(x, y) - z * this.p.lift;
+      const layer = s.fAdd[f] ? this.glow : this.smoke;
+      if (tex === FX_SPARK) {
+        const rot = this.p.angle(Math.cos(s.fRot[f]), Math.sin(s.fRot[f]));
+        layer.push(this.fxTex[tex], sx, sy, rot, size / 4, size / 6, s.fColor[f], a, 0.5);
+      } else {
+        const sc = (size / this.fxTexW[tex]) * (this.iso ? 0.88 : 1);
+        layer.push(this.fxTex[tex], sx, sy, tex === FX_GLOW ? 0 : s.fRot[f] + t, sc, sc, s.fColor[f], a, 0.5);
+      }
+    }
+    this.drawBeams(alpha, time);
+    this.smoke.end();
+    this.glow.end();
+    this.groundFx.end();
+    this.bars.end();
+
+    this.drawOverlay(ov);
+  }
+
+  private drawItem(code: number, alpha: number, time: number): void {
+    const s = this.sim;
+    const p = this.p;
+    const idx = code & C_MASK;
+    const kind = code & ~C_MASK;
+    if (kind === C_ROCK) {
+      const r = s.map.rocks[idx];
+      const x = (r.c + r.s / 2) * TILE;
+      const y = (r.r + r.s / 2) * TILE;
+      if (!this.iso) this.shadows.push(this.rockTex[r.s - 1], x + 3, y + 4, 0, 1, 1, 0x000000, 0.35);
+      this.world.push(this.rockTex[r.s - 1], p.x(x, y), p.y(x, y), 0, 1, 1, 0xffffff, 1);
+      return;
+    }
+    if (kind === C_TOWER) {
+      const t = s.towers[idx];
+      const def = TOWERS[t.type];
+      const sx = p.x(t.x, t.y);
+      const sy = p.y(t.x, t.y);
+      const base = this.baseTex[t.type]!;
+      this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
+      if (!this.iso) this.shadows.push(base, t.x + 3, t.y + 4, 0, 1, 1, 0x000000, 0.35);
+      if (def.turret) {
+        const a = this.turretAngle(t, alpha, time);
+        // recoil kicks the turret back along its barrel
+        const tx = t.x - Math.cos(a) * t.recoil * 3;
+        const ty = t.y - Math.sin(a) * t.recoil * 3;
+        const sc = 1 + t.level * 0.07;
+        if (this.iso) {
+          const fr = this.turretFrames[t.type];
+          this.world.push(fr[dirIndex(a) % fr.length], p.x(tx, ty), p.y(tx, ty), 0, sc, sc, 0xffffff, 1);
+        } else {
+          const tex = this.turretTopTex[t.type];
+          this.world.push(tex, tx + 2, ty + 3, a, sc, sc, 0x000000, 0.3);
+          this.world.push(tex, tx, ty, a, sc, sc, 0xffffff, 1);
+        }
+      }
+      if (def.levels.length > 1) for (let n = 0; n < t.level; n++) this.world.push(this.atlas.pip, sx - 4 + n * 8, sy + (this.iso ? 9 : 15), 0, 1, 1, 0xffffff, 1, 0.5);
+      if (def.manual) {
+        // charge gauge; glows when ready to fire
+        const c = s.chargeLevel(t);
+        const by = sy + (this.iso ? 14 : 20);
+        this.bars.push(this.atlas.px, sx - 15, by, 0, 7.5, 1.2, 0x111111, 0.85, 0);
+        this.bars.push(this.atlas.px, sx - 14.5, by, 0, 7.25 * c, 0.7, c >= 1 ? 0xffe040 : 0xff6a3a, 1, 0);
+        if (c >= 1) this.glow.push(this.fxTex[FX_GLOW], sx, sy - 12 * p.lift, 0, 0.8, 0.8, def.color, 0.35 + 0.25 * Math.sin(time * 5), 0.5);
+      }
+      return;
+    }
+    if (kind === C_DRONE) {
+      const d = s.drones[idx];
+      const x = d.px + (d.x - d.px) * alpha;
+      const y = d.py + (d.y - d.py) * alpha;
+      const ang = lerpAngle(d.pang, d.ang, alpha);
+      const z = AIR_Z * 0.7 + Math.sin(time * 6 + idx) * 1.5;
+      if (this.iso) {
+        this.shadows.push(this.fxTex[FX_GLOW], x, y, 0, 0.22, 0.22, 0x000000, 0.4, 0.5);
+        this.air.push(this.droneFrames[dirIndex(ang)], p.x(x, y), p.y(x, y) - z, 0, 1, 1, 0xffffff, 1);
+      } else {
+        this.shadows.push(this.droneFrames[0], x + z * 0.3, y + z * 0.45, ang, 0.9, 0.9, 0x000000, 0.35);
+        this.air.push(this.droneFrames[0], x, y, ang, 1.05, 1.05, 0xffffff, 1);
+      }
+      return;
+    }
+    const i = idx;
+    const x = s.ePx[i] + (s.eX[i] - s.ePx[i]) * alpha;
+    const y = s.ePy[i] + (s.eY[i] - s.ePy[i]) * alpha;
+    const type = s.eKind[i];
+    const ang = lerpAngle(s.ePang[i], s.eAng[i], alpha);
+    const tint = s.eFlash[i] > 0 ? 0xffb0a0 : s.eHackT[i] > 0 ? 0x8aff9a : s.eFrozenT[i] > 0 ? 0x9fe8ff
+      : s.eChill[i] > 0.15 || s.eSlowT[i] > 0 ? 0xa8d8ff : s.eBurnT[i] > 0 ? 0xffc8a0 : 0xffffff;
+    // stealth units are a faint shimmer until a radar picks them up
+    const hidden = s.hidden(i);
+    const ea = hidden ? 0.28 : 1;
+    const r = ENEMIES[type].radius;
+    const sx = p.x(x, y);
+    let sy = p.y(x, y);
+    const air = s.eAir[i] === 1;
+    if (this.iso) {
+      const tex = this.enemyFrames[type][dirIndex(ang)];
+      if (air) {
+        // shadow on the ground, body at altitude with a gentle bob
+        this.shadows.push(this.fxTex[FX_GLOW], x, y, 0, (r * 2.4) / 64, (r * 2.4) / 64, 0x000000, 0.45, 0.5);
+        sy -= AIR_Z + Math.sin(time * 3 + i) * 2;
+        this.air.push(tex, sx, sy, 0, 1, 1, tint, 1);
+        this.air.push(this.rotorTex[(time * 30 + i) & 3], sx, sy - this.enemyTop[type] + 1, 0, 1, 1, 0xffffff, 0.9);
+      } else {
+        this.world.push(tex, sx, sy, 0, 1, 1, tint, ea);
+      }
+    } else {
+      const tex = this.enemyTopTex[type];
+      if (air) {
+        // high up: offset shadow, slightly larger body
+        const bob = 1.08 + Math.sin(time * 3 + i) * 0.02;
+        this.shadows.push(tex, x + AIR_Z * 0.3, y + AIR_Z * 0.45, ang, 0.9, 0.9, 0x000000, 0.35);
+        this.air.push(tex, sx, sy, ang, bob, bob, tint, 1);
+        this.air.push(this.rotorTex[0], sx, sy, time * 30 + i, bob, bob, 0xffffff, 0.9);
+      } else {
+        if (!hidden) this.shadows.push(tex, x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
+        this.world.push(tex, sx, sy, ang, 1, 1, tint, ea);
+      }
+    }
+    if (hidden) return;
+    const midY = sy - (this.iso ? this.enemyTop[type] * 0.5 : 0);
+    if (s.eShield[i] > 0) {
+      const f = s.eShield[i] / s.eMaxShield[i];
+      const sc = (r * 2.8) / 128;
+      this.glow.push(this.fxTex[FX_RING], sx, midY, 0, sc, sc * (this.iso ? 0.8 : 1), 0x5ab4ff, 0.25 + 0.45 * f, 0.5);
+    }
+    if (s.eFrozenT[i] > 0) this.glow.push(this.fxTex[FX_GLOW], sx, midY, 0, r / 22, r / 22, 0xbff4ff, 0.5, 0.5);
+    const hp = s.eHp[i] / s.eMaxHp[i];
+    const sh = s.eMaxShield[i] > 0 ? s.eShield[i] / s.eMaxShield[i] : 1;
+    if (hp < 0.999 || sh < 0.999) {
+      const w = r * 2 + 4;
+      const by = sy - (this.iso ? this.enemyTop[type] + 6 : r + 7);
+      this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
+      const col = hp > 0.6 ? 0x5ad65a : hp > 0.3 ? 0xe8c440 : 0xe85040;
+      this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, hp)) / 4, 0.5, col, 1, 0);
+      if (s.eMaxShield[i] > 0) this.bars.push(this.atlas.px, sx - w / 2, by - 2.5, 0, (w * sh) / 4, 0.4, 0x6ac8ff, 1, 0);
+    }
+  }
+
+  /** Floor traps and open gates lie flat on the ground (world coordinates). */
+  private drawDecal(t: Tower, time: number): void {
+    const a = this.atlas;
+    switch (t.kind) {
+      case 'mine': {
+        this.decals.push(a.d_mine, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        const armed = t.cd <= 0;
+        // blinking arming light
+        if (armed && Math.sin(time * 6 + t.id) > 0) this.decals.push(a.d_mine_light, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        break;
+      }
+      case 'tar':
+        this.decals.push(a.d_tar, t.x, t.y, 0, 1, 1, 0xffffff, 0.95, 0.5);
+        break;
+      case 'spikes':
+        this.decals.push(a.d_spikes, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        break;
+      case 'gate':
+        this.decals.push(a.d_gate_open, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        break;
+    }
+    if (TOWERS[t.type].levels.length > 1) {
+      for (let n = 0; n < t.level; n++) this.decals.push(a.pip, t.x - 4 + n * 8, t.y + t.size * 6, 0, 1, 1, 0xffffff, 1, 0.5);
+    }
+  }
+
+  /** Singularities and orbital strikes (the fire/gas clouds are all particles). */
+  private drawZones(alpha: number): void {
+    const s = this.sim;
+    for (const z of s.zones) {
+      const x = z.px + (z.x - z.px) * alpha;
+      const y = z.py + (z.y - z.py) * alpha;
+      const sx = this.p.x(x, y);
+      const sy = this.p.y(x, y);
+      if (!this.visible(sx, sy)) continue;
+      const life = Math.min(1, z.t / 0.3, (z.t0 - z.t) / 0.3);
+      if (z.kind === Z_HOLE) {
+        const r = z.r * (0.28 + 0.04 * Math.sin(s.time * 20)) * life;
+        this.smoke.push(this.fxTex[FX_GLOW], sx, sy - 8 * this.p.lift, 0, r / 18, r / 18, 0x000000, 0.95, 0.5);
+        this.glow.push(this.fxTex[FX_RING], sx, sy - 8 * this.p.lift, s.time * 3, (r * 2.4) / 128, (r * 2.4) / 128, 0xa060ff, 0.8, 0.5);
+        this.groundFx.push(this.fxTex[FX_RING], x, y, 0, (z.r * 2) / 128, (z.r * 2) / 128, 0x8a40ff, 0.3 * life, 0.5);
+      } else if (z.kind === Z_ORBITAL) {
+        this.glow.push(this.fxTex[FX_GLOW], sx, sy, 0, z.r / 16, z.r / 16, 0xff3a6a, 0.9 * life, 0.5);
+        this.groundFx.push(this.fxTex[FX_RING], x, y, -s.time * 4, (z.r * 2.2) / 128, (z.r * 2.2) / 128, 0xff6a8a, 0.6 * life, 0.5);
+      }
+    }
+  }
+
+  private drawBeams(alpha: number, time: number): void {
+    const s = this.sim;
+    const g = this.beams;
+    g.clear();
+    for (const t of s.towers) {
+      if (t.beam < 0 || !s.eAlive[t.beam]) continue;
+      const i = t.beam;
+      const ex = s.ePx[i] + (s.eX[i] - s.ePx[i]) * alpha;
+      const ey = s.ePy[i] + (s.eY[i] - s.ePy[i]) * alpha;
+      const a = lerpAngle(t.prevAngle, t.angle, alpha);
+      const mx = t.x + Math.cos(a) * 15;
+      const my = t.y + Math.sin(a) * 15;
+      const lift = this.p.lift;
+      const x0 = this.p.x(mx, my);
+      const y0 = this.p.y(mx, my) - MUZZLE_Z * lift;
+      const x1 = this.p.x(ex, ey);
+      const y1 = this.p.y(ex, ey) - (s.eAir[i] ? AIR_Z + 6 : 6) * lift;
+      const w = 1 + t.level * 0.6;
+      const flick = 0.75 + 0.25 * Math.sin(time * 60 + t.id);
+      g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: 6 * w, color: 0xff2030, alpha: 0.25 * flick });
+      g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: 2 * w, color: 0xff6070, alpha: 0.8 });
+      g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: 0.8 * w, color: 0xffffff, alpha: 0.9 });
+      this.glow.push(this.fxTex[FX_GLOW], x1, y1, 0, 0.35 * w, 0.35 * w, 0xff5060, 0.8 * flick, 0.5);
+      this.glow.push(this.fxTex[FX_GLOW], x0, y0, 0, 0.22 * w, 0.22 * w, 0xff8090, 0.9, 0.5);
+    }
+    // jittered lightning: the first node is the coil's tip, the rest are struck units
+    let seed = (this.jitter = (this.jitter * 1103515245 + 12345) & 0x7fffffff);
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff) - 0.5;
+    for (let b = 0; b < s.bCount; b++) {
+      const base = b * BOLT_NODES * 2;
+      const n = s.bN[b];
+      const life = Math.min(1, s.bLife[b] / 0.16);
+      for (let pass = 0; pass < 2; pass++) {
+        let px = this.p.x(s.bPts[base], s.bPts[base + 1]);
+        let py = this.p.y(s.bPts[base], s.bPts[base + 1]) - COIL_TIP_Z * this.p.lift;
+        g.moveTo(px, py);
+        for (let k = 1; k < n; k++) {
+          const wx = s.bPts[base + k * 2];
+          const wy = s.bPts[base + k * 2 + 1];
+          const qx = this.p.x(wx, wy);
+          const qy = this.p.y(wx, wy) - 8 * this.p.lift;
+          const nx = -(qy - py);
+          const ny = qx - px;
+          for (let j = 1; j <= 4; j++) {
+            const f = j / 4;
+            const off = j === 4 ? 0 : rnd() * 0.35;
+            g.lineTo(px + (qx - px) * f + nx * off, py + (qy - py) * f + ny * off);
+          }
+          px = qx;
+          py = qy;
+        }
+        g.stroke(pass === 0
+          ? { width: 6, color: 0x3aa0ff, alpha: 0.35 * life }
+          : { width: 1.6, color: 0xe8f6ff, alpha: life });
+      }
+    }
+    // tracers, rail trails, hacker links, orbital beams
+    const lift = this.p.lift;
+    for (const k of s.streaks) {
+      const f = k.life / k.life0;
+      const x0 = this.p.x(k.x0, k.y0);
+      const y0 = this.p.y(k.x0, k.y0) - k.z0 * lift;
+      const x1 = this.p.x(k.x1, k.y1);
+      const y1 = this.p.y(k.x1, k.y1) - k.z1 * lift;
+      if (Math.abs(x1 - x0) + Math.abs(y1 - y0) < 0.5) {
+        // a vertical beam seen from straight above is a disc
+        this.glow.push(this.fxTex[FX_GLOW], x1, y1, 0, k.width / 12, k.width / 12, k.color, 0.7 * f, 0.5);
+        continue;
+      }
+      g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: k.width * 3, color: k.color, alpha: 0.25 * f });
+      g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: Math.max(0.8, k.width * 0.6), color: 0xffffff, alpha: 0.9 * f });
+    }
+  }
+
+  /** Follows a flow field from the middle of each route's entry to its exit (ground plane). */
+  private drawRoutes(fields: readonly FlowField[], color: number, alpha: number): void {
+    const g = this.overlay;
+    this.sim.map.routes.forEach((route, k) => {
+      const f = fields[k];
+      let cell = route.entry[route.entry.length >> 1];
+      g.moveTo(route.airFrom[0], route.airFrom[1]);
+      for (let guard = 0; guard < COLS * ROWS && cell >= 0; guard++) {
+        g.lineTo(((cell % COLS) + 0.5) * TILE, (((cell / COLS) | 0) + 0.5) * TILE);
+        if (f.dist[cell] === 0) break;
+        cell = f.next[cell];
+      }
+      g.lineTo(route.airTo[0], route.airTo[1]);
+      g.stroke({ width: 2.5, color, alpha, cap: 'round', join: 'round' });
+    });
+  }
+
+  private drawOverlay(ov: OverlayState): void {
+    const g = this.overlay;
+    const s = this.sim;
+    g.clear();
+    const sel = ov.selected;
+    if (sel) {
+      const r = s.stats(sel).range;
+      if (r > 0) g.circle(sel.x, sel.y, r).fill({ color: 0xffffff, alpha: 0.07 }).stroke({ width: 2, color: 0xffffff, alpha: 0.55 });
+      const box = TILE * sel.size;
+      g.rect(sel.col * TILE - 1, sel.row * TILE - 1, box + 2, box + 2).stroke({ width: 2.5, color: 0xffe28a, alpha: 0.95 });
+    }
+    this.ghost.visible = false;
+    if (ov.aiming) {
+      // superweapon reticle
+      const lv = TOWERS[ov.aiming.type].levels[ov.aiming.level];
+      const r = ov.aiming.kind === 'orbital' ? 200 : lv.splash ?? 100;
+      g.circle(ov.aimX, ov.aimY, r).fill({ color: 0xff3a3a, alpha: 0.1 }).stroke({ width: 2, color: 0xff5a5a, alpha: 0.9 });
+      g.moveTo(ov.aimX - 14, ov.aimY).lineTo(ov.aimX + 14, ov.aimY).moveTo(ov.aimX, ov.aimY - 14).lineTo(ov.aimX, ov.aimY + 14)
+        .stroke({ width: 2, color: 0xff8a8a, alpha: 0.95 });
+      return;
+    }
+    if (ov.placing >= 0 && ov.hoverCol > -2) {
+      const def = TOWERS[ov.placing];
+      const box = TILE * def.size;
+      const status = s.placeStatus(ov.placing, ov.hoverCol, ov.hoverRow);
+      const ok = status === 'ok' && s.money >= def.levels[0].cost;
+      const preview = s.preview(ov.placing, ov.hoverCol, ov.hoverRow);
+      if (!def.walkable) {
+        this.drawRoutes(s.fields, 0xffffff, preview ? 0.2 : 0.45);
+        if (preview) this.drawRoutes(preview, ok ? 0x7dff8a : 0xffc04a, 0.8);
+      }
+      const x = ov.hoverCol * TILE + box / 2;
+      const y = ov.hoverRow * TILE + box / 2;
+      const r = def.levels[0].range;
+      const col = ok ? 0x7dff8a : 0xff5a5a;
+      if (r > 14) g.circle(x, y, r).fill({ color: col, alpha: 0.07 }).stroke({ width: 2, color: col, alpha: 0.55 });
+      g.rect(ov.hoverCol * TILE, ov.hoverRow * TILE, box, box).fill({ color: col, alpha: 0.3 });
+      if (status === 'blocked') {
+        g.moveTo(x - 10, y - 10).lineTo(x + 10, y + 10).moveTo(x + 10, y - 10).lineTo(x - 10, y + 10)
+          .stroke({ width: 4, color: 0xff3a3a, alpha: 0.95 });
+      } else if (status !== 'invalid' && this.baseTex[ov.placing]) {
+        this.ghost.visible = true;
+        const base = this.baseTex[ov.placing]!;
+        const turret = !def.turret ? this.atlas.px
+          : this.iso ? this.atlas[dirFrame(def.turret, -Math.PI * 0.75, models[def.turret].dirs)] : this.turretTopTex[ov.placing];
+        this.ghostBase.texture = base;
+        this.ghostTurret.texture = turret;
+        this.ghostTurret.visible = !!def.turret;
+        this.ghostTurret.rotation = this.iso || def.aim === 'static' ? 0 : -Math.PI / 2;
+        this.ghostBase.anchor.set(base.defaultAnchor!.x, base.defaultAnchor!.y);
+        if (def.turret) this.ghostTurret.anchor.set(turret.defaultAnchor!.x, turret.defaultAnchor!.y);
+        this.ghost.position.set(this.p.x(x, y), this.p.y(x, y));
+        this.ghostBase.tint = this.ghostTurret.tint = ok ? 0xffffff : 0xff8080;
+      }
+    } else if (ov.cellCol >= 0 && !sel) {
+      const t = s.towerAtTile(ov.cellCol, ov.cellRow);
+      if (t) {
+        const r = s.stats(t).range;
+        if (r > 14) g.circle(t.x, t.y, r).stroke({ width: 1.5, color: 0xffffff, alpha: 0.35 });
+      }
+    }
+  }
+
+  get drawnParticles(): number {
+    return this.decals.count + this.world.count + this.smoke.count + this.proj.count + this.shadows.count + this.air.count +
+      this.glow.count + this.bars.count + this.groundFx.count;
+  }
+}

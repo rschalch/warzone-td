@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Warzone TD</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">WARZONE<span>TD</span></div>
+      <div class="stat"><label>Money</label><b id="money">0</b></div>
+      <div class="stat"><label>Lives</label><b id="lives">0</b></div>
+      <div class="stat"><label>Wave</label><b id="wave">0</b></div>
+      <div class="stat"><label>Kills</label><b id="kills">0</b></div>
+      <div class="spacer"></div>
+      <button id="next" class="primary" title="N">Start wave 1</button>
+      <div class="seg" id="speed">
+        <button data-speed="0" title="Space">❚❚</button>
+        <button data-speed="1" class="on">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+      </div>
+      <button id="camera" title="Switch camera (V)">View: Top</button>
+      <button id="menu" title="Back to map select">Maps</button>
+    </header>
+    <main>
+      <div id="stage"></div>
+      <aside id="side">
+        <h3>Build</h3>
+        <div id="tabs"></div>
+        <div id="build"></div>
+        <div id="info"></div>
+        <div id="help">
+          <p><kbd>Q</kbd>/<kbd>E</kbd> tab · <kbd>1</kbd>–<kbd>6</kbd> pick tower · click/drag to build · <kbd>Esc</kbd>/right-click stop</p>
+          <p><kbd>U</kbd> upgrade · <kbd>S</kbd> sell · <kbd>T</kbd> target mode · <kbd>G</kbd> gate · <kbd>R</kbd> fire superweapon</p>
+          <p><kbd>N</kbd> next wave · <kbd>Space</kbd> pause · <kbd>F</kbd> speed · <kbd>V</kbd> camera</p>
+          <p>Drag/right-drag/arrows pan · wheel or <kbd>+</kbd>/<kbd>-</kbd> zoom · <kbd>Home</kbd> whole map</p>
+        </div>
+      </aside>
+    </main>
+    <footer id="perf"></footer>
+  </div>
+  <div id="overlay" class="hidden"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
