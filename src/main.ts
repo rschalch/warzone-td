@@ -1,23 +1,39 @@
 import { Application, Container, type Texture } from 'pixi.js';
-import { CATEGORIES, DT, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
-import { MAPS, buildMap, useMapSize } from './game/maps';
-import { Sim, type Tower } from './game/sim';
+import type { NetLink } from './app/net';
+import { computeScore, getProfile, recordGame, saveCustomMap } from './app/profile';
+import { Session, type SessionCommand } from './app/session';
+import { onSettings, settings } from './app/settings';
+import { copyText, mapLink, readHash, replayLink, type Replay } from './app/share';
+import { idbGet, idbSet } from './app/storage';
+import { sound } from './audio/sound';
+import type { LoggedCommand } from './game/commands';
+import { DIFFICULTIES, type GameConfig } from './game/config';
+import { CATEGORIES, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
+import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
+import { parseMapCode } from './game/mapgen';
+import {
+  Sim as SimClass,
+  EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
+  EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
+} from './game/sim';
 import { buildAtlas, buildBackground, drawTerrain, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
+import { blankMap, openEditor } from './ui/editor';
 import { Hud } from './ui/hud';
+import { hideMenus, initMenus, showMain, showRandom, showSettings, showSetup } from './ui/menus';
 import { Minimap } from './ui/minimap';
-
-const MAX_STEPS_PER_FRAME = 16;
 
 let app: Application;
 let atlas: Atlas;
-let sim: Sim | null = null;
+let session: Session | null = null;
+let link: NetLink | null = null;
 let view: GameRenderer | null = null;
 let background: Texture | null = null;
 let cameraMode: CameraMode = loadCamera();
 let projection: Projection = makeProjection(cameraMode);
-let mapIndex = 0;
+
+const sim = (): Sim | null => session?.sim ?? null;
 
 // camera: the projected-screen point at the middle of the canvas, and pixels per projected unit
 const cam = new Container();
@@ -26,17 +42,19 @@ let camY = 0;
 let zoom = 1;
 let viewW = 960; // canvas size in CSS pixels
 let viewH = 640;
+let shake = 0;
 const MAX_ZOOM = 3;
 const PAN_SPEED = 900; // CSS px per second for the arrow keys
 const keysHeld = new Set<string>();
 let minimap: Minimap | null = null;
 
-let speed = 1;
 let lastSpeed = 1;
-let acc = 0;
 let placing = -1;
 let selected: Tower | null = null;
-let aiming: Tower | null = null; // superweapon waiting for its target click
+let multi: Tower[] = [];
+let heroSelected = false;
+/** A superweapon, item or hero ability waiting for its target click. */
+let targeting: { kind: 'super' | 'item' | 'ability'; index: number; r: number; color: number } | null = null;
 let aimX = 0;
 let aimY = 0;
 let hoverCol = -9;
@@ -44,10 +62,12 @@ let hoverRow = -9;
 let cellCol = -1;
 let cellRow = -1;
 let endShown = false;
+let endlessFrom = 0; // wave at which the player chose to continue in endless mode
+let slowmo = 0; // s of real time left in hit-stop slow motion
+let wasClear = true;
 
 // perf counters
 let frames = 0;
-let frameTimeAcc = 0;
 let simTimeAcc = 0;
 let renderTimeAcc = 0;
 let perfT = 0;
@@ -55,44 +75,150 @@ let perfT = 0;
 const overlay = document.getElementById('overlay')!;
 const stage = document.getElementById('stage')!;
 
+const QUALITY = { low: 0.35, medium: 0.65, high: 1 };
+
+// ---------------------------------------------------------------- commands
+
+function issue(cmd: SessionCommand): void {
+  if (!session) return;
+  session.issue(cmd);
+}
+
+/** Feedback for our own commands once they have been applied (they may be delayed in co-op). */
+function handleResults(): void {
+  if (!session) return;
+  for (const { cmd, ok } of session.results) {
+    if (!ok && (cmd.t === 'place' || cmd.t === 'upgrade' || cmd.t === 'item' || cmd.t === 'heroAbility' || cmd.t === 'fire')) {
+      sound.play('deny');
+    }
+    if (!ok && cmd.t === 'gate') flash('The gate can’t close: units in the way or it would seal the route');
+    if (!ok && cmd.t === 'sell' && !session.sim.canSell) flash('Ironman: no selling');
+  }
+  session.results.length = 0;
+}
+
 const hud = new Hud({
   pick: (t) => pick(t),
-  upgrade: () => selected && sim?.upgrade(selected),
+  upgrade: () => selected && issue({ t: 'upgrade', ids: [selected.id] }),
   sell: () => sellSelected(),
-  mode: (m) => selected && (selected.mode = m),
-  gate: () => toggleGate(),
-  fire: () => startAiming(),
-  next: () => sim?.startNextWave(),
-  speed: (s) => setSpeed(s),
-  menu: () => showMenu(),
-  camera: () => toggleCamera(),
-  stress: () => {
-    if (!sim) return;
-    sim.stress(3000);
-    if (speed === 0) setSpeed(1);
+  upgradeAllOfType: () => {
+    const s = sim();
+    if (!s || !selected) return;
+    upgradeCheapestFirst(s.towers.filter((t) => t.type === selected!.type));
   },
+  mode: (m) => selected && issue({ t: 'mode', id: selected.id, mode: m }),
+  gate: () => toggleGate(),
+  fire: () => startSuper(),
+  next: () => issue({ t: 'wave' }),
+  speed: (s) => setSpeed(s),
+  menu: () => openMenu(),
+  camera: () => toggleCamera(),
+  settings: () => openSettings(),
+  undo: () => issue({ t: 'undo' }),
+  stress: () => {
+    issue({ t: 'stress' });
+    if (session?.speed === 0) setSpeed(1);
+  },
+  item: (i) => startItem(i),
+  hero: () => selectHero(),
+  ability: (a) => startAbility(a),
+  multiUpgrade: () => upgradeCheapestFirst(multi),
+  multiSell: () => {
+    if (multi.length) issue({ t: 'sell', ids: multi.map((t) => t.id) });
+    multi = [];
+  },
+  skipWave: () => session?.skipToWave((session.sim.wave || 0) + 1),
 });
 
-function pick(t: number): void {
-  selected = null;
-  aiming = null;
-  placing = placing === t ? -1 : t;
-  if (placing >= 0) hud.showCategory(CATEGORY_IDS.indexOf(TOWERS[placing].cat));
+/** Upgrades towers one level each, cheapest first, as far as the money goes. */
+function upgradeCheapestFirst(list: Tower[]): void {
+  const s = sim();
+  if (!s) return;
+  let money = s.money;
+  const ids: number[] = [];
+  for (const t of [...list].sort((a, b) => s.upgradeCost(a) - s.upgradeCost(b))) {
+    const c = s.upgradeCost(t);
+    if (c > 0 && c <= money) {
+      money -= c;
+      ids.push(t.id);
+    }
+  }
+  if (ids.length) issue({ t: 'upgrade', ids });
+  else sound.play('deny');
 }
 
-const CATEGORY_IDS = CATEGORIES.map((c) => c.id);
+function clearSelection(): void {
+  selected = null;
+  multi = [];
+  heroSelected = false;
+  targeting = null;
+}
+
+function pick(t: number): void {
+  const s = sim();
+  if (!s || session!.mode === 'replay') return;
+  if (!s.allowed(t)) return flash('Not available in this game');
+  clearSelection();
+  placing = placing === t ? -1 : t;
+  if (placing >= 0) hud.showCategory(CATEGORIES.findIndex((c) => c.id === TOWERS[placing].cat));
+}
 
 function toggleGate(): void {
-  if (!sim || !selected || selected.kind !== 'gate') return;
-  const r = sim.toggleGate(selected);
-  if (r !== 'ok') flash(r === 'occupied' ? 'Units are standing in the gate' : 'Closing it would seal the route');
+  if (selected?.kind === 'gate') issue({ t: 'gate', id: selected.id });
 }
 
-function startAiming(): void {
-  if (!sim || !selected || !TOWERS[selected.type].manual) return;
-  if (sim.chargeLevel(selected) < 1) return flash('Still charging');
-  aiming = selected;
+function startSuper(): void {
+  const s = sim();
+  if (!s || !selected || !TOWERS[selected.type].manual) return;
+  if (s.chargeLevel(selected) < 1) return flash('Still charging');
+  const lv = TOWERS[selected.type].levels[selected.level];
+  targeting = { kind: 'super', index: selected.id, r: selected.kind === 'orbital' ? 200 : lv.splash ?? 100, color: 0xff5a5a };
   placing = -1;
+}
+
+function startItem(i: number): void {
+  const s = sim();
+  if (!s || session!.mode === 'replay') return;
+  if (s.items[i] <= 0) return flash('No charges left — one comes back each wave');
+  if (i === 2) {
+    // supply crate needs no target
+    issue({ t: 'item', item: 2, x: aimX, y: aimY });
+    return;
+  }
+  placing = -1;
+  targeting = { kind: 'item', index: i, r: i === 0 ? 90 : 70, color: i === 0 ? 0xff7a3a : 0xffd84a };
+}
+
+function selectHero(): void {
+  const s = sim();
+  if (!s?.hero) return;
+  const was = heroSelected;
+  clearSelection();
+  placing = -1;
+  heroSelected = true;
+  if (was) lookAt(s.hero.x, s.hero.y); // second press: centre on the commander
+}
+
+function startAbility(a: number): void {
+  const s = sim();
+  if (!s?.hero || session!.mode === 'replay') return;
+  if (s.hero.cd[a] > 0) return flash(`${HERO_ABILITIES[a].name} ready in ${Math.ceil(s.hero.cd[a])}s`);
+  if (a === 1) {
+    issue({ t: 'heroAbility', ability: 1, x: s.hero.x, y: s.hero.y });
+    return;
+  }
+  placing = -1;
+  targeting = { kind: 'ability', index: a, r: a === 0 ? 90 : 70, color: a === 0 ? 0xff7a3a : 0xfff07a };
+}
+
+/** Fires whatever is waiting for a target at (x, y). */
+function fireTargeting(x: number, y: number): void {
+  if (!targeting) return;
+  const t = targeting;
+  if (t.kind === 'super') issue({ t: 'fire', id: t.index, x, y });
+  else if (t.kind === 'item') issue({ t: 'item', item: t.index, x, y });
+  else issue({ t: 'heroAbility', ability: t.index, x, y });
+  targeting = null;
 }
 
 let flashTimer = 0;
@@ -107,41 +233,79 @@ function flash(text: string): void {
   el.textContent = text;
   el.classList.add('show');
   clearTimeout(flashTimer);
-  flashTimer = window.setTimeout(() => el!.classList.remove('show'), 1600);
+  flashTimer = window.setTimeout(() => el!.classList.remove('show'), 1800);
 }
 
 function sellSelected(): void {
-  if (!sim || !selected) return;
-  sim.sell(selected);
+  if (!selected) return;
+  issue({ t: 'sell', ids: [selected.id] });
   selected = null;
 }
 
 function setSpeed(s: number): void {
+  if (!session) return;
   if (s > 0) lastSpeed = s;
-  speed = s;
+  session.issue({ t: 'speed', speed: s });
 }
 
-function startGame(i: number): void {
-  mapIndex = i;
-  const map = buildMap(MAPS[i]);
-  sim = new Sim(map);
+// ---------------------------------------------------------------- game lifecycle
+
+interface StartOpts {
+  link?: NetLink;
+  replay?: Replay;
+  restore?: Record<string, unknown>;
+  log?: LoggedCommand[];
+}
+
+function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
+  link?.close();
+  link = opts.link ?? null;
+  session = new Session(cfg, { link: opts.link, replay: opts.replay?.log, restore: opts.restore, log: opts.log });
+  const s = session.sim;
+  s.fxScale = QUALITY[settings.quality];
   background?.destroy(true);
-  background = buildBackground(map);
+  background = buildBackground(s.map);
   projection = makeProjection(cameraMode);
   buildView();
   minimap?.destroy();
-  minimap = new Minimap(stage, map, sim, (wx, wy) => lookAt(wx, wy));
+  minimap = new Minimap(stage, s.map, s, (wx, wy) => lookAt(wx, wy));
+  hud.configure(s);
   // open on the first entry, zoomed so the gates read clearly
   zoom = Math.max(minZoom(), 1);
-  const [ax, ay] = map.routes[0].airFrom;
+  const [ax, ay] = s.map.routes[0].airFrom;
   lookAt(Math.min(MAP_W, Math.max(0, ax)), Math.min(MAP_H, Math.max(0, ay)));
   placing = -1;
-  selected = null;
-  aiming = null;
-  acc = 0;
+  clearSelection();
   endShown = false;
-  setSpeed(1);
-  overlay.classList.add('hidden');
+  endlessFrom = 0;
+  wasClear = true;
+  lastSpeed = 1;
+  session.speed = opts.restore ? 0 : 1;
+  if (link) {
+    link.onClose = () => {
+      session?.dropLink();
+      link = null;
+      flash('Your partner left — carrying on solo');
+    };
+  }
+  hideMenus();
+  sound.setMusic(true);
+  if (opts.restore) flash('Game restored — paused. Press Space to continue.');
+}
+
+function openMenu(): void {
+  if (session && session.mode !== 'coop') session.speed = 0;
+  void showMain();
+}
+
+function openSettings(): void {
+  if (session && session.mode !== 'coop') session.speed = 0;
+  showSettings(() => (session && !session.finished ? resume() : void showMain()));
+}
+
+function resume(): void {
+  hideMenus();
+  if (session && session.mode !== 'coop') session.speed = lastSpeed;
 }
 
 function loadCamera(): CameraMode {
@@ -159,9 +323,10 @@ function buildView(): void {
     view = null;
   }
   fit();
-  if (!sim || !background) return;
-  view = new GameRenderer(sim, atlas, background, projection);
+  if (!session || !background) return;
+  view = new GameRenderer(session.sim, atlas, background, projection);
   cam.addChild(view.root);
+  applyCamera();
 }
 
 function toggleCamera(): void {
@@ -179,6 +344,79 @@ function toggleCamera(): void {
   lookAt(wx, wy);
 }
 
+// ---------------------------------------------------------------- saving
+
+let saving = false;
+
+/** Saves the running solo game (snapshot + log) so it can be continued after a reload. */
+async function saveGame(): Promise<void> {
+  if (!session || session.mode !== 'local' || session.finished || saving || session.sim.wave === 0) return;
+  saving = true;
+  await idbSet('save', { config: session.config, snapshot: session.sim.snapshot(), log: session.log, wave: session.sim.wave, at: Date.now() });
+  saving = false;
+}
+
+interface SaveData {
+  config: GameConfig;
+  snapshot: Record<string, unknown>;
+  log: LoggedCommand[];
+  wave: number;
+}
+
+// ---------------------------------------------------------------- end of game
+
+async function showEnd(win: boolean): Promise<void> {
+  endShown = true;
+  const s = session!.sim;
+  const cfg = session!.config;
+  const replayMode = session!.mode === 'replay';
+  sound.play(win ? 'victory' : 'defeat');
+  const finalWin = win || endlessFrom > 0;
+  const score = computeScore(cfg, s.wave, s.totalKills, s.lives, finalWin);
+  let medals = 0;
+  if (!replayMode) {
+    const entry = { score, wave: s.wave, kills: s.totalKills, win: finalWin, difficulty: cfg.difficulty, modifiers: cfg.modifiers, date: new Date().toISOString().slice(0, 10) };
+    medals = recordGame(cfg, entry, endlessFrom ? s.wave - TOTAL_WAVES : 0, !endlessFrom);
+    void idbSet('save', undefined);
+  }
+  const board = getProfile().scores[cfg.map.name] ?? [];
+  const rank = board.findIndex((e) => e.score === score) + 1;
+  overlay.classList.remove('hidden');
+  overlay.innerHTML = `
+    <div class="card" style="max-width:460px;text-align:center">
+      <h1>${replayMode ? 'REPLAY ENDED' : win ? 'VICTORY' : endlessFrom ? 'OVERRUN' : 'DEFEAT'}</h1>
+      <p>${win ? `All ${TOTAL_WAVES} waves repelled` : `Wave ${s.wave}`} · ${s.totalKills} kills · ${DIFFICULTIES[cfg.difficulty].name}</p>
+      <p class="score">Score <b>${score}</b>${rank && !replayMode ? ` · #${rank} on this map` : ''}</p>
+      ${medals ? `<p class="medal">+${medals} ★ research medals</p>` : ''}
+      <div class="actions" style="justify-content:center;flex-wrap:wrap">
+        ${win && !replayMode ? '<button id="endless" class="primary">Keep going (endless)</button>' : ''}
+        ${!replayMode ? '<button id="share">Copy replay link</button>' : ''}
+        <button id="retry" class="${win ? '' : 'primary'}">${replayMode ? 'Watch again' : 'Play again'}</button>
+        <button id="maps">Menu</button>
+      </div>
+      <p class="d" id="endmsg"></p>
+    </div>`;
+  const replay: Replay = { v: 1, config: cfg, log: session!.log, result: { wave: s.wave, score, win: finalWin } };
+  overlay.querySelector<HTMLButtonElement>('#retry')!.onclick = () => (replayMode ? startGame(cfg, { replay: replayFrom }) : startGame({ ...cfg, seed: cfg.daily ? cfg.seed : Math.floor(Math.random() * 1e9) }));
+  overlay.querySelector<HTMLButtonElement>('#maps')!.onclick = () => void showMain();
+  const share = overlay.querySelector<HTMLButtonElement>('#share');
+  if (share) share.onclick = async () => {
+    const url = await replayLink(replay);
+    const ok = await copyText(url);
+    overlay.querySelector('#endmsg')!.textContent = ok ? `Copied (${Math.round(url.length / 1024)} KB link).` : url;
+  };
+  const endless = overlay.querySelector<HTMLButtonElement>('#endless');
+  if (endless) endless.onclick = () => {
+    s.endless = true;
+    s.victory = false;
+    endlessFrom = s.wave;
+    endShown = false;
+    hideMenus();
+  };
+}
+
+let replayFrom: Replay | undefined;
+
 // ---------------------------------------------------------------- camera
 
 /** Zoomed out far enough to see the whole map. */
@@ -189,14 +427,16 @@ function minZoom(): number {
 /** Clamp so the map never leaves the screen, and push the transform to the scene. */
 function applyCamera(): void {
   zoom = Math.min(MAX_ZOOM, Math.max(minZoom(), zoom));
-  const clampAxis = (c: number, size: number, view: number) => {
-    const half = view / 2 / zoom;
+  const clampAxis = (c: number, size: number, v: number) => {
+    const half = v / 2 / zoom;
     return size <= half * 2 ? size / 2 : Math.min(size - half, Math.max(half, c));
   };
   camX = clampAxis(camX, projection.width, viewW);
   camY = clampAxis(camY, projection.height, viewH);
+  const sx = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
+  const sy = shake > 0.2 ? (Math.random() - 0.5) * shake : 0;
   cam.scale.set(zoom);
-  cam.position.set(Math.round(viewW / 2 - camX * zoom), Math.round(viewH / 2 - camY * zoom));
+  cam.position.set(Math.round(viewW / 2 - camX * zoom + sx), Math.round(viewH / 2 - camY * zoom + sy));
   const hw = viewW / 2 / zoom;
   const hh = viewH / 2 / zoom;
   view?.setView(camX - hw, camY - hh, camX + hw, camY + hh);
@@ -231,70 +471,28 @@ function viewQuad(): [number, number][] {
   return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) => projection.toWorld(camX + dx, camY + dy));
 }
 
-const previews = new Map<number, HTMLCanvasElement>();
+/** Volume and stereo pan for a sound at a world point, from where it is on screen. */
+function spatial(x: number, y: number): [number, number] {
+  const sx = (projection.x(x, y) - camX) * zoom + viewW / 2;
+  const sy = (projection.y(x, y) - camY) * zoom + viewH / 2;
+  const ox = Math.max(0, -sx, sx - viewW);
+  const oy = Math.max(0, -sy, sy - viewH);
+  const off = Math.hypot(ox, oy) / Math.max(viewW, viewH);
+  const gain = Math.max(0, 1 - off * 2) * (0.55 + 0.45 * Math.min(1, zoom));
+  return [gain, Math.max(-0.8, Math.min(0.8, (sx - viewW / 2) / (viewW / 2) * 0.7))];
+}
 
-/** Low-res terrain for the map picker; borrows the map size, then restores the current one. */
-function preview(i: number, w: number, h: number): HTMLCanvasElement {
-  let src = previews.get(i);
+const previews = new Map<string, HTMLCanvasElement>();
+
+/** Low-res terrain for map pickers; borrows the map size, then restores the current one. */
+function preview(def: MapDef, w: number, h: number): HTMLCanvasElement {
+  const key = JSON.stringify([def.name, def.seed, def.cols, def.rows, def.routes, def.rocks, def.rockList?.length]);
+  let src = previews.get(key);
   if (src) return src;
-  const def = MAPS[i];
   src = drawTerrain(buildMap(def), Math.min(w / (def.cols * TILE), h / (def.rows * TILE)) * 2, true);
-  if (sim) useMapSize(sim.map.def);
-  previews.set(i, src);
+  if (session) useMapSize(session.sim.map.def);
+  previews.set(key, src);
   return src;
-}
-
-function showMenu(): void {
-  setSpeed(0);
-  overlay.classList.remove('hidden');
-  overlay.innerHTML = `
-    <div class="card">
-      <h1>WARZONE <span>TD</span></h1>
-      <p>Hold the line for ${TOTAL_WAVES} waves. There is no road: your towers are the walls. Build a maze that makes ground units walk past as many guns as possible — but you can never fully block them. Air units fly straight over.</p>
-      <div class="maps">${MAPS.map((m, i) => `<button data-map="${i}"><canvas width="240" height="160"></canvas><b>${m.name}</b><span class="size">${m.cols}×${m.rows} · ${m.routes.length} route${m.routes.length > 1 ? 's' : ''}</span><span class="d">${m.desc}</span></button>`).join('')}</div>
-      ${sim && !sim.gameOver && !sim.victory ? '<div class="actions"><button id="resume">Resume current game</button></div>' : ''}
-    </div>`;
-  overlay.querySelectorAll<HTMLButtonElement>('[data-map]').forEach((b) => {
-    const i = Number(b.dataset.map);
-    const c = b.querySelector('canvas')!;
-    const src = preview(i, c.width, c.height);
-    // letterbox: maps have different shapes
-    const k = Math.min(c.width / src.width, c.height / src.height);
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#0c0e09';
-    g.fillRect(0, 0, c.width, c.height);
-    g.drawImage(src, (c.width - src.width * k) / 2, (c.height - src.height * k) / 2, src.width * k, src.height * k);
-    b.onclick = () => startGame(i);
-  });
-  const resume = overlay.querySelector<HTMLButtonElement>('#resume');
-  if (resume) resume.onclick = () => {
-    overlay.classList.add('hidden');
-    setSpeed(lastSpeed);
-  };
-}
-
-function showEnd(win: boolean): void {
-  endShown = true;
-  overlay.classList.remove('hidden');
-  overlay.innerHTML = `
-    <div class="card" style="max-width:420px;text-align:center">
-      <h1>${win ? 'VICTORY' : 'DEFEAT'}</h1>
-      <p>${win ? `All ${TOTAL_WAVES} waves repelled` : `Overrun on wave ${sim!.wave}`} · ${sim!.totalKills} kills</p>
-      <div class="actions" style="justify-content:center">
-        ${win ? '<button id="endless" class="primary">Keep going (endless)</button>' : ''}
-        <button id="retry" class="${win ? '' : 'primary'}">Play again</button>
-        <button id="maps">Maps</button>
-      </div>
-    </div>`;
-  overlay.querySelector<HTMLButtonElement>('#retry')!.onclick = () => startGame(mapIndex);
-  overlay.querySelector<HTMLButtonElement>('#maps')!.onclick = () => showMenu();
-  const endless = overlay.querySelector<HTMLButtonElement>('#endless');
-  if (endless) endless.onclick = () => {
-    sim!.endless = true;
-    sim!.victory = false;
-    endShown = false;
-    overlay.classList.add('hidden');
-  };
 }
 
 // ---------------------------------------------------------------- layout
@@ -313,23 +511,18 @@ function fit(): void {
 
 // ---------------------------------------------------------------- input
 
-function pointerToCanvas(e: PointerEvent | WheelEvent): [number, number] {
+function pointerToCanvas(e: { clientX: number; clientY: number }): [number, number] {
   const rect = app.canvas.getBoundingClientRect();
   return [e.clientX - rect.left, e.clientY - rect.top];
 }
 
-/** Pointer -> projected screen space (before the camera). */
-function pointerToScreen(e: PointerEvent): [number, number] {
-  const [px, py] = pointerToCanvas(e);
+/** Canvas pixel -> projected screen space (before the camera). */
+function canvasToScreen(px: number, py: number): [number, number] {
   return [camX + (px - viewW / 2) / zoom, camY + (py - viewH / 2) / zoom];
 }
 
-function pointerToMap(e: PointerEvent): [number, number] {
-  return projection.toWorld(...pointerToScreen(e));
-}
-
-function updateHover(e: PointerEvent): void {
-  const [x, y] = pointerToMap(e);
+function updateHover(e: { clientX: number; clientY: number }): void {
+  const [x, y] = projection.toWorld(...canvasToScreen(...pointerToCanvas(e)));
   aimX = x;
   aimY = y;
   cellCol = Math.floor(x / TILE);
@@ -340,27 +533,146 @@ function updateHover(e: PointerEvent): void {
   hoverRow = size === 1 ? cellRow : Math.round(y / TILE - size / 2);
 }
 
+/** A click on the battlefield (mouse release or touch tap) that wasn't a drag. */
+function clickAt(e: { clientX: number; clientY: number }): void {
+  const s = sim();
+  if (!s) return;
+  updateHover(e);
+  if (targeting) return fireTargeting(aimX, aimY);
+  if (placing >= 0) {
+    issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
+    return;
+  }
+  // the commander first, then towers (they stand up off the ground: try their deck, then the ground)
+  const [sx, sy] = canvasToScreen(...pointerToCanvas(e));
+  if (s.hero) {
+    const hx = projection.x(s.hero.x, s.hero.y);
+    const hy = projection.y(s.hero.x, s.hero.y) - 8 * projection.lift;
+    if (Math.hypot(hx - sx, hy - sy) < 14) return selectHero();
+  }
+  const [dx, dy] = projection.toWorld(sx, sy + 12 * projection.lift);
+  const t = s.towerAtTile(Math.floor(dx / TILE), Math.floor(dy / TILE)) ?? s.towerAtTile(cellCol, cellRow);
+  if (heroSelected && !t && session!.mode !== 'replay') {
+    issue({ t: 'heroMove', x: aimX, y: aimY });
+    return;
+  }
+  clearSelection();
+  selected = t;
+}
+
 // a press becomes a pan once it moves this far; right-click without a drag still cancels
-const DRAG_PX = 5;
-let drag: { button: number; x: number; y: number; panning: boolean } | null = null;
+const DRAG_PX = 6;
+let drag: { button: number; x: number; y: number; panning: boolean; box: boolean; touch: boolean; painted: boolean } | null = null;
+const touches = new Map<number, [number, number]>();
+let pinch: { d: number; mx: number; my: number } | null = null;
+
+function boxSelect(x0: number, y0: number, x1: number, y1: number): void {
+  const s = sim();
+  if (!s) return;
+  const [ax, ay] = canvasToScreen(Math.min(x0, x1), Math.min(y0, y1));
+  const [bx, by] = canvasToScreen(Math.max(x0, x1), Math.max(y0, y1));
+  multi = s.towers.filter((t) => {
+    const px = projection.x(t.x, t.y);
+    const py = projection.y(t.x, t.y);
+    return px >= ax && px <= bx && py >= ay && py <= by;
+  });
+  selected = null;
+  heroSelected = false;
+  if (multi.length === 1) {
+    selected = multi[0];
+    multi = [];
+  }
+}
 
 function bindInput(): void {
   const c = app.canvas;
+  c.addEventListener('pointerdown', (e) => {
+    if (!session) return;
+    const [px, py] = pointerToCanvas(e);
+    const touch = e.pointerType === 'touch';
+    if (touch) {
+      touches.set(e.pointerId, [px, py]);
+      if (touches.size === 2) {
+        // second finger: pinch/pan, and whatever the first finger started is cancelled
+        const [[ax, ay], [bx, by]] = [...touches.values()];
+        pinch = { d: Math.hypot(bx - ax, by - ay), mx: (ax + bx) / 2, my: (ay + by) / 2 };
+        drag = null;
+        return;
+      }
+    }
+    c.setPointerCapture(e.pointerId);
+    drag = { button: e.button, x: px, y: py, panning: false, box: e.shiftKey && e.button === 0 && placing < 0, touch, painted: false };
+    if (e.button === 1) e.preventDefault(); // no autoscroll
+    updateHover(e);
+    if (e.button === 0 && !touch && placing >= 0 && !targeting && session.mode !== 'replay') {
+      // the tower stays selected so walls can be laid quickly; drag to paint a line
+      issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
+      drag.painted = true;
+    }
+  });
   c.addEventListener('pointermove', (e) => {
-    if (drag) {
-      const [px, py] = pointerToCanvas(e);
-      // left button pans only when not building (left-drag paints walls)
-      const canPan = drag.button !== 0 || placing < 0;
-      if (canPan && (drag.panning || Math.hypot(px - drag.x, py - drag.y) > DRAG_PX)) {
-        drag.panning = true;
-        panBy(px - drag.x, py - drag.y);
-        drag.x = px;
-        drag.y = py;
+    const [px, py] = pointerToCanvas(e);
+    if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+      touches.set(e.pointerId, [px, py]);
+      if (pinch && touches.size >= 2) {
+        const [[ax, ay], [bx, by]] = [...touches.values()];
+        const d = Math.hypot(bx - ax, by - ay);
+        const mx = (ax + bx) / 2;
+        const my = (ay + by) / 2;
+        panBy(mx - pinch.mx, my - pinch.my);
+        zoomAt(d / (pinch.d || d), mx, my);
+        pinch = { d, mx, my };
+        return;
       }
     }
     const [pc, pr] = [hoverCol, hoverRow];
     updateHover(e);
-    if (sim && placing >= 0 && e.buttons & 1 && (pc !== hoverCol || pr !== hoverRow)) sim.place(placing, hoverCol, hoverRow);
+    if (!drag) return;
+    const moved = Math.hypot(px - drag.x, py - drag.y) > DRAG_PX;
+    if (drag.box) {
+      if (moved) view?.setBox([...canvasToScreen(drag.x, drag.y), ...canvasToScreen(px, py)] as [number, number, number, number]);
+      return;
+    }
+    const painting = drag.button === 0 && placing >= 0 && !targeting;
+    if (painting) {
+      if ((moved || drag.painted) && (pc !== hoverCol || pr !== hoverRow || !drag.painted) && session?.mode !== 'replay') {
+        issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
+        drag.painted = true;
+      }
+      return;
+    }
+    if (drag.panning || moved) {
+      drag.panning = true;
+      panBy(px - drag.x, py - drag.y);
+      drag.x = px;
+      drag.y = py;
+    }
+  });
+  const up = (e: PointerEvent) => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = null;
+    if (!drag || (e.button !== drag.button && !drag.touch)) return;
+    const d = drag;
+    drag = null;
+    if (!session) return;
+    const [px, py] = pointerToCanvas(e);
+    if (d.box) {
+      view?.setBox(null);
+      if (Math.hypot(px - d.x, py - d.y) > DRAG_PX) boxSelect(d.x, d.y, px, py);
+      else clickAt(e);
+      return;
+    }
+    if (d.panning || d.painted) return;
+    if (d.button === 2) {
+      placing = -1;
+      clearSelection();
+    } else if (d.button === 0) clickAt(e);
+  };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', (e) => {
+    touches.delete(e.pointerId);
+    pinch = null;
+    drag = null;
   });
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -369,59 +681,44 @@ function bindInput(): void {
     const k = e.ctrlKey ? 0.01 : 0.0015;
     zoomAt(Math.exp(-e.deltaY * k), px, py);
   }, { passive: false });
-  window.addEventListener('pointerup', (e) => {
-    if (!drag || e.button !== drag.button) return;
-    const { button, panning } = drag;
-    drag = null;
-    if (!sim || panning) return;
-    if (button === 2) {
-      placing = -1;
-      selected = null;
-      aiming = null;
-    } else if (button === 0 && aiming) {
-      updateHover(e);
-      if (sim.fireSuper(aiming, aimX, aimY)) aiming = null;
-    } else if (button === 0 && placing < 0) {
-      // towers stand up off the ground: try the point on their deck first, then the ground
-      updateHover(e);
-      const [sx, sy] = pointerToScreen(e);
-      const [dx, dy] = projection.toWorld(sx, sy + 12 * projection.lift);
-      selected = sim.towerAtTile(Math.floor(dx / TILE), Math.floor(dy / TILE)) ?? sim.towerAtTile(cellCol, cellRow);
-    }
-  });
   c.addEventListener('pointerleave', () => {
     hoverCol = hoverRow = -9;
     cellCol = cellRow = -1;
   });
   c.addEventListener('contextmenu', (e) => e.preventDefault());
-  c.addEventListener('pointerdown', (e) => {
-    if (!sim) return;
-    const [px, py] = pointerToCanvas(e);
-    drag = { button: e.button, x: px, y: py, panning: false };
-    if (e.button === 1) e.preventDefault(); // no autoscroll
-    if (e.button === 0 && placing >= 0) {
-      // the tower stays selected so walls can be laid quickly; drag to paint a line
-      updateHover(e);
-      sim.place(placing, hoverCol, hoverRow);
-    }
-  });
   window.addEventListener('keyup', (e) => keysHeld.delete(e.key));
   window.addEventListener('blur', () => keysHeld.clear());
 
   window.addEventListener('keydown', (e) => {
-    if (!sim || !overlay.classList.contains('hidden')) return;
+    const s = sim();
+    if (!s || !overlay.classList.contains('hidden')) return;
+    if ((e.target as HTMLElement).tagName === 'INPUT') return;
     const k = e.key.toLowerCase();
-    if (k === 'q' || k === 'e') {
-      hud.showCategory(hud.cat + (k === 'e' ? 1 : -1));
+    if ((e.ctrlKey || e.metaKey) && k === 'z') {
+      e.preventDefault();
+      issue({ t: 'undo' });
       return;
     }
+    if (k === 'tab') {
+      e.preventDefault();
+      keysHeld.add('Tab');
+      return;
+    }
+    if (k === 'q' || k === 'e') return hud.showCategory(hud.cat + (k === 'e' ? 1 : -1));
     if (k >= '1' && k <= '9') {
       const type = hud.typeAt(Number(k) - 1);
       if (type >= 0) pick(type);
       return;
     }
     if (k === 'g') return toggleGate();
-    if (k === 'r') return startAiming();
+    if (k === 'r') return startSuper();
+    if (k === 'h') return selectHero();
+    if (k === 'z') return startItem(0);
+    if (k === 'x') return startItem(1);
+    if (k === 'c') return startItem(2);
+    if (k === '[') return startAbility(0);
+    if (k === ']') return startAbility(1);
+    if (k === '\\') return startAbility(2);
     if (e.key.startsWith('Arrow')) {
       e.preventDefault();
       keysHeld.add(e.key);
@@ -434,68 +731,190 @@ function bindInput(): void {
       lookAt(MAP_W / 2, MAP_H / 2);
     } else if (k === 'escape') {
       placing = -1;
-      selected = null;
-      aiming = null;
-    } else if (k === 'u' && selected) sim.upgrade(selected);
-    else if (k === 's' && selected) sellSelected();
-    else if (k === 't' && selected && TOWERS[selected.type].targeted) selected.mode = (selected.mode + 1) % 4;
-    else if (k === 'n') sim.startNextWave();
+      clearSelection();
+    } else if (k === 'u') {
+      if (multi.length) upgradeCheapestFirst(multi);
+      else if (selected) issue({ t: 'upgrade', ids: [selected.id] });
+    } else if (k === 's') {
+      if (multi.length) issue({ t: 'sell', ids: multi.map((t) => t.id) });
+      else sellSelected();
+      multi = [];
+    } else if (k === 't' && selected && TOWERS[selected.type].targeted) issue({ t: 'mode', id: selected.id, mode: (selected.mode + 1) % 4 });
+    else if (k === 'n') issue({ t: 'wave' });
     else if (k === ' ') {
       e.preventDefault();
-      setSpeed(speed === 0 ? lastSpeed : 0);
-    } else if (k === 'f') setSpeed(speed === 0 ? 1 : speed === 4 ? 1 : speed * 2);
+      setSpeed(session!.speed === 0 ? lastSpeed : 0);
+    } else if (k === 'f') setSpeed(session!.speed === 0 ? 1 : session!.speed === 4 ? 1 : session!.speed * 2);
     else if (k === 'v') toggleCamera();
   });
 }
 
+// ---------------------------------------------------------------- events: sound and screen effects
+
+const SHOT_SOUND: Record<string, string> = {
+  nuke: 'nukeLaunch', mine: '',
+};
+const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow'];
+
+function handleEvents(s: Sim): void {
+  const ev = s.events;
+  for (let k = 0; k < ev.length; k += EV_SIZE) {
+    const type = ev[k];
+    const x = ev[k + 1];
+    const y = ev[k + 2];
+    const a = ev[k + 3];
+    switch (type) {
+      case EV_SHOT: {
+        const kind = TOWERS[a].kind;
+        const name = SHOT_SOUND[kind] ?? kind;
+        if (name) sound.play(name, x, y);
+        break;
+      }
+      case EV_BOOM: {
+        sound.play(a > 2.5 ? 'bigboom' : 'boom', x, y, a);
+        if (settings.shake && a >= 1.4) {
+          const [g] = spatial(x, y);
+          shake = Math.min(18, shake + a * 1.6 * g);
+        }
+        break;
+      }
+      case EV_LEAK:
+        sound.play('leak');
+        break;
+      case EV_BUILD:
+        sound.play('build', x, y);
+        break;
+      case EV_SELL:
+        sound.play('sell', x, y);
+        break;
+      case EV_UPGRADE:
+        sound.play('upgrade', x, y);
+        break;
+      case EV_WAVE:
+        sound.play('wave');
+        void saveGame();
+        break;
+      case EV_STATUS:
+        sound.play(STATUS_SOUND[a], x, y);
+        break;
+      case EV_HIT:
+        if (ev[k + 4]) sound.play('shatter', x, y);
+        break;
+      case EV_NUKE:
+        sound.play('nuke');
+        if (settings.shake) shake = 24;
+        slowmo = 0.8;
+        break;
+      case EV_LEVEL:
+        sound.play('level');
+        break;
+      case EV_ITEM:
+        sound.play(a === 2 ? 'coin' : 'item');
+        break;
+      case EV_ABILITY:
+        sound.play(['airstrike', 'rally', 'stun'][a]);
+        break;
+      case EV_DENY:
+        sound.play('deny');
+        break;
+    }
+  }
+  view?.consumeEvents(ev);
+  ev.length = 0;
+}
+
 // ---------------------------------------------------------------- loop
+
+function banner(): string {
+  if (!session) return '';
+  if (session.mode === 'replay') {
+    return `<b>REPLAY</b> · wave ${session.sim.wave} · <button data-act="skip">Skip to next wave</button>`;
+  }
+  if (session.mode === 'coop') {
+    if (session.desync) return '<b class="bad">Out of sync with your partner</b> — the games have diverged; restart to play together again.';
+    if (session.stalled) return '<b>CO-OP</b> · waiting for your partner…';
+    return '<b>CO-OP</b> · shared bank, both players build';
+  }
+  return '';
+}
 
 function frame(): void {
   const t0 = performance.now();
-  const dt = Math.min(0.1, app.ticker.deltaMS / 1000);
+  const realDt = Math.min(0.1, app.ticker.deltaMS / 1000);
   if (keysHeld.size) {
-    const d = PAN_SPEED * dt;
+    const d = PAN_SPEED * realDt;
     panBy((keysHeld.has('ArrowLeft') ? d : 0) - (keysHeld.has('ArrowRight') ? d : 0),
       (keysHeld.has('ArrowUp') ? d : 0) - (keysHeld.has('ArrowDown') ? d : 0));
   }
-  if (sim && view) {
-    if (speed > 0 && !sim.gameOver && !(sim.victory && !sim.endless)) {
-      acc += dt * speed;
-      let steps = 0;
-      while (acc >= DT && steps < MAX_STEPS_PER_FRAME) {
-        sim.step();
-        acc -= DT;
-        steps++;
-      }
-      if (steps === MAX_STEPS_PER_FRAME) acc = 0; // can't keep up: drop time rather than spiral
-    }
+  if (shake > 0) {
+    shake = Math.max(0, shake - realDt * 40);
+    applyCamera();
+  }
+  if (session && view) {
+    const s = session.sim;
+    if (slowmo > 0) slowmo -= realDt;
+    session.timeScale = slowmo > 0 ? 0.3 : 1;
+    session.advance(realDt);
     const t1 = performance.now();
     simTimeAcc += t1 - t0;
+    handleResults();
+    handleEvents(s);
 
-    if (selected && !sim.towers.includes(selected)) selected = null;
-    if (aiming && !sim.towers.includes(aiming)) aiming = null;
-    view.render(speed > 0 ? acc / DT : 1, { hoverCol, hoverRow, cellCol, cellRow, placing, selected, aiming, aimX, aimY });
-    hud.update(sim, placing, selected, speed);
+    // the field just emptied: report on the wave(s) since the last report
+    const clear = s.fieldClear;
+    if (clear && !wasClear && s.wave > 0 && session.mode !== 'replay') {
+      const r = s.takeReport();
+      hud.showReport(s, s.wave, r.damage, r.leaked);
+    }
+    wasClear = clear;
+
+    if (selected && !s.towers.includes(selected)) selected = null;
+    if (multi.length) multi = multi.filter((t) => s.towers.includes(t));
+    if (targeting?.kind === 'super' && !s.tower(targeting.index)) targeting = null;
+    view.tick(realDt);
+    view.render(session.speed > 0 ? session.acc / (1 / 60) : 1, {
+      hoverCol, hoverRow, cellCol, cellRow, placing, selected, aiming: null, aimX, aimY,
+      targeting: targeting ? { r: targeting.r, color: targeting.color } : null,
+      heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'),
+    });
+    hud.update(s, { placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner() });
     minimap?.update(viewQuad());
     renderTimeAcc += performance.now() - t1;
+    sound.intensity = Math.min(1, s.spawning ? 0.55 + s.liveCount / 150 : s.liveCount / 60);
 
-    if (!endShown && (sim.gameOver || (sim.victory && !sim.endless))) showEnd(sim.victory);
+    if (!endShown && session.finished) void showEnd(s.victory);
   }
 
   frames++;
-  frameTimeAcc += performance.now() - t0;
   perfT += app.ticker.deltaMS;
-  if (perfT >= 500 && sim && view) {
+  const s = sim();
+  if (perfT >= 500 && s && view) {
     const fps = (frames * 1000) / perfT;
     hud.perfLine(
       `FPS <b>${fps.toFixed(0)}</b> · sim <b>${(simTimeAcc / frames).toFixed(2)}ms</b> · ` +
       `cpu render <b>${(renderTimeAcc / frames).toFixed(2)}ms</b> · ` +
-      `enemies <b>${sim.liveCount}</b> · projectiles <b>${sim.pCount}</b> · fx <b>${sim.fCount}</b> · ` +
-      `towers <b>${sim.towers.length}</b> · sprites <b>${view.drawnParticles}</b> · ${app.renderer.name}`,
+      `enemies <b>${s.liveCount}</b> · projectiles <b>${s.pCount}</b> · fx <b>${s.fCount}</b> · ` +
+      `towers <b>${s.towers.length}</b> · sprites <b>${view.drawnParticles}</b> · ${app.renderer.name}`,
     );
     frames = 0;
-    frameTimeAcc = simTimeAcc = renderTimeAcc = perfT = 0;
+    simTimeAcc = renderTimeAcc = perfT = 0;
   }
+}
+
+// ---------------------------------------------------------------- boot
+
+function editor(def?: MapDef): void {
+  if (session && session.mode !== 'coop') session.speed = 0;
+  overlay.classList.remove('hidden');
+  openEditor(overlay, def ?? blankMap(), {
+    play: (d) => showSetup(d),
+    save: (d) => saveCustomMap(d),
+    share: async (d) => {
+      const ok = await copyText(await mapLink(d));
+      flash(ok ? 'Map link copied' : 'Could not copy the link');
+    },
+    back: () => void showMain(),
+  });
 }
 
 async function boot(): Promise<void> {
@@ -515,20 +934,71 @@ async function boot(): Promise<void> {
   fit();
   new ResizeObserver(fit).observe(stage);
   bindInput();
+  sound.spatial = spatial;
+  onSettings(() => {
+    if (session) session.sim.fxScale = QUALITY[settings.quality];
+  });
+  initMenus({
+    start: (cfg, l) => startGame(cfg, { link: l }),
+    resumeCurrent: () => resume(),
+    currentActive: () => !!session && !session.finished,
+    hasSave: async () => !!(await idbGet<SaveData>('save')),
+    continueSave: async () => {
+      const save = await idbGet<SaveData>('save');
+      if (save) startGame(save.config, { restore: save.snapshot, log: save.log });
+    },
+    watch: (r) => {
+      replayFrom = r;
+      startGame(r.config, { replay: r });
+    },
+    editor,
+    preview,
+    click: () => sound.play('click'),
+  });
   app.ticker.maxFPS = 0;
   app.ticker.add(frame);
+  // save on the way out (tab closed, switched away, app backgrounded)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void saveGame();
+  });
   // expose for debugging/benchmarks in the console
   (window as unknown as { game: unknown }).game = {
-    get sim() { return sim; },
+    get sim() { return sim(); },
+    get session() { return session; },
     app,
     get camera() { return { x: camX, y: camY, zoom }; },
     look(wx: number, wy: number, z = zoom) {
       zoom = z;
       lookAt(wx, wy);
     },
+    start: (cfg: GameConfig) => startGame(cfg),
+    Session,
+    Sim: SimClass,
+    quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal') =>
+      startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234 }),
   };
   hud.camera(projection.mode);
-  showMenu();
+
+  // opened from a shared link?
+  const hash = await readHash();
+  history.replaceState(null, '', location.pathname + location.search);
+  if (hash?.replay) {
+    replayFrom = hash.replay;
+    startGame(hash.replay.config, { replay: hash.replay });
+  } else if (hash?.map) {
+    saveCustomMap(hash.map);
+    showSetup(hash.map);
+  } else if (hash?.rmap && parseMapCode(hash.rmap)) {
+    showRandom(hash.rmap);
+  } else {
+    void showMain();
+  }
+
+  if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      // offline play just won't be available
+    });
+  }
 }
 
 boot();

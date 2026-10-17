@@ -17,7 +17,9 @@ export interface MapDef {
   cols: number;
   rows: number;
   routes: { entry: Gate; exit: Gate }[];
-  rocks: number;
+  rocks: number; // how many to scatter (ignored when rockList is given)
+  /** Exact rocks, for hand-made maps from the editor. */
+  rockList?: { c: number; r: number; s: number }[];
 }
 
 export const MAPS: MapDef[] = [
@@ -180,6 +182,25 @@ export function buildMap(def: MapDef): GameMap {
   const blocked = new Uint8Array(COLS * ROWS);
   const seen = new Uint8Array(COLS * ROWS);
   const queue = new Int32Array(COLS * ROWS);
+  const tryRock = (c: number, r: number, s: number): boolean => {
+    const cells: number[] = [];
+    for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) cells.push((r + dy) * COLS + c + dx);
+    if (c < 0 || r < 0 || c + s > COLS || r + s > ROWS || cells.some((i) => grid[i] !== T_BUILD)) return false;
+    for (const i of cells) blocked[i] = 1;
+    let ok = true;
+    for (let k = 0; k < routes.length && ok; k++) ok = connected(blocked, routes[k], seen, queue);
+    if (!ok) {
+      for (const i of cells) blocked[i] = 0;
+      return false;
+    }
+    for (const i of cells) grid[i] = T_ROCK;
+    rocks.push({ c, r, s });
+    return true;
+  };
+  if (def.rockList) {
+    for (const k of def.rockList) tryRock(k.c, k.r, k.s);
+    return { def, grid, routes, rocks };
+  }
   let tries = 0;
   while (rocks.length < def.rocks && tries++ < def.rocks * 20) {
     const s = rng.next() < 0.4 ? 2 : 1;
@@ -192,18 +213,7 @@ export function buildMap(def: MapDef): GameMap {
       r = near.r + rng.int(5) - 2;
       if (c < 3 || r < 1 || c + s > COLS - 3 || r + s > ROWS - 1) continue;
     }
-    const cells: number[] = [];
-    for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) cells.push((r + dy) * COLS + c + dx);
-    if (cells.some((i) => grid[i] !== T_BUILD)) continue;
-    for (const i of cells) blocked[i] = 1;
-    let ok = true;
-    for (let k = 0; k < routes.length && ok; k++) ok = connected(blocked, routes[k], seen, queue);
-    if (!ok) {
-      for (const i of cells) blocked[i] = 0;
-      continue;
-    }
-    for (const i of cells) grid[i] = T_ROCK;
-    rocks.push({ c, r, s });
+    tryRock(c, r, s);
   }
   return { def, grid, routes, rocks };
 }

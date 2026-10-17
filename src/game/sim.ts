@@ -1,10 +1,12 @@
 import {
-  COLS, COMBOS, DT, EN_BOSS, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
-  START_LIVES, START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_GAP, buildWave, hpScale, rewardScale,
+  COLS, COMBOS, DT, EN_BOSS, EN_HELI, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
+  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_GAP, buildWave, hpScale, rewardScale,
   type SpawnGroup, type TowerKind,
 } from './defs';
+import { DIFFICULTIES, perk, type GameConfig } from './config';
+import type { Command } from './commands';
 import { FlowField } from './flow';
-import { T_BUILD, T_ROCK, type GameMap } from './maps';
+import { T_BUILD, T_ROCK, buildMap, type GameMap } from './maps';
 import { Rng } from './rng';
 import { SpatialHash } from './spatial';
 
@@ -131,6 +133,66 @@ interface Spawner {
 
 export type PlaceStatus = 'ok' | 'blocked' | 'occupied' | 'invalid';
 
+// Events for sound and screen effects, five numbers each: type, x, y, a, b. Purely cosmetic: the
+// simulation never reads them back, so they can't break determinism.
+export const EV_SHOT = 0; // a = tower type
+export const EV_BOOM = 1; // a = size
+export const EV_KILL = 2; // a = enemy kind, b = reward
+export const EV_LEAK = 3;
+export const EV_BUILD = 4;
+export const EV_SELL = 5;
+export const EV_UPGRADE = 6;
+export const EV_WAVE = 7; // a = wave
+export const EV_HIT = 8; // a = damage (big single hits only)
+export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed
+export const EV_NUKE = 10;
+export const EV_LEVEL = 11; // hero level up, a = level
+export const EV_ITEM = 12; // a = item
+export const EV_ABILITY = 13; // a = ability
+export const EV_DENY = 14;
+export const EV_SIZE = 5;
+
+export const ITEMS = [
+  { name: 'Barrage', key: 'Z', desc: 'Eight artillery shells rain down around the target.' },
+  { name: 'Mine Drop', key: 'X', desc: 'Scatters six mines around the target.' },
+  { name: 'Supply Crate', key: 'C', desc: 'Instant cash: $40 + $15 per wave.' },
+] as const;
+
+export const HERO_ABILITIES = [
+  { name: 'Airstrike', key: '[', cd: 40, desc: 'A jet carpet-bombs a line through the target.' },
+  { name: 'Rally', key: ']', cd: 50, desc: 'Towers near the hero fire 40% faster for 8s.' },
+  { name: 'Stun Grenade', key: '\\', cd: 25, desc: 'Stops every unit near the target for 2.5s.' },
+] as const;
+
+export const HERO_MAX_LEVEL = 10;
+
+export interface Hero {
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  ang: number;
+  pang: number;
+  path: number[]; // cells still to walk, next first
+  level: number;
+  xp: number;
+  cd: number[]; // ability cooldowns (s)
+  fireCd: number;
+  rallyT: number;
+  /** Stands in for the hero as the damage source, so kills can be credited. */
+  src: Tower;
+}
+
+/** A delayed area hit: airstrike bombs, barrage shells. */
+interface Strike {
+  x: number;
+  y: number;
+  t: number;
+  dmg: number;
+  r: number;
+  src: Tower | null;
+}
+
 const TURN_RATE = 10; // rad/s for turrets
 /** Render heights shared with the renderer: flying units and turret muzzles. */
 export const AIR_Z = 34;
@@ -146,7 +208,10 @@ function angleDiff(a: number, b: number): number {
 
 export class Sim {
   readonly map: GameMap;
-  readonly rng = new Rng(1234);
+  /** Gameplay randomness: must be consumed identically on every run (replays, co-op lockstep). */
+  readonly rng: Rng;
+  /** Visual-only randomness (particles), so effect settings never change the outcome. */
+  private readonly vr = new Rng(99);
   /** Per route: distance field towards its exit, over the current maze. */
   readonly fields: FlowField[];
   private readonly scratch: FlowField[];
@@ -154,8 +219,21 @@ export class Sim {
   readonly blocked = new Uint8Array(COLS * ROWS);
   private spawnCount = 0;
 
-  money = START_MONEY;
-  lives = START_LIVES;
+  readonly config: GameConfig;
+  money = 0;
+  lives = 0;
+  private readonly hpMult: number;
+  private readonly bountyMult: number;
+  readonly events: number[] = [];
+  /** Damage dealt by each tower since the last wave report (cosmetic: never read by the simulation). */
+  waveDamage = new Map<number, number>();
+  hero: Hero | null = null;
+  readonly items = [1, 1, 1];
+  readonly itemMax: number;
+  private readonly strikes: Strike[] = [];
+  leakedThisWave = 0;
+  /** Fraction of cosmetic particles to keep (effects quality setting). */
+  fxScale = 1;
   wave = 0;
   nextWaveTimer = 0;
   time = 0;
@@ -204,6 +282,7 @@ export class Sim {
   readonly eChill = new Float32Array(MAX_ENEMIES);
   readonly eFrozenT = new Float32Array(MAX_ENEMIES);
   readonly eHackT = new Float32Array(MAX_ENEMIES);
+  readonly eStunT = new Float32Array(MAX_ENEMIES);
   private readonly eHackDps = new Float32Array(MAX_ENEMIES);
   private readonly eFree = new Int32Array(MAX_ENEMIES);
   private eFreeTop = 0;
@@ -289,14 +368,255 @@ export class Sim {
   private qdepth = 0;
   private readonly chainHit = new Int32Array(16);
 
-  constructor(map: GameMap) {
+  /** Builds the map (which sets the live map size) before any grid-sized arrays exist. */
+  static create(config: GameConfig): Sim {
+    return new Sim(buildMap(config.map), config);
+  }
+
+  private constructor(map: GameMap, config: GameConfig) {
     this.map = map;
+    this.config = config;
+    this.rng = new Rng(config.seed);
+    const diff = DIFFICULTIES[config.difficulty];
+    this.money = Math.round(START_MONEY * diff.money) + 50 * perk(config, 'logistics');
+    this.lives = config.modifiers.includes('oneLife') ? 1 : diff.lives + 5 * perk(config, 'fortify');
+    this.hpMult = diff.hp;
+    this.bountyMult = 1 + 0.1 * perk(config, 'bounty');
+    this.itemMax = 1 + perk(config, 'airpower');
+    this.items.fill(this.itemMax);
     this.fields = map.routes.map((r) => new FlowField(r.exit));
     this.scratch = map.routes.map((r) => new FlowField(r.exit));
     for (let i = 0; i < map.grid.length; i++) this.blocked[i] = map.grid[i] === T_ROCK ? 1 : 0;
     for (const f of this.fields) f.compute(this.blocked);
     for (let i = 0; i < MAX_ENEMIES; i++) this.eFree[i] = MAX_ENEMIES - 1 - i;
     this.eFreeTop = MAX_ENEMIES;
+    this.spawnHero(1 + 2 * perk(config, 'veteran'));
+  }
+
+  private ev(type: number, x: number, y: number, a = 0, b = 0): void {
+    if (this.events.length < 4000) this.events.push(type, x, y, a, b);
+  }
+
+  // ============================================================ rules from the config
+
+  /** Can this tower type be built in this game (challenge modifiers, limited arsenal)? */
+  allowed(type: number): boolean {
+    const cfg = this.config;
+    if (cfg.allowed && !cfg.allowed.includes(type)) return false;
+    const kind = TOWERS[type].kind;
+    return !(cfg.modifiers.includes('noBarricades') && (kind === 'barricade' || kind === 'gate'));
+  }
+
+  /** Build (level 0) or upgrade cost after perks. */
+  cost(type: number, level = 0): number {
+    const base = TOWERS[type].levels[level].cost;
+    const disc = TOWERS[type].cat === 'maze' ? 1 - 0.1 * perk(this.config, 'engineering') : 1;
+    return Math.max(1, Math.round(base * disc));
+  }
+
+  get canSell(): boolean {
+    return !this.config.modifiers.includes('ironman');
+  }
+
+  /** The spawn groups of wave n, after modifiers. */
+  waveGroups(n: number): SpawnGroup[] {
+    const groups = buildWave(n);
+    if (!this.config.modifiers.includes('airRaid')) return groups;
+    // everything flies: helicopters in numbers matching the ground units' threat
+    return groups.map((g) => ({
+      ...g,
+      kind: EN_HELI,
+      count: Math.max(1, Math.round(g.count * Math.min(3, ENEMIES[g.kind].hp / ENEMIES[EN_HELI].hp))),
+    }));
+  }
+
+  // ============================================================ save / restore
+
+  /**
+   * A structured-clone-friendly copy of the whole state (typed arrays stay typed). Object references
+   * (towers as damage sources, drone hives…) are stored as tower ids.
+   */
+  snapshot(): Record<string, unknown> {
+    const SKIP = new Set(['map', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr']);
+    const id = (t: Tower | null) => (t ? t.id : null);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(this)) {
+      if (SKIP.has(k)) continue;
+      if (ArrayBuffer.isView(v)) out[k] = (v as Float32Array).slice();
+      else if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') out[k] = v;
+    }
+    out.config = this.config;
+    out.rng = (this.rng as unknown as { s: number }).s;
+    out.vr = (this.vr as unknown as { s: number }).s;
+    out.towers = this.towers.map((t) => ({ ...t, combos: [] }));
+    out.zones = this.zones.map((z) => ({ ...z, src: id(z.src) }));
+    out.drones = this.drones.map((d) => ({ ...d, hive: d.hive.id }));
+    out.strikes = this.strikes.map((k) => ({ ...k, src: id(k.src) }));
+    out.spawners = this.spawners.map((sp) => ({ ...sp, left: sp.left.slice(), timer: sp.timer.slice() }));
+    out.hero = this.hero ? { ...this.hero, path: [...this.hero.path], cd: [...this.hero.cd], src: null } : null;
+    out.items = [...this.items];
+    out.lastBuild = this.lastBuild;
+    out.waveDamage = [...this.waveDamage];
+    out.pSrc = this.pSrc.slice(0, this.pCount).map(id);
+    out.eBurnBy = this.eBurnBy.map(id);
+    return out;
+  }
+
+  static restore(snap: Record<string, unknown>): Sim {
+    const sim = Sim.create(snap.config as GameConfig);
+    const any = sim as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(snap)) {
+      const cur = any[k];
+      if (ArrayBuffer.isView(cur) && ArrayBuffer.isView(v)) (cur as Float32Array).set(v as Float32Array);
+      else if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') {
+        if (k !== 'rng' && k !== 'vr') any[k] = v;
+      }
+    }
+    (sim.rng as unknown as { s: number }).s = snap.rng as number;
+    (sim.vr as unknown as { s: number }).s = snap.vr as number;
+    for (const t of snap.towers as Tower[]) {
+      sim.towers.push(t);
+      sim.towerById.set(t.id, t);
+    }
+    const byId = (i: number | null) => (i === null ? null : i === -1 ? sim.hero?.src ?? null : sim.towerById.get(i) ?? null);
+    const hero = snap.hero as Hero | null;
+    if (hero && sim.hero) Object.assign(sim.hero, { ...hero, src: sim.hero.src });
+    else sim.hero = null;
+    if (sim.hero) {
+      sim.hero.src.x = sim.hero.x;
+      sim.hero.src.y = sim.hero.y;
+    }
+    for (const z of snap.zones as (Zone & { src: number | null })[]) sim.zones.push({ ...z, src: byId(z.src as unknown as number | null) });
+    for (const d of snap.drones as (Drone & { hive: number })[]) {
+      const hive = byId(d.hive as unknown as number);
+      if (hive) sim.drones.push({ ...d, hive });
+    }
+    for (const k of snap.strikes as (Strike & { src: number | null })[]) sim.strikes.push({ ...k, src: byId(k.src as unknown as number | null) });
+    sim.spawners = snap.spawners as Spawner[];
+    (snap.items as number[]).forEach((n, k) => (sim.items[k] = n));
+    sim.lastBuild = snap.lastBuild as Sim['lastBuild'];
+    sim.waveDamage = new Map(snap.waveDamage as [number, number][]);
+    (snap.pSrc as (number | null)[]).forEach((i, p) => (sim.pSrc[p] = byId(i)));
+    (snap.eBurnBy as (number | null)[]).forEach((i, e) => (sim.eBurnBy[e] = byId(i)));
+    for (const f of sim.fields) f.compute(sim.blocked);
+    sim.auraVersion = -1;
+    sim.checkKey = '';
+    return sim;
+  }
+
+  /** A cheap fingerprint of the gameplay state, to detect co-op desyncs. */
+  stateHash(): number {
+    let h = 2166136261;
+    const mix = (n: number) => (h = Math.imul(h ^ (Math.round(n * 16) | 0), 16777619));
+    mix(this.ticks);
+    mix(this.money);
+    mix(this.lives);
+    mix(this.liveCount);
+    mix(this.towers.length);
+    for (let n = 0; n < this.liveCount; n++) {
+      const i = this.live[n];
+      mix(this.eX[i]);
+      mix(this.eY[i]);
+      mix(this.eHp[i]);
+    }
+    return h >>> 0;
+  }
+
+  // ============================================================ commands
+
+  /** The most recent build, refundable in full for a few seconds (undo). */
+  private lastBuild: { id: number; tick: number } | null = null;
+  static readonly UNDO_TICKS = 5 * 60;
+
+  tower(id: number): Tower | null {
+    return this.towerById.get(id) ?? null;
+  }
+
+  /** Hands over the damage and leak tallies since the last report, and starts new ones. */
+  takeReport(): { damage: Map<number, number>; leaked: number } {
+    const r = { damage: this.waveDamage, leaked: this.leakedThisWave };
+    this.waveDamage = new Map();
+    this.leakedThisWave = 0;
+    return r;
+  }
+
+  /** No units on the field and none still to come from the waves called so far. */
+  get fieldClear(): boolean {
+    return !this.spawning && this.liveCount === 0;
+  }
+
+  get canUndo(): boolean {
+    const b = this.lastBuild;
+    return !!b && this.ticks - b.tick <= Sim.UNDO_TICKS && this.towerById.get(b.id)?.level === 0;
+  }
+
+  /** Applies one player command. Returns false if it had no effect. */
+  exec(cmd: Command): boolean {
+    switch (cmd.t) {
+      case 'place': {
+        const t = this.place(cmd.type, cmd.col, cmd.row);
+        if (t) this.lastBuild = { id: t.id, tick: this.ticks };
+        return !!t;
+      }
+      case 'sell': {
+        if (!this.canSell) return false;
+        let any = false;
+        for (const id of cmd.ids) {
+          const t = this.towerById.get(id);
+          if (t) {
+            this.sell(t);
+            any = true;
+          }
+        }
+        return any;
+      }
+      case 'upgrade': {
+        let any = false;
+        for (const id of cmd.ids) {
+          const t = this.towerById.get(id);
+          if (t && this.upgrade(t)) any = true;
+        }
+        return any;
+      }
+      case 'mode': {
+        const t = this.towerById.get(cmd.id);
+        if (!t || !TOWERS[t.type].targeted) return false;
+        t.mode = cmd.mode;
+        return true;
+      }
+      case 'gate': {
+        const t = this.towerById.get(cmd.id);
+        return !!t && this.toggleGate(t) === 'ok';
+      }
+      case 'fire': {
+        const t = this.towerById.get(cmd.id);
+        return !!t && this.fireSuper(t, cmd.x, cmd.y);
+      }
+      case 'wave':
+        if (!this.canCallWave) return false;
+        this.startNextWave();
+        return true;
+      case 'undo': {
+        if (!this.canUndo) return false;
+        const t = this.towerById.get(this.lastBuild!.id)!;
+        const refund = t.spent;
+        this.sell(t);
+        this.money += refund - this.sellValue(t); // full refund
+        this.lastBuild = null;
+        return true;
+      }
+      case 'stress':
+        this.stress(3000);
+        return true;
+      case 'item':
+        return this.useItem(cmd.item, cmd.x, cmd.y);
+      case 'heroMove':
+        return this.heroMove(cmd.x, cmd.y);
+      case 'heroAbility':
+        return this.heroAbility(cmd.ability, cmd.x, cmd.y);
+      default:
+        return false;
+    }
   }
 
   // ============================================================ player actions
@@ -390,7 +710,8 @@ export class Sim {
 
   place(type: number, col: number, row: number, free = false): Tower | null {
     const def = TOWERS[type];
-    const cost = def.levels[0].cost;
+    const cost = this.cost(type);
+    if (!free && !this.allowed(type)) return null;
     if ((!free && this.money < cost) || !this.canPlace(type, col, row)) return null;
     if (!free) this.money -= cost;
     const size = def.size;
@@ -411,6 +732,7 @@ export class Sim {
     if (reroutes) for (let k = 0; k < this.fields.length; k++) this.fields[k].copyFrom(this.scratch[k]);
     this.towerVersion++;
     this.burst(t.x, t.y, 0x9a8f78, size * 4, FX_SMOKE, 0);
+    if (!free) this.ev(EV_BUILD, t.x, t.y, type);
     return t;
   }
 
@@ -429,8 +751,7 @@ export class Sim {
   }
 
   upgradeCost(t: Tower): number {
-    const lv = TOWERS[t.type].levels;
-    return t.level + 1 < lv.length ? lv[t.level + 1].cost : 0;
+    return t.level + 1 < TOWERS[t.type].levels.length ? this.cost(t.type, t.level + 1) : 0;
   }
 
   upgrade(t: Tower): boolean {
@@ -441,11 +762,12 @@ export class Sim {
     t.level++;
     this.towerVersion++;
     this.burst(t.x, t.y, 0xffe28a, 10, FX_SPARK, 1);
+    this.ev(EV_UPGRADE, t.x, t.y, t.level);
     return true;
   }
 
   sellValue(t: Tower): number {
-    return Math.floor(t.spent * SELL_RATIO);
+    return Math.floor(t.spent * (SELL_RATIO + 0.1 * perk(this.config, 'salvage')));
   }
 
   sell(t: Tower): void {
@@ -458,6 +780,7 @@ export class Sim {
     for (const f of this.fields) f.compute(this.blocked);
     this.towerVersion++;
     this.burst(t.x, t.y, 0x8a8170, 12, FX_SMOKE, 0);
+    this.ev(EV_SELL, t.x, t.y);
   }
 
   /** Opens or closes a gate. Closing is refused if it would trap units or seal a route. */
@@ -494,6 +817,7 @@ export class Sim {
     x = Math.min(MAP_W, Math.max(0, x));
     y = Math.min(MAP_H, Math.max(0, y));
     t.charge = lv.charge ?? 0;
+    this.ev(EV_SHOT, t.x, t.y, t.type);
     if (t.kind === 'orbital') {
       this.addZone(Z_ORBITAL, x, y, lv.splash ?? 30, lv.duration ?? 4, lv.damage * t.dmgMult, 0, false, t);
     } else {
@@ -505,7 +829,7 @@ export class Sim {
         this.pVx[p] = (x - t.x) / this.pTtl[p];
         this.pVy[p] = (y - t.y) / this.pTtl[p];
       }
-      for (let k = 0; k < 10; k++) this.fx(FX_SMOKE, 0, t.x, t.y, this.rng.range(-60, 60), this.rng.range(-60, 60), 1.2, 10, 40, 0.6, 0xb0aca0, 2, 6);
+      for (let k = 0; k < 10; k++) this.fx(FX_SMOKE, 0, t.x, t.y, this.vr.range(-60, 60), this.vr.range(-60, 60), 1.2, 10, 40, 0.6, 0xb0aca0, 2, 6);
     }
     return true;
   }
@@ -527,8 +851,10 @@ export class Sim {
     this.tarGrid.fill(1);
     this.spikeGrid.fill(0);
     this.spikeSrc.fill(null);
+    const ballistics = 1 + 0.05 * perk(this.config, 'ballistics');
     for (const t of this.towers) {
-      t.rangeMult = t.rateMult = t.dmgMult = t.airBonus = 1;
+      t.rangeMult = t.rateMult = t.airBonus = 1;
+      t.dmgMult = ballistics;
       t.combos.length = 0;
     }
     const cover = (t: Tower, r: number, fn: (cell: number) => void) => {
@@ -623,12 +949,14 @@ export class Sim {
   startNextWave(): void {
     if (!this.canCallWave) return;
     this.money += this.earlyBonus;
+    for (let k = 0; k < 3; k++) this.items[k] = Math.min(this.itemMax, this.items[k] + (this.wave > 0 ? 1 : 0));
     if (this.wave > 0) {
       this.money += this.depotIncome;
       for (const t of this.towers) if (t.kind === 'depot') this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
     }
     this.wave++;
-    const groups = buildWave(this.wave);
+    this.ev(EV_WAVE, 0, 0, this.wave);
+    const groups = this.waveGroups(this.wave);
     let dur = 0;
     for (const g of groups) dur = Math.max(dur, g.delay + g.count * g.interval);
     this.spawners.push({
@@ -664,6 +992,218 @@ export class Sim {
     });
   }
 
+
+  // ============================================================ hero commander
+
+  private spawnHero(level: number): void {
+    // a few cells in from the first exit: the last line of defence
+    const route = this.map.routes[0];
+    const f = this.fields[0];
+    const ex = route.airTo[0];
+    const ey = route.airTo[1];
+    let cell = route.exit[route.exit.length >> 1];
+    let bestD = Infinity;
+    for (let i = 0; i < f.dist.length; i++) {
+      if (this.blocked[i] || f.dist[i] < 5 || f.dist[i] >= 7) continue;
+      const d = (((i % COLS) + 0.5) * TILE - ex) ** 2 + ((((i / COLS) | 0) + 0.5) * TILE - ey) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        cell = i;
+      }
+    }
+    const x = ((cell % COLS) + 0.5) * TILE;
+    const y = (((cell / COLS) | 0) + 0.5) * TILE;
+    const src: Tower = {
+      id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
+      beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [],
+    };
+    this.hero = { x, y, px: x, py: y, ang: 0, pang: 0, path: [], level: Math.min(HERO_MAX_LEVEL, level), xp: 0, cd: [0, 0, 0], fireCd: 0, rallyT: 0, src };
+  }
+
+  /** XP needed to reach the next level. */
+  heroNextXp(level: number): number {
+    return Math.round(40 * Math.pow(level, 1.5));
+  }
+
+  heroRange(): number {
+    return 110 + 4 * (this.hero?.level ?? 1);
+  }
+
+  heroDamage(): number {
+    return 10 * (1 + 0.2 * ((this.hero?.level ?? 1) - 1));
+  }
+
+  /** Walk to a point: shortest path over walkable cells (4-way BFS). */
+  private heroMove(x: number, y: number): boolean {
+    const h = this.hero;
+    if (!h) return false;
+    const goal = Math.floor(y / TILE) * COLS + Math.floor(x / TILE);
+    const start = Math.floor(h.y / TILE) * COLS + Math.floor(h.x / TILE);
+    if (goal < 0 || goal >= this.blocked.length || this.blocked[goal]) return false;
+    const prev = new Int32Array(COLS * ROWS).fill(-1);
+    const queue = new Int32Array(COLS * ROWS);
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    prev[start] = start;
+    while (head < tail && prev[goal] < 0) {
+      const i = queue[head++];
+      const c = i % COLS;
+      for (const j of [c > 0 ? i - 1 : -1, c < COLS - 1 ? i + 1 : -1, i - COLS, i + COLS]) {
+        if (j < 0 || j >= prev.length || prev[j] >= 0 || this.blocked[j]) continue;
+        prev[j] = i;
+        queue[tail++] = j;
+      }
+    }
+    if (prev[goal] < 0) return false;
+    const path: number[] = [];
+    for (let i = goal; i !== start; i = prev[i]) path.push(i);
+    h.path = path.reverse();
+    return true;
+  }
+
+  private heroAbility(a: number, x: number, y: number): boolean {
+    const h = this.hero;
+    if (!h || a < 0 || a > 2 || h.cd[a] > 0) return false;
+    const power = 1 + 0.15 * (h.level - 1);
+    if (a === 0) {
+      // carpet bombing across the line from the hero to the target
+      const dx = x - h.x;
+      const dy = y - h.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const px = -dy / d;
+      const py = dx / d;
+      for (let k = -3; k <= 3; k++) {
+        this.strikes.push({ x: x + px * k * 26, y: y + py * k * 26, t: 0.9 + (k + 3) * 0.08, dmg: 140 * power * (1 + 0.1 * this.wave), r: 40, src: h.src });
+      }
+      this.streak(x - px * 400, y - py * 400, 120, x + px * 400, y + py * 400, 120, 1.2, 0xc0c8d0, 2);
+    } else if (a === 1) {
+      h.rallyT = 8;
+      this.fx(FX_RING, 1, h.x, h.y, 0, 0, 0.6, 10, 320, 0.8, 0xffd84a, 0, 0);
+    } else {
+      if (Math.hypot(x - h.x, y - h.y) > 260) return false;
+      this.forEachInRange(x, y, 70, false, true, (i) => {
+        this.eStunT[i] = 2.5;
+      });
+      this.explosion(x, y, 0.6, 4);
+      this.fx(FX_RING, 1, x, y, 0, 0, 0.4, 10, 140, 1, 0xfff0a0, 0, 0);
+      this.ev(EV_STATUS, x, y, 3);
+    }
+    h.cd[a] = HERO_ABILITIES[a].cd;
+    this.ev(EV_ABILITY, x, y, a);
+    return true;
+  }
+
+  private updateHero(): void {
+    const h = this.hero;
+    if (!h) return;
+    h.px = h.x;
+    h.py = h.y;
+    h.pang = h.ang;
+    for (let k = 0; k < 3; k++) if (h.cd[k] > 0) h.cd[k] = Math.max(0, h.cd[k] - DT);
+    if (h.rallyT > 0) h.rallyT -= DT;
+    // walking
+    if (h.path.length) {
+      const next = h.path[0];
+      if (this.blocked[next]) {
+        // a wall went up in the way: re-plan to the same goal
+        const goal = h.path[h.path.length - 1];
+        h.path = [];
+        this.heroMove(((goal % COLS) + 0.5) * TILE, (((goal / COLS) | 0) + 0.5) * TILE);
+      } else {
+        const tx = ((next % COLS) + 0.5) * TILE;
+        const ty = (((next / COLS) | 0) + 0.5) * TILE;
+        const dx = tx - h.x;
+        const dy = ty - h.y;
+        const d = Math.hypot(dx, dy);
+        const step = 95 * DT;
+        if (d <= step) {
+          h.x = tx;
+          h.y = ty;
+          h.path.shift();
+        } else {
+          h.x += (dx / d) * step;
+          h.y += (dy / d) * step;
+        }
+        h.ang += angleDiff(h.ang, Math.atan2(dy, dx)) * Math.min(1, 12 * DT);
+      }
+    }
+    h.src.x = h.x;
+    h.src.y = h.y;
+    // shooting
+    h.fireCd -= DT;
+    const tgt = this.findTarget(h.x, h.y, this.heroRange(), true, true, 0);
+    if (tgt < 0) return;
+    if (!h.path.length) h.ang += angleDiff(h.ang, Math.atan2(this.eY[tgt] - h.y, this.eX[tgt] - h.x)) * Math.min(1, 14 * DT);
+    if (h.fireCd > 0) return;
+    h.fireCd = 1 / 3;
+    const ca = Math.cos(h.ang);
+    const sa = Math.sin(h.ang);
+    this.spawnProjectile(P_BULLET, h.x + ca * 8, h.y + sa * 8, ca, sa, 900, this.heroDamage(), 0, 1, tgt, h.src, 1);
+    this.fx(FX_GLOW, 1, h.x + ca * 9, h.y + sa * 9, 0, 0, 0.06, 8, 3, 0.9, 0xffe7a0, 0, 10);
+    this.ev(EV_SHOT, h.x, h.y, 0);
+  }
+
+  private gainHeroXp(xp: number): void {
+    const h = this.hero!;
+    if (h.level >= HERO_MAX_LEVEL) return;
+    h.xp += xp;
+    while (h.level < HERO_MAX_LEVEL && h.xp >= this.heroNextXp(h.level)) {
+      h.xp -= this.heroNextXp(h.level);
+      h.level++;
+      this.ev(EV_LEVEL, h.x, h.y, h.level);
+      this.fx(FX_RING, 1, h.x, h.y, 0, 0, 0.5, 6, 60, 1, 0xffd84a, 0, 0);
+    }
+  }
+
+  // ============================================================ tactical items
+
+  private useItem(item: number, x: number, y: number): boolean {
+    if (item < 0 || item > 2 || this.items[item] <= 0) return false;
+    x = Math.min(MAP_W, Math.max(0, x));
+    y = Math.min(MAP_H, Math.max(0, y));
+    if (item === 0) {
+      const dmg = 120 * (1 + 0.12 * this.wave);
+      for (let k = 0; k < 8; k++) {
+        const a = this.rng.next() * TWO_PI;
+        const r = Math.sqrt(this.rng.next()) * 90;
+        this.strikes.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, t: 0.6 + k * 0.18, dmg, r: 45, src: null });
+      }
+    } else if (item === 1) {
+      const mine = TOWERS.findIndex((t) => t.kind === 'mine');
+      let placed = 0;
+      for (let tries = 0; tries < 40 && placed < 6; tries++) {
+        const a = this.rng.next() * TWO_PI;
+        const r = Math.sqrt(this.rng.next()) * 70;
+        const t = this.place(mine, Math.floor((x + Math.cos(a) * r) / TILE), Math.floor((y + Math.sin(a) * r) / TILE), true);
+        if (t) placed++;
+      }
+      if (!placed) return false;
+    } else {
+      this.money += 40 + 15 * this.wave;
+      this.burst(x, y, 0xffd84a, 14, FX_GLOW, 1);
+    }
+    this.items[item]--;
+    this.ev(EV_ITEM, x, y, item);
+    return true;
+  }
+
+  private updateStrikes(): void {
+    for (let k = this.strikes.length - 1; k >= 0; k--) {
+      const st = this.strikes[k];
+      if ((st.t -= DT) > 0) continue;
+      this.splash(st.x, st.y, st.r, st.dmg, 1, 0, st.src, true);
+      this.explosion(st.x, st.y, 1.4, 0);
+      this.strikes.splice(k, 1);
+    }
+  }
+
+  /** Strikes still on their way, for the renderer (incoming markers). */
+  get pendingStrikes(): readonly { x: number; y: number; t: number }[] {
+    return this.strikes;
+  }
+
   // ============================================================ tick
 
   step(): void {
@@ -676,6 +1216,8 @@ export class Sim {
     this.updateEnemies();
     this.hash.build(this.live, this.liveCount, this.eX, this.eY);
     this.updateTowers();
+    this.updateHero();
+    this.updateStrikes();
     this.updateZones();
     this.updateDrones();
     this.updateProjectiles();
@@ -728,7 +1270,7 @@ export class Sim {
     this.eKind[i] = kind;
     this.eAir[i] = def.air ? 1 : 0;
     this.eRoute[i] = routeIdx;
-    this.eMaxHp[i] = this.eHp[i] = def.hp * hpScale(wave);
+    this.eMaxHp[i] = this.eHp[i] = def.hp * hpScale(wave) * this.hpMult;
     this.eMaxShield[i] = this.eShield[i] = (def.shield ?? 0) * this.eMaxHp[i];
     this.eShieldCd[i] = 0;
     this.eHealCd[i] = 1;
@@ -740,8 +1282,9 @@ export class Sim {
     this.eShred[i] = this.eShredT[i] = 0;
     this.eChill[i] = this.eFrozenT[i] = 0;
     this.eHackT[i] = 0;
+    this.eStunT[i] = 0;
     this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06);
-    this.eReward[i] = Math.round(def.reward * rewardScale(wave));
+    this.eReward[i] = Math.round(def.reward * rewardScale(wave) * this.bountyMult);
     this.eSlowT[i] = 0;
     this.eSlowF[i] = 1;
     this.eFlash[i] = 0;
@@ -777,6 +1320,8 @@ export class Sim {
 
   private leak(i: number): void {
     this.lives -= ENEMIES[this.eKind[i]].lives;
+    this.leakedThisWave++;
+    this.ev(EV_LEAK, this.eX[i], this.eY[i]);
     this.burst(Math.min(MAP_W, Math.max(0, this.eX[i])), Math.min(MAP_H, Math.max(0, this.eY[i])), 0xff5a3a, 6, FX_GLOW, 1);
     this.freeEnemy(i);
     if (this.lives <= 0) {
@@ -816,6 +1361,7 @@ export class Sim {
     if (this.eChill[i] >= 1) {
       this.eChill[i] = 0;
       this.eFrozenT[i] = 1.6;
+      this.ev(EV_STATUS, this.eX[i], this.eY[i], 0);
       this.fx(FX_RING, 1, this.eX[i], this.eY[i], 0, 0, 0.3, 6, 30, 0.8, 0xbff4ff, 0, 0);
     }
   }
@@ -877,7 +1423,7 @@ export class Sim {
       if (this.eBurnT[i] > 0) {
         this.eBurnT[i] -= DT;
         if (((this.ticks + i) & 7) === 0) {
-          this.fx(FX_GLOW, 1, x + this.rng.range(-4, 4), y + this.rng.range(-4, 4), this.rng.range(-8, 8), -10, 0.35, 8, 3, 0.9, this.rng.next() < 0.5 ? 0xff7a1a : 0xffc040, 1, 8);
+          this.fx(FX_GLOW, 1, x + this.vr.range(-4, 4), y + this.vr.range(-4, 4), this.vr.range(-8, 8), -10, 0.35, 8, 3, 0.9, this.vr.next() < 0.5 ? 0xff7a1a : 0xffc040, 1, 8);
         }
         if (this.damage(i, this.eBurn[i] * DT, true, this.eBurnBy[i])) continue;
       }
@@ -907,6 +1453,10 @@ export class Sim {
       }
       sp *= 1 - 0.5 * this.eChill[i];
       if (this.eFrozenT[i] > 0) sp = 0;
+      if (this.eStunT[i] > 0) {
+        this.eStunT[i] -= DT;
+        sp = 0;
+      }
       if (!air) sp *= this.tarGrid[g];
       const route = this.map.routes[this.eRoute[i]];
       let tx: number;
@@ -1002,11 +1552,18 @@ export class Sim {
     const dmg = pierce ? a : Math.max(a - armor, a * 0.25);
     const dealt = Math.min(dmg, this.eHp[i]);
     this.eHp[i] -= dmg;
-    if (src) src.damage += dealt;
+    if (src) {
+      src.damage += dealt;
+      this.waveDamage.set(src.id, (this.waveDamage.get(src.id) ?? 0) + dealt);
+    }
+    if (dmg >= 60 && dmg < 1e8) this.ev(EV_HIT, this.eX[i], this.eY[i], dmg, shatter && this.eFrozenT[i] > 0 ? 1 : 0);
     if (this.eHp[i] > 0) return false;
     if (src) src.kills++;
     this.totalKills++;
-    this.money += Math.round(this.eReward[i] * (1 + this.salvageGrid[this.eGCell[i]]));
+    const reward = Math.round(this.eReward[i] * (1 + this.salvageGrid[this.eGCell[i]]));
+    this.money += reward;
+    if (src && this.hero && src === this.hero.src) this.gainHeroXp(reward);
+    this.ev(EV_KILL, this.eX[i], this.eY[i], this.eKind[i], reward);
     const kind = this.eKind[i];
     const big = kind === EN_BOSS ? 3 : ENEMIES[kind].radius >= 10 ? 1.6 : kind === 0 ? 0.6 : 1.1;
     this.explosion(this.eX[i], this.eY[i], big, this.eAir[i] ? AIR_Z : 4);
@@ -1092,7 +1649,9 @@ export class Sim {
     const def = TOWERS[t.type];
     const lv = def.levels[t.level];
     const range = lv.range * t.rangeMult;
-    const rate = lv.rate * t.rateMult;
+    const h = this.hero;
+    const rallied = h !== null && h.rallyT > 0 && (t.x - h.x) ** 2 + (t.y - h.y) ** 2 < 160 * 160;
+    const rate = lv.rate * t.rateMult * (rallied ? 1.4 : 1);
     const dmg = lv.damage * t.dmgMult;
     const airMult = def.airMult * t.airBonus;
     const ca = Math.cos(t.angle);
@@ -1115,6 +1674,7 @@ export class Sim {
           this.damage(i, dmg, true, t);
         });
         this.fx(FX_RING, 1, t.x, t.y, 0, 0, 0.45, 8, range * 2, 0.8, 0x8cf0a8, 0, 0);
+        this.ev(EV_SHOT, t.x, t.y, t.type);
         t.cd = 1 / rate;
         return;
       }
@@ -1140,8 +1700,8 @@ export class Sim {
           this.damage(i, dmg * DT, true, t);
         });
         if (this.ticks % 3 === 0) {
-          const a = this.rng.next() * TWO_PI;
-          const r = range * this.rng.range(0.5, 1);
+          const a = this.vr.next() * TWO_PI;
+          const r = range * this.vr.range(0.5, 1);
           this.fx(FX_SPARK, 1, t.x + Math.cos(a) * r, t.y + Math.sin(a) * r, -Math.sin(a) * 60 - Math.cos(a) * 50, Math.cos(a) * 60 - Math.sin(a) * 50, 0.6, 5, 2, 0.8, 0xb080ff, 0, 3);
         }
         return;
@@ -1156,6 +1716,7 @@ export class Sim {
           this.damage(i, dmg, false, t);
         });
         this.fx(FX_RING, 1, t.x, t.y, 0, 0, 0.35, 10, range * 2, 0.9, 0x5ac8e8, 0, 0);
+        this.ev(EV_SHOT, t.x, t.y, t.type);
         t.cd = 1 / rate;
         return;
       }
@@ -1175,6 +1736,7 @@ export class Sim {
         const v = this.findTarget(t.x, t.y, range, false, true, t.mode);
         if (v < 0) return;
         this.addZone(Z_HOLE, this.eX[v], this.eY[v], lv.splash!, lv.duration!, dmg, lv.pull!, false, t);
+        this.ev(EV_SHOT, t.x, t.y, t.type);
         t.cd = 1 / rate;
         return;
       }
@@ -1194,6 +1756,7 @@ export class Sim {
         if (best < 0) return;
         this.aim(t, this.eX[best], this.eY[best]);
         this.eHackT[best] = lv.duration!;
+        this.ev(EV_STATUS, this.eX[best], this.eY[best], 1);
         this.eHackDps[best] = dmg;
         this.streak(t.x, t.y, MUZZLE_Z + 6, this.eX[best], this.eY[best], 8, 0.5, 0x3aff8a, 2);
         this.fx(FX_RING, 1, this.eX[best], this.eY[best], 0, 0, 0.4, 6, 40, 0.9, 0x3aff8a, 0, 0);
@@ -1216,6 +1779,7 @@ export class Sim {
 
     if (t.kind === 'tesla') {
       if (t.cd > 0) return;
+      this.ev(EV_SHOT, t.x, t.y, t.type);
       this.tesla(t, tgt, dmg, lv.chain!);
       t.cd = 1 / rate;
       return;
@@ -1224,24 +1788,30 @@ export class Sim {
     if (!this.aim(t, tx, ty)) return;
 
     if (t.kind === 'laser') {
+      if (t.cd <= 0) {
+        // a hum every so often while the beam is on
+        this.ev(EV_SHOT, t.x, t.y, t.type);
+        t.cd = 0.5;
+      }
       t.beam = tgt;
       this.damage(tgt, dmg * (this.eAir[tgt] ? airMult : 1) * DT, true, t);
       if ((this.ticks & 3) === 0 && this.eAlive[tgt]) {
-        this.fx(FX_SPARK, 1, tx, ty, this.rng.range(-80, 80), this.rng.range(-80, 80), 0.2, 3, 1, 1, 0xff8a8a, 4, tz);
+        this.fx(FX_SPARK, 1, tx, ty, this.vr.range(-80, 80), this.vr.range(-80, 80), 0.2, 3, 1, 1, 0xff8a8a, 4, tz);
       }
       return;
     }
     if (t.kind === 'flame') {
+      if (t.firing <= 0) this.ev(EV_SHOT, t.x, t.y, t.type);
       t.firing = 0.12;
       const mx = t.x + ca * 16;
       const my = t.y + sa * 16;
       for (let k = 0; k < 2; k++) {
-        const a = t.angle + this.rng.range(-0.28, 0.28);
-        const s = this.rng.range(150, 230);
+        const a = t.angle + this.vr.range(-0.28, 0.28);
+        const s = this.vr.range(150, 230);
         this.fx(FX_GLOW, 1, mx, my, Math.cos(a) * s, Math.sin(a) * s, range / s * 1.1, 5, 22, 0.75, k ? 0xff9a2a : 0xffd060, 1.5, MUZZLE_Z - 4);
       }
       if (this.ticks % 4 === 0) {
-        if (this.rng.next() < 0.5) this.fx(FX_SMOKE, 0, mx + ca * range * 0.7, my + sa * range * 0.7, ca * 30, sa * 30, 0.8, 8, 22, 0.3, 0x3a3430, 1, 10);
+        if (this.vr.next() < 0.5) this.fx(FX_SMOKE, 0, mx + ca * range * 0.7, my + sa * range * 0.7, ca * 30, sa * 30, 0.8, 8, 22, 0.3, 0x3a3430, 1, 10);
         this.forEachInRange(t.x, t.y, range, false, true, (i) => {
           const a = Math.atan2(this.eY[i] - t.y, this.eX[i] - t.x);
           if (Math.abs(angleDiff(t.angle, a)) > 0.42) return;
@@ -1283,14 +1853,14 @@ export class Sim {
           t.heat = 0;
           t.spin = 0;
           cd = 2.5;
-          for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, mx, my, this.rng.range(-30, 30), this.rng.range(-40, -10), 1, 6, 18, 0.5, 0xd0d0d0, 2, MUZZLE_Z);
+          for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, mx, my, this.vr.range(-30, 30), this.vr.range(-40, -10), 1, 6, 18, 0.5, 0xd0d0d0, 2, MUZZLE_Z);
         }
         break;
       }
       case 'cannon':
         this.lob(P_SHELL, t, tgt, mx, my, 420, dmg, lv.splash!);
         this.muzzleFlash(mx, my, 16, 0xffc070);
-        for (let s = 0; s < 3; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 40 + this.rng.range(-20, 20), sa * 40 + this.rng.range(-20, 20), 0.6, 6, 16, 0.5, 0x9a948a, 3, MUZZLE_Z);
+        for (let s = 0; s < 3; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 40 + this.vr.range(-20, 20), sa * 40 + this.vr.range(-20, 20), 0.6, 6, 16, 0.5, 0x9a948a, 3, MUZZLE_Z);
         break;
       case 'napalm':
         this.lob(P_NAPALM, t, tgt, mx, my, 260, dmg, lv.splash!, lv.duration!);
@@ -1303,7 +1873,7 @@ export class Sim {
       case 'arty':
         this.lob(P_ARTY, t, tgt, mx, my, 300, dmg, lv.splash!);
         this.muzzleFlash(mx, my, 22, 0xffc070);
-        for (let s = 0; s < 6; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 60 + this.rng.range(-30, 30), sa * 60 + this.rng.range(-30, 30), 1, 8, 26, 0.55, 0x9a948a, 3, MUZZLE_Z);
+        for (let s = 0; s < 6; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 60 + this.vr.range(-30, 30), sa * 60 + this.vr.range(-30, 30), 1, 8, 26, 0.55, 0x9a948a, 3, MUZZLE_Z);
         break;
       case 'missile': {
         const side = (t.kills + this.ticks) & 1 ? 5 : -5;
@@ -1365,11 +1935,12 @@ export class Sim {
         for (const i of hits) this.damage(i, dmg, true, t);
         this.streak(mx, my, MUZZLE_Z, ex, ey, MUZZLE_Z * 0.6, 0.35, 0x8ad4ff, 3);
         this.muzzleFlash(mx, my, 20, 0xa8e0ff);
-        for (let k = 0; k < 8; k++) this.fx(FX_SPARK, 1, mx + ca * k * range / 8, my + sa * k * range / 8, this.rng.range(-40, 40), this.rng.range(-40, 40), 0.3, 4, 1, 0.9, 0x8ad4ff, 3, MUZZLE_Z);
+        for (let k = 0; k < 8; k++) this.fx(FX_SPARK, 1, mx + ca * k * range / 8, my + sa * k * range / 8, this.vr.range(-40, 40), this.vr.range(-40, 40), 0.3, 4, 1, 0.9, 0x8ad4ff, 3, MUZZLE_Z);
         break;
       }
     }
     t.cd = cd;
+    this.ev(EV_SHOT, t.x, t.y, t.type);
   }
 
   /** Calls fn for every unit within r. Callbacks may query again: each nesting level gets its own buffer. */
@@ -1503,6 +2074,7 @@ export class Sim {
             const dy = zn.y - this.eY[i];
             const d = Math.hypot(dx, dy);
             if (d < 16 && this.eKind[i] !== EN_BOSS && this.eHp[i] < this.eMaxHp[i] * 0.25) {
+              this.ev(EV_STATUS, this.eX[i], this.eY[i], 4);
               this.damage(i, 1e9, true, zn.src); // swallowed
               return;
             }
@@ -1518,23 +2090,23 @@ export class Sim {
       // visuals
       const life = zn.t / zn.t0;
       if (zn.kind === Z_FIRE && (this.ticks & 1) === 0) {
-        const a = this.rng.next() * TWO_PI;
-        const r = Math.sqrt(this.rng.next()) * zn.r * 0.85;
-        this.fx(FX_GLOW, 1, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, 0, -12, 0.5, 10 * life + 4, 3, 0.85, this.rng.next() < 0.5 ? 0xff6a1a : 0xffb040, 1, 4);
-        if (this.rng.next() < 0.2) this.fx(FX_SMOKE, 0, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, 0, -10, 1.2, 8, 24, 0.3, 0x2a2420, 1, 12);
+        const a = this.vr.next() * TWO_PI;
+        const r = Math.sqrt(this.vr.next()) * zn.r * 0.85;
+        this.fx(FX_GLOW, 1, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, 0, -12, 0.5, 10 * life + 4, 3, 0.85, this.vr.next() < 0.5 ? 0xff6a1a : 0xffb040, 1, 4);
+        if (this.vr.next() < 0.2) this.fx(FX_SMOKE, 0, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, 0, -10, 1.2, 8, 24, 0.3, 0x2a2420, 1, 12);
       } else if (zn.kind === Z_GAS && this.ticks % 3 === 0) {
-        const a = this.rng.next() * TWO_PI;
-        const r = Math.sqrt(this.rng.next()) * zn.r * 0.8;
+        const a = this.vr.next() * TWO_PI;
+        const r = Math.sqrt(this.vr.next()) * zn.r * 0.8;
         this.fx(FX_SMOKE, 0, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, zn.vx, zn.vy, 1.4, zn.r * 0.5, zn.r * 0.9, 0.35 * Math.min(1, life * 3), zn.burn ? 0xb0a040 : 0x8ac84a, 0.5, 4);
       } else if (zn.kind === Z_HOLE && (this.ticks & 1) === 0) {
-        const a = this.rng.next() * TWO_PI;
-        const r = zn.r * this.rng.range(0.6, 1.1);
-        this.fx(FX_SPARK, 1, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, -Math.cos(a) * r * 2 - Math.sin(a) * 90, -Math.sin(a) * r * 2 + Math.cos(a) * 90, 0.45, 6, 1, 0.9, this.rng.next() < 0.5 ? 0xa060ff : 0xe0c0ff, 0, 6);
+        const a = this.vr.next() * TWO_PI;
+        const r = zn.r * this.vr.range(0.6, 1.1);
+        this.fx(FX_SPARK, 1, zn.x + Math.cos(a) * r, zn.y + Math.sin(a) * r, -Math.cos(a) * r * 2 - Math.sin(a) * 90, -Math.sin(a) * r * 2 + Math.cos(a) * 90, 0.45, 6, 1, 0.9, this.vr.next() < 0.5 ? 0xa060ff : 0xe0c0ff, 0, 6);
       } else if (zn.kind === Z_ORBITAL) {
         if ((this.ticks & 1) === 0) this.streak(zn.x, zn.y, 600, zn.x, zn.y, 0, 0.05, 0xff4a7a, zn.r * 0.7);
-        const a = this.rng.next() * TWO_PI;
+        const a = this.vr.next() * TWO_PI;
         this.fx(FX_SPARK, 1, zn.x, zn.y, Math.cos(a) * 160, Math.sin(a) * 160, 0.3, 6, 1, 1, 0xffa0c0, 3, 2);
-        if (this.ticks % 4 === 0) this.fx(FX_SMOKE, 0, zn.x, zn.y, this.rng.range(-20, 20), this.rng.range(-20, 20), 1, 10, 30, 0.4, 0x2a2224, 1, 4);
+        if (this.ticks % 4 === 0) this.fx(FX_SMOKE, 0, zn.x, zn.y, this.vr.range(-20, 20), this.vr.range(-20, 20), 1, 10, 30, 0.4, 0x2a2224, 1, 4);
       }
     }
   }
@@ -1693,9 +2265,10 @@ export class Sim {
         break;
       case P_GAS:
         this.addZone(Z_GAS, x, y, r, this.pExtra[p], dmg, 0, this.pExtra2[p] > 0, src);
-        for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, x, y, this.rng.range(-40, 40), this.rng.range(-40, 40), 1, 10, r, 0.5, 0x9bd15a, 3, 4);
+        for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, x, y, this.vr.range(-40, 40), this.vr.range(-40, 40), 1, 10, r, 0.5, 0x9bd15a, 3, 4);
         break;
       case P_NUKE:
+        this.ev(EV_NUKE, x, y);
         this.splash(x, y, r, dmg, 3, 1, src, true);
         this.explosion(x, y, 6, 0);
         this.fx(FX_RING, 1, x, y, 0, 0, 0.8, 20, r * 2.4, 1, 0xfff0c0, 0, 0);
@@ -1708,7 +2281,7 @@ export class Sim {
       case P_FLAK:
         this.splash(x, y, r, dmg, 2, 1, src);
         this.fx(FX_GLOW, 1, x, y, 0, 0, 0.15, 12, 30, 0.9, 0xffd090, 0, AIR_Z + 4);
-        for (let k = 0; k < 4; k++) this.fx(FX_SMOKE, 0, x, y, this.rng.range(-25, 25), this.rng.range(-25, 25), 0.9, 8, 22, 0.6, 0x2a2826, 2, AIR_Z + 4);
+        for (let k = 0; k < 4; k++) this.fx(FX_SMOKE, 0, x, y, this.vr.range(-25, 25), this.vr.range(-25, 25), 0.9, 8, 22, 0.6, 0x2a2826, 2, AIR_Z + 4);
         break;
       case P_ACID:
         this.forEachInRange(x, y, r, true, true, (i) => {
@@ -1716,7 +2289,7 @@ export class Sim {
           this.eShredT[i] = this.pExtra2[p];
           this.damage(i, dmg, false, src);
         });
-        for (let k = 0; k < 6; k++) this.fx(FX_GLOW, 1, x, y, this.rng.range(-50, 50), this.rng.range(-50, 50), 0.4, 6, 2, 0.8, 0xa6e22e, 4, 4);
+        for (let k = 0; k < 6; k++) this.fx(FX_GLOW, 1, x, y, this.vr.range(-50, 50), this.vr.range(-50, 50), 0.4, 6, 2, 0.8, 0xa6e22e, 4, 4);
         break;
       case P_CRYO:
         this.forEachInRange(x, y, r, true, true, (i) => {
@@ -1797,7 +2370,7 @@ export class Sim {
         this.pX[p] += this.pVx[p] * DT;
         this.pY[p] += this.pVy[p] * DT;
         if ((this.ticks & 1) === 0) {
-          this.fx(FX_SMOKE, 0, this.pX[p], this.pY[p], this.rng.range(-8, 8), this.rng.range(-8, 8), 0.5, 3, 9, 0.45, 0xc8c4bc, 2, this.missileZ(p));
+          this.fx(FX_SMOKE, 0, this.pX[p], this.pY[p], this.vr.range(-8, 8), this.vr.range(-8, 8), 0.5, 3, 9, 0.45, 0xc8c4bc, 2, this.missileZ(p));
         }
         const dx = this.pTx[p] - this.pX[p];
         const dy = this.pTy[p] - this.pY[p];
@@ -1821,7 +2394,7 @@ export class Sim {
     tex: number, add: number, x: number, y: number, vx: number, vy: number, life: number,
     s0: number, s1: number, a0: number, color: number, drag: number, z = 4,
   ): void {
-    if (this.fCount >= MAX_FX) return;
+    if (this.fCount >= MAX_FX || (this.fxScale < 1 && this.vr.next() > this.fxScale)) return;
     const f = this.fCount++;
     this.fTex[f] = tex;
     this.fAdd[f] = add;
@@ -1834,24 +2407,25 @@ export class Sim {
     this.fS0[f] = s0;
     this.fS1[f] = s1;
     this.fA0[f] = a0;
-    this.fRot[f] = tex === FX_SPARK ? Math.atan2(vy, vx) : this.rng.next() * TWO_PI;
+    this.fRot[f] = tex === FX_SPARK ? Math.atan2(vy, vx) : this.vr.next() * TWO_PI;
     this.fColor[f] = color;
     this.fDrag[f] = drag;
   }
 
   private burst(x: number, y: number, color: number, n: number, tex: number, add: number): void {
     for (let k = 0; k < n; k++) {
-      const a = this.rng.next() * TWO_PI;
-      const s = this.rng.range(30, 90);
-      this.fx(tex, add, x, y, Math.cos(a) * s, Math.sin(a) * s, this.rng.range(0.3, 0.6), tex === FX_SMOKE ? 8 : 4, tex === FX_SMOKE ? 18 : 1, 0.8, color, 4);
+      const a = this.vr.next() * TWO_PI;
+      const s = this.vr.range(30, 90);
+      this.fx(tex, add, x, y, Math.cos(a) * s, Math.sin(a) * s, this.vr.range(0.3, 0.6), tex === FX_SMOKE ? 8 : 4, tex === FX_SMOKE ? 18 : 1, 0.8, color, 4);
     }
   }
 
   explosion(x: number, y: number, size: number, z = 4): void {
+    this.ev(EV_BOOM, x, y, size);
     // degrade gracefully when the effect pool is busy
     const load = this.fCount / MAX_FX;
     const q = load > 0.8 ? 0.25 : load > 0.5 ? 0.6 : 1;
-    const rng = this.rng;
+    const rng = this.vr;
     this.fx(FX_GLOW, 1, x, y, 0, 0, 0.18, 10 * size, 46 * size, 1, 0xfff0c0, 0, z);
     const fire = Math.ceil(5 * size * q);
     for (let k = 0; k < fire; k++) {

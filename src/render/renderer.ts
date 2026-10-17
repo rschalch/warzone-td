@@ -1,8 +1,9 @@
-import { Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
+import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
+import { palette, settings } from '../app/settings';
 import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
 import type { FlowField } from '../game/flow';
 import {
-  AIR_Z, ARC_HEIGHT, BOLT_NODES, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
+  AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
   P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, dirFrame, type Atlas } from './atlas';
@@ -102,6 +103,44 @@ const C_ROCK = 0 << 16;
 const C_TOWER = 1 << 16;
 const C_ENEMY = 2 << 16;
 const C_DRONE = 3 << 16;
+const C_HERO = 4 << 16;
+
+const STATUS_WORDS = [['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff]] as const;
+const MAX_WRECKS = 220;
+const MAX_SCORCH = 260;
+const MAX_TEXTS = 70;
+const WRECK_LIFE = 45;
+const SCORCH_LIFE = 35;
+
+/** Short-lived marks left on the battlefield (wrecks, scorch). */
+interface Mark {
+  x: number;
+  y: number;
+  a: number; // heading (wrecks) / size (scorch)
+  kind: number;
+  t: number; // s left
+}
+
+interface FloatText {
+  text: BitmapText;
+  x: number;
+  y: number;
+  z: number;
+  t: number;
+  life: number;
+}
+
+let fontReady = false;
+function ensureFont(): void {
+  if (fontReady) return;
+  fontReady = true;
+  BitmapFont.install({
+    name: 'wz',
+    style: { fontFamily: 'Arial, sans-serif', fontSize: 32, fontWeight: 'bold', fill: '#ffffff', stroke: { color: '#000000', width: 5 } },
+    chars: [['0', '9'], ['A', 'Z'], ' +-$!.'],
+    resolution: 2,
+  });
+}
 const C_MASK = 0xffff;
 
 export interface OverlayState {
@@ -114,6 +153,12 @@ export interface OverlayState {
   aiming: Tower | null; // superweapon waiting for a target
   aimX: number; // world point under the cursor
   aimY: number;
+  /** Item or hero ability waiting for a target, with its blast radius. */
+  targeting: { r: number; color: number } | null;
+  heroSelected: boolean;
+  multi: Tower[]; // box selection
+  box: [number, number, number, number] | null; // selection rect being dragged, in projected screen space
+  showAuras: boolean;
 }
 
 /** Turret spin speeds (rad/s) for towers that rotate on their own. */
@@ -143,6 +188,17 @@ export class GameRenderer {
   // ground plane: children draw in world coordinates through the iso matrix
   private readonly ground = new Container();
   private readonly decals: ParticleLayer;
+  private readonly scorchLayer: ParticleLayer;
+  private readonly wreckLayer: ParticleLayer;
+  private readonly texts = new Container();
+  private readonly textPool: FloatText[] = [];
+  private readonly wrecks: Mark[] = [];
+  private readonly scorch: Mark[] = [];
+  private readonly heroFrames: Texture[];
+  private routeLabel: BitmapText;
+  private readonly boxG = new Graphics();
+  /** Selection rectangle being dragged (projected screen space). */
+  box: [number, number, number, number] | null = null;
   private readonly shadows: ParticleLayer;
   private readonly groundFx: ParticleLayer;
   private readonly overlay = new Graphics();
@@ -189,6 +245,11 @@ export class GameRenderer {
     this.iso = projection.mode === 'iso';
     const px = atlas.px;
     this.decals = new ParticleLayer(px);
+    this.scorchLayer = new ParticleLayer(px);
+    this.wreckLayer = new ParticleLayer(px);
+    ensureFont();
+    this.routeLabel = new BitmapText({ text: '', style: { fontFamily: 'wz', fontSize: 15 } });
+    this.routeLabel.anchor.set(0.5, 1);
     this.shadows = new ParticleLayer(px);
     this.groundFx = new ParticleLayer(px, true);
     this.world = new ParticleLayer(px);
@@ -213,6 +274,7 @@ export class GameRenderer {
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
+    this.heroFrames = this.iso ? frames('hero') : [atlas.hero_t];
     // indexed by projectile kind
     this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas.nukeshell];
     this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff];
@@ -227,10 +289,11 @@ export class GameRenderer {
     bg.width = MAP_W;
     bg.height = MAP_H;
     this.ground.setFromMatrix(projection.groundMatrix());
-    this.ground.addChild(bg, this.decals.view, this.overlay, this.shadows.view, this.groundFx.view);
+    this.ground.addChild(bg, this.scorchLayer.view, this.decals.view, this.overlay, this.shadows.view, this.groundFx.view);
 
     this.root.addChild(
       this.ground,
+      this.wreckLayer.view,
       this.world.view,
       this.ghost,
       this.smoke.view,
@@ -239,7 +302,110 @@ export class GameRenderer {
       this.glow.view,
       this.beams,
       this.bars.view,
+      this.texts,
+      this.routeLabel,
+      this.boxG,
     );
+  }
+
+  // ---------------------------------------------------------------- battlefield marks & floating text
+
+  setBox(b: [number, number, number, number] | null): void {
+    this.box = b;
+  }
+
+  /** Visual reactions to simulation events: wrecks, scorch marks and floating numbers. */
+  consumeEvents(ev: readonly number[]): void {
+    for (let k = 0; k < ev.length; k += EV_SIZE) {
+      const type = ev[k];
+      const x = ev[k + 1];
+      const y = ev[k + 2];
+      const a = ev[k + 3];
+      const b = ev[k + 4];
+      if (type === EV_KILL) {
+        if (settings.wrecks && !ENEMIES[a].air && a !== 0) this.addMark(this.wrecks, MAX_WRECKS, { x, y, a: Math.random() * TWO_PI, kind: a, t: WRECK_LIFE });
+        if (settings.numbers && b > 0) this.floatText(`+$${b}`, x, y, 0xffd84a, 0.9, ENEMIES[a].air ? AIR_Z : 10);
+      } else if (type === EV_BOOM) {
+        if (settings.wrecks && a >= 0.8) this.addMark(this.scorch, MAX_SCORCH, { x, y, a, kind: 0, t: SCORCH_LIFE });
+      } else if (type === EV_HIT && settings.numbers) {
+        this.floatText(`${Math.round(a)}`, x, y, b ? 0xffb070 : 0xffffff, a >= 500 ? 1.4 : 1.05, 14);
+      } else if (type === EV_STATUS && settings.numbers) {
+        const [word, color] = STATUS_WORDS[a];
+        this.floatText(word, x, y, color, 0.85, 16);
+      } else if (type === EV_LEVEL) {
+        this.floatText(`LEVEL ${a}!`, x, y, 0xffd84a, 1.3, 24);
+      }
+    }
+  }
+
+  private addMark(list: Mark[], max: number, m: Mark): void {
+    if (list.length >= max) list.shift();
+    list.push(m);
+  }
+
+  private floatText(str: string, x: number, y: number, color: number, scale: number, z: number): void {
+    let f: FloatText | undefined;
+    if (this.textPool.length >= MAX_TEXTS) {
+      f = this.textPool.shift()!;
+      this.textPool.push(f);
+    } else {
+      const text = new BitmapText({ text: '', style: { fontFamily: 'wz', fontSize: 13 } });
+      text.anchor.set(0.5, 1);
+      this.texts.addChild(text);
+      f = { text, x: 0, y: 0, z: 0, t: 0, life: 0 };
+      this.textPool.push(f);
+    }
+    f.text.text = str;
+    f.text.tint = color;
+    f.text.scale.set(scale);
+    f.text.visible = true;
+    f.x = x;
+    f.y = y;
+    f.z = z;
+    f.t = 0;
+    f.life = 1.1;
+  }
+
+  /** Real-time aging (not sim time): marks and texts keep fading while paused only slowly. */
+  tick(dt: number): void {
+    for (const list of [this.wrecks, this.scorch]) {
+      let w = 0;
+      for (const m of list) if ((m.t -= dt) > 0) list[w++] = m;
+      list.length = w;
+    }
+    for (const f of this.textPool) {
+      if (!f.text.visible) continue;
+      f.t += dt;
+      if (f.t >= f.life) {
+        f.text.visible = false;
+        continue;
+      }
+      const sx = this.p.x(f.x, f.y);
+      const sy = this.p.y(f.x, f.y) - f.z * Math.max(this.p.lift, 0.3) - f.t * 26;
+      f.text.position.set(sx, sy);
+      f.text.alpha = Math.min(1, (f.life - f.t) * 3);
+    }
+  }
+
+  private drawMarks(): void {
+    const iso = this.iso;
+    this.scorchLayer.begin();
+    for (const m of this.scorch) {
+      const a = Math.min(1, m.t / 6) * 0.4;
+      const sc = (18 + m.a * 10) / 32;
+      this.scorchLayer.push(this.fxTex[FX_GLOW], m.x, m.y, 0, sc, sc, 0x000000, a, 0.5);
+    }
+    this.scorchLayer.end();
+    this.wreckLayer.begin();
+    for (const m of this.wrecks) {
+      const sx = this.p.x(m.x, m.y);
+      const sy = this.p.y(m.x, m.y);
+      if (!this.visible(sx, sy)) continue;
+      const a = Math.min(1, m.t / 5) * 0.85;
+      if (iso) this.wreckLayer.push(this.enemyFrames[m.kind][dirIndex(m.a)], sx, sy, 0, 0.95, 0.85, 0x2e2a26, a);
+      else this.wreckLayer.push(this.enemyTopTex[m.kind], sx, sy, m.a, 0.95, 0.95, 0x2e2a26, a);
+    }
+    this.wreckLayer.end();
   }
 
   /** Visible area in projected screen coordinates (the camera's view). */
@@ -304,6 +470,12 @@ export class GameRenderer {
       (s.eAir[i] ? airSorter : sorter).add(this.depth(x, y), C_ENEMY | i);
     }
 
+    if (s.hero) {
+      const h = s.hero;
+      const x = h.px + (h.x - h.px) * alpha;
+      const y = h.py + (h.y - h.py) * alpha;
+      sorter.add(this.depth(x, y), C_HERO);
+    }
     for (let d = 0; d < s.drones.length; d++) {
       const dr = s.drones[d];
       const x = dr.px + (dr.x - dr.px) * alpha;
@@ -311,6 +483,7 @@ export class GameRenderer {
       if (this.visible(p.x(x, y), p.y(x, y))) airSorter.add(this.depth(x, y), C_DRONE | d);
     }
 
+    this.drawMarks();
     this.world.begin();
     this.air.begin();
     this.shadows.begin();
@@ -445,6 +618,27 @@ export class GameRenderer {
       }
       return;
     }
+    if (kind === C_HERO) {
+      const h = s.hero!;
+      const x = h.px + (h.x - h.px) * alpha;
+      const y = h.py + (h.y - h.py) * alpha;
+      const ang = lerpAngle(h.pang, h.ang, alpha);
+      const sx = p.x(x, y);
+      const sy = p.y(x, y);
+      // gold halo so the commander is easy to find in a crowd
+      this.groundFx.push(this.fxTex[FX_RING], x, y, time * 1.5, 26 / 128, 26 / 128, h.rallyT > 0 ? 0xffa030 : 0xffd84a, 0.75, 0.5);
+      if (this.iso) this.world.push(this.heroFrames[dirIndex(ang)], sx, sy, 0, 1.15, 1.15, 0xffffff, 1);
+      else {
+        this.shadows.push(this.heroFrames[0], x + 1.5, y + 2, ang, 1.15, 1.15, 0x000000, 0.35);
+        this.world.push(this.heroFrames[0], sx, sy, ang, 1.15, 1.15, 0xffffff, 1);
+      }
+      // level pips
+      const by = sy - (this.iso ? 22 : 15);
+      this.bars.push(this.atlas.px, sx - 12, by, 0, 6, 0.9, 0x111111, 0.8, 0);
+      const need = s.heroNextXp(h.level);
+      this.bars.push(this.atlas.px, sx - 11.5, by, 0, 5.75 * Math.min(1, h.xp / need), 0.5, 0xffd84a, 1, 0);
+      return;
+    }
     if (kind === C_DRONE) {
       const d = s.drones[idx];
       const x = d.px + (d.x - d.px) * alpha;
@@ -512,7 +706,8 @@ export class GameRenderer {
       const w = r * 2 + 4;
       const by = sy - (this.iso ? this.enemyTop[type] + 6 : r + 7);
       this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
-      const col = hp > 0.6 ? 0x5ad65a : hp > 0.3 ? 0xe8c440 : 0xe85040;
+      const pal = palette();
+      const col = hp > 0.6 ? pal.hpHigh : hp > 0.3 ? pal.hpMid : pal.hpLow;
       this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, hp)) / 4, 0.5, col, 1, 0);
       if (s.eMaxShield[i] > 0) this.bars.push(this.atlas.px, sx - w / 2, by - 2.5, 0, (w * sh) / 4, 0.4, 0x6ac8ff, 1, 0);
     }
@@ -660,7 +855,50 @@ export class GameRenderer {
   private drawOverlay(ov: OverlayState): void {
     const g = this.overlay;
     const s = this.sim;
+    const pal = palette();
     g.clear();
+    this.routeLabel.visible = false;
+    // incoming airstrike / barrage shells
+    for (const st of s.pendingStrikes) {
+      const pulse = 0.5 + 0.5 * Math.sin(s.time * 20);
+      g.circle(st.x, st.y, 26).stroke({ width: 2, color: 0xff3a2a, alpha: 0.4 + 0.5 * pulse });
+    }
+    if (ov.showAuras) {
+      // every aura at once: what's covered by radar, jammers, command posts…
+      for (const t of s.towers) {
+        const def = TOWERS[t.type];
+        if (def.targeted || def.cat === 'maze' || def.manual) continue;
+        const r = s.stats(t).range;
+        if (r > 14) g.circle(t.x, t.y, r).fill({ color: def.color, alpha: 0.08 }).stroke({ width: 1.5, color: def.color, alpha: 0.6 });
+      }
+    }
+    for (const t of ov.multi) {
+      const box = TILE * t.size;
+      g.rect(t.col * TILE - 1, t.row * TILE - 1, box + 2, box + 2).stroke({ width: 2, color: 0xffe28a, alpha: 0.9 });
+    }
+    this.boxG.clear();
+    if (ov.box) {
+      const [x0, y0, x1, y1] = ov.box;
+      this.boxG.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)).fill({ color: 0xffe28a, alpha: 0.08 }).stroke({ width: 1.5, color: 0xffe28a, alpha: 0.8 });
+    }
+    if (ov.heroSelected && s.hero) {
+      const h = s.hero;
+      g.circle(h.x, h.y, s.heroRange()).fill({ color: 0xffd84a, alpha: 0.05 }).stroke({ width: 2, color: 0xffd84a, alpha: 0.6 });
+      if (h.path.length) {
+        const last = h.path[h.path.length - 1];
+        g.moveTo(h.x, h.y);
+        for (const c of h.path) g.lineTo(((c % COLS) + 0.5) * TILE, (((c / COLS) | 0) + 0.5) * TILE);
+        g.stroke({ width: 2, color: 0xffd84a, alpha: 0.5 });
+        g.circle(((last % COLS) + 0.5) * TILE, (((last / COLS) | 0) + 0.5) * TILE, 6).stroke({ width: 2, color: 0xffd84a, alpha: 0.9 });
+      }
+    }
+    if (ov.targeting) {
+      const { r, color } = ov.targeting;
+      g.circle(ov.aimX, ov.aimY, r).fill({ color, alpha: 0.12 }).stroke({ width: 2, color, alpha: 0.9 });
+      g.moveTo(ov.aimX - 10, ov.aimY).lineTo(ov.aimX + 10, ov.aimY).moveTo(ov.aimX, ov.aimY - 10).lineTo(ov.aimX, ov.aimY + 10)
+        .stroke({ width: 2, color, alpha: 0.95 });
+      return;
+    }
     const sel = ov.selected;
     if (sel) {
       const r = s.stats(sel).range;
@@ -684,14 +922,29 @@ export class GameRenderer {
       const status = s.placeStatus(ov.placing, ov.hoverCol, ov.hoverRow);
       const ok = status === 'ok' && s.money >= def.levels[0].cost;
       const preview = s.preview(ov.placing, ov.hoverCol, ov.hoverRow);
-      if (!def.walkable) {
-        this.drawRoutes(s.fields, 0xffffff, preview ? 0.2 : 0.45);
-        if (preview) this.drawRoutes(preview, ok ? 0x7dff8a : 0xffc04a, 0.8);
-      }
       const x = ov.hoverCol * TILE + box / 2;
       const y = ov.hoverRow * TILE + box / 2;
+      if (!def.walkable) {
+        this.drawRoutes(s.fields, 0xffffff, preview ? 0.2 : 0.45);
+        if (preview) {
+          this.drawRoutes(preview, ok ? pal.ok : 0xffc04a, 0.8);
+          // how much longer the walk gets
+          let before = 0;
+          let after = 0;
+          s.map.routes.forEach((route, k) => {
+            const e = route.entry[route.entry.length >> 1];
+            before += s.fields[k].dist[e];
+            after += preview[k].dist[e];
+          });
+          const d = Math.round(after - before);
+          this.routeLabel.text = d > 0 ? `+${d} TILES` : d < 0 ? `${d} TILES` : 'SAME ROUTE';
+          this.routeLabel.tint = d > 0 ? pal.ok : d < 0 ? 0xffc04a : 0xcccccc;
+          this.routeLabel.position.set(this.p.x(x, y), this.p.y(x, y) - (this.iso ? 46 : 28));
+          this.routeLabel.visible = true;
+        }
+      }
       const r = def.levels[0].range;
-      const col = ok ? 0x7dff8a : 0xff5a5a;
+      const col = ok ? pal.ok : pal.bad;
       if (r > 14) g.circle(x, y, r).fill({ color: col, alpha: 0.07 }).stroke({ width: 2, color: col, alpha: 0.55 });
       g.rect(ov.hoverCol * TILE, ov.hoverRow * TILE, box, box).fill({ color: col, alpha: 0.3 });
       if (status === 'blocked') {
@@ -721,7 +974,7 @@ export class GameRenderer {
   }
 
   get drawnParticles(): number {
-    return this.decals.count + this.world.count + this.smoke.count + this.proj.count + this.shadows.count + this.air.count +
+    return this.scorchLayer.count + this.wreckLayer.count + this.decals.count + this.world.count + this.smoke.count + this.proj.count + this.shadows.count + this.air.count +
       this.glow.count + this.bars.count + this.groundFx.count;
   }
 }

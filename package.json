@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "peerjs": "^1.5.4",
     "pixi.js": "8.22.0"
   },
   "devDependencies": {

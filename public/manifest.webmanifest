@@ -1,0 +1,14 @@
+{
+  "name": "Warzone TD",
+  "short_name": "Warzone TD",
+  "description": "A mazing tower defense with 34 towers, co-op and a map editor.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#12140f",
+  "theme_color": "#1c1f17",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

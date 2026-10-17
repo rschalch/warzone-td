@@ -1073,6 +1073,33 @@ model('t_blackhole', 22, DIRS, [
   }),
 ]);
 
+
+// ================================================================ hero commander
+
+model('hero', 12, DIRS, [
+  P(0, 4, (g) => {
+    box(g, -2.6, -4, 4.6, 2.6, 1.2, '#1c1c1a'); // boots
+    box(g, -1.2, 1.4, 4.6, 2.6, 1.2, '#1c1c1a');
+  }),
+  P(4, 11, (g) => {
+    poly(g, [-5.5, -4.2, -7, 0, -5.5, 4.2, -3, 3.2, -3, -3.2], '#5a1a14'); // cape
+    g.beginPath();
+    g.ellipse(0, 0, 4, 5.2, 0, 0, Math.PI * 2);
+    finish(g, grad(g, -4, -5, 4, 5, [[0, '#4a4c50'], [1, '#1c1d20']])); // armoured torso
+    for (const y of [-4.4, 4.4]) circ(g, 0.5, y, 2, rgrad(g, 0.5, y, 2, [[0, '#f0d070'], [1, '#8a6a10']])); // pauldrons
+    line(g, [-2, 0, 3, 0], 'rgba(240,200,90,0.7)', 0.8);
+  }),
+  P(8, 9.5, (g) => {
+    box(g, 1, 1.2, 11, 1.5, 0.5, '#151515', null); // rifle
+    box(g, 4, 0.9, 3, 2.1, 0.5, '#2a2a2a', null);
+    box(g, 10.5, 1.3, 1.8, 1.2, 0.3, '#ffd84a', null);
+  }),
+  P(11, 14, (g) => {
+    circ(g, 0.4, 0, 3, rgrad(g, 0.4, 0, 3, [[0, '#6a6c70'], [1, '#202124']])); // helmet
+    box(g, 1.8, -1.6, 1.6, 3.2, 0.6, 'rgba(255,200,60,0.9)', null); // visor
+  }),
+]);
+
 /** Highest z of each model (health bars, muzzle and coil heights). */
 export const MODEL_TOP: Record<string, number> = {};
 for (const name in models) MODEL_TOP[name] = Math.max(...models[name].parts.map((p) => p.z1));
