@@ -176,8 +176,10 @@ b.code { font-size: 22px; letter-spacing: 3px; color: var(--accent); }
   .brand { display: none; }
   .stat { min-width: 44px; }
   #build { grid-template-columns: repeat(3, 1fr); }
-  #tactical { flex-wrap: wrap; right: 12px; }
-  #tactical button { min-width: 0; padding: 4px 6px; }
+  #tactical { right: 8px; left: 8px; bottom: 8px; overflow-x: auto; }
+  #tactical button { min-width: 0; padding: 3px 7px; font-size: 10px; flex: none; }
+  #tactical button b { font-size: 11px; }
+  #tactical .k, .tb .k { display: none; }
   #stage canvas.minimap { display: none; }
   .menu-grid { grid-template-columns: 1fr 1fr; }
   .menu-grid button.big { grid-column: span 2; }

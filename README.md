@@ -19,6 +19,22 @@ current route is drawn in white and the route your new tower would create in gre
 Five maps, from 96×64 cells (Open Field) up to 160×104 cells with three routes (Badlands). The map is larger than
 the screen: pan and zoom the camera, and use the minimap in the corner to jump around.
 
+## Modes
+- **Campaign maps** and **random maps** (size, routes and rock density from a shareable code such as `M2-1-48213`).
+- **Daily challenge**: the same map, seed and twist for everyone that day.
+- **Map editor**: paint rocks, place entry/exit gates, save, play, or share the map as a link.
+- **Co-op**: two players, one shared bank. The host gets a room code; the game runs in lockstep over a direct
+  WebRTC connection (PeerJS only brokers the introduction).
+- **Replays**: every game can be shared as a link and watched back, with a skip-to-next-wave button.
+- **Difficulty** (Easy → Brutal) and **challenges** (No Barricades, Limited Arsenal, Air Raid, Ironman, Glass Cannon)
+  multiply the score. Scores go to a local leaderboard.
+- **Research**: wins earn medals that buy permanent perks (starting money, lives, damage, cheaper walls…).
+- A **commander** you move around the map (it levels up from kills and has an airstrike, a rally and a stun
+  grenade), plus three **tactical items** that recharge every wave: a barrage, a mine drop and a supply crate.
+
+Games are saved at every wave and when you leave the tab, and can be continued from the main menu. It also installs
+as an app and works offline.
+
 ## Towers
 34 towers in seven tabs. Each has three levels except the barricade and the gate.
 - **Basic** — Gun, Cannon, Missile, Laser, Tesla, EMP.
@@ -46,10 +62,23 @@ Later waves add **Ghosts** (stealth: need radar), **Aegis** (regenerating shield
 `Space` pause · `F` cycle speed (1×/2×/4×) · `V` switch camera (top / isometric) · `G` open/close the selected
 gate · `R` aim the selected superweapon (then click a target).
 
+`H` select the commander (click ground to move it) · `[` `]` `\` its abilities · `Z` `X` `C` tactical items ·
+`Shift`-drag select a group (bulk upgrade/sell) · `Ctrl+Z` undo the last build · hold `Tab` to see every aura.
+
+Touch: tap to build or select, drag to pan, pinch to zoom.
+
 Camera: drag empty ground, right-drag or middle-drag, or the arrow keys to pan · mouse wheel/pinch or `+`/`-` to zoom ·
 `Home` to see the whole map · click or drag on the minimap to jump.
 
 ## Architecture
+- `src/game/commands.ts` + `src/app/session.ts` — every player action is a command applied between ticks. The
+  simulation is deterministic (gameplay and particles use separate RNGs), so a config plus the command log
+  reproduces a game exactly: that is what replays, co-op lockstep (with periodic state-hash checks) and saves use.
+- `src/game/config.ts` — difficulty, challenge modifiers and research perks.
+- `src/audio/sound.ts` — all sound effects and the music are synthesised with WebAudio; no audio files.
+- `scripts/gauntlet.ts` and `scripts/bot.ts` — headless balance tools: damage per dollar for every tower against a
+  standard wave, and a heuristic bot that plays whole games
+  (`npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js`).
 - `src/game/maps.ts` — map definitions (size, gates, rock count). Map size is a live module binding in
   `defs.ts` (`setMapSize`), so the hot loops read plain numbers. Rocks grow in outcrops and are rejected if
   they would cut a route, checked with a cheap flood fill.

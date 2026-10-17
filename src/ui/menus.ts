@@ -348,7 +348,6 @@ function showReplayInput(): void {
     const hashAt = v.indexOf('#');
     if (hashAt < 0) return void (overlay.querySelector('#rerr')!.textContent = 'That is not a replay link.');
     location.hash = v.slice(hashAt);
-    location.reload();
   });
   bindBack();
 }

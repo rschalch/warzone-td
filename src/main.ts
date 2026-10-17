@@ -917,6 +917,23 @@ function editor(def?: MapDef): void {
   });
 }
 
+/** Acts on a #replay= / #map= / #rmap= link. Returns false when the URL carries none. */
+async function openFromHash(): Promise<boolean> {
+  const hash = await readHash();
+  if (!hash) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (hash.replay) {
+    replayFrom = hash.replay;
+    startGame(hash.replay.config, { replay: hash.replay });
+  } else if (hash.map) {
+    saveCustomMap(hash.map);
+    showSetup(hash.map);
+  } else if (hash.rmap && parseMapCode(hash.rmap)) {
+    showRandom(hash.rmap);
+  } else return false;
+  return true;
+}
+
 async function boot(): Promise<void> {
   app = new Application();
   await app.init({
@@ -979,20 +996,9 @@ async function boot(): Promise<void> {
   };
   hud.camera(projection.mode);
 
-  // opened from a shared link?
-  const hash = await readHash();
-  history.replaceState(null, '', location.pathname + location.search);
-  if (hash?.replay) {
-    replayFrom = hash.replay;
-    startGame(hash.replay.config, { replay: hash.replay });
-  } else if (hash?.map) {
-    saveCustomMap(hash.map);
-    showSetup(hash.map);
-  } else if (hash?.rmap && parseMapCode(hash.rmap)) {
-    showRandom(hash.rmap);
-  } else {
-    void showMain();
-  }
+  // opened from a shared link (now, or later by following another one)?
+  if (!(await openFromHash())) void showMain();
+  window.addEventListener('hashchange', () => void openFromHash());
 
   if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {

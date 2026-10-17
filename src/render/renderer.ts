@@ -440,6 +440,7 @@ export class GameRenderer {
     const time = s.time + alpha * DT;
     this.smoke.begin();
     this.glow.begin();
+    this.groundFx.begin();
 
     // ---- depth-sorted world objects (ground layer) and flying units (air layer)
     const sorter = this.sorter;
@@ -531,7 +532,6 @@ export class GameRenderer {
     this.proj.end();
 
     // ---- effects
-    this.groundFx.begin();
     for (let f = 0; f < s.fCount; f++) {
       const t = 1 - s.fLife[f] / s.fMax[f];
       const x = s.fPx[f] + (s.fX[f] - s.fPx[f]) * alpha;

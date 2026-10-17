@@ -1,6 +1,6 @@
 import {
   COLS, COMBOS, DT, EN_BOSS, EN_HELI, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
-  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_GAP, buildWave, hpScale, rewardScale,
+  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_BONUS, WAVE_GAP, buildWave, hpScale, rewardScale,
   type SpawnGroup, type TowerKind,
 } from './defs';
 import { DIFFICULTIES, perk, type GameConfig } from './config';
@@ -951,7 +951,7 @@ export class Sim {
     this.money += this.earlyBonus;
     for (let k = 0; k < 3; k++) this.items[k] = Math.min(this.itemMax, this.items[k] + (this.wave > 0 ? 1 : 0));
     if (this.wave > 0) {
-      this.money += this.depotIncome;
+      this.money += WAVE_BONUS[0] + WAVE_BONUS[1] * this.wave + this.depotIncome;
       for (const t of this.towers) if (t.kind === 'depot') this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
     }
     this.wave++;

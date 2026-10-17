@@ -23,7 +23,9 @@ export const MAX_ENEMIES = 4096;
 export const MAX_PROJECTILES = 8192;
 export const MAX_FX = 6144;
 
-export const START_MONEY = 200;
+export const START_MONEY = 250;
+/** Paid at each new wave for holding the last one: base + per wave number. */
+export const WAVE_BONUS = [25, 5] as const;
 export const START_LIVES = 20;
 export const TOTAL_WAVES = 30;
 export const WAVE_GAP = 18; // seconds between the end of one wave's spawns and the next wave
@@ -63,7 +65,7 @@ export const ENEMIES: EnemyDef[] = [
   { name: 'APC', hp: 110, speed: 48, reward: 5, armor: 2, air: false, radius: 10, lives: 1, tex: 'apc', bio: 0.5 },
   { name: 'Tank', hp: 190, speed: 34, reward: 7, armor: 5, air: false, radius: 12, lives: 2, tex: 'tank', bio: 0.35 },
   { name: 'Helicopter', hp: 85, speed: 62, reward: 5, armor: 0, air: true, radius: 11, lives: 1, tex: 'heli', bio: 0 },
-  { name: 'Mammoth', hp: 2600, speed: 22, reward: 80, armor: 9, air: false, radius: 18, lives: 6, tex: 'boss', bio: 0.25 },
+  { name: 'Mammoth', hp: 2000, speed: 22, reward: 80, armor: 7, air: false, radius: 18, lives: 4, tex: 'boss', bio: 0.25 },
   { name: 'Ghost', hp: 70, speed: 74, reward: 5, armor: 1, air: false, radius: 8, lives: 1, tex: 'ghost', bio: 1, stealth: true },
   { name: 'Aegis', hp: 150, speed: 40, reward: 8, armor: 3, air: false, radius: 11, lives: 2, tex: 'aegis', bio: 0.5, shield: 1 },
   { name: 'Medic', hp: 120, speed: 44, reward: 7, armor: 1, air: false, radius: 10, lives: 1, tex: 'medic', bio: 1.2, heal: 0.12 },
@@ -143,18 +145,18 @@ export const TOWERS: TowerDef[] = [
     kind: 'gun', cat: 'basic', name: 'Machine Gun', short: 'Gun', desc: 'Cheap and fast — the backbone of any maze.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xd8c25a, turret: 't_gun',
     levels: [
-      { cost: 10, damage: 6, range: 80, rate: 5 },
-      { cost: 20, damage: 11, range: 90, rate: 6 },
-      { cost: 45, damage: 19, range: 105, rate: 7 },
+      { cost: 10, damage: 4.5, range: 80, rate: 5 },
+      { cost: 20, damage: 8, range: 90, rate: 6 },
+      { cost: 45, damage: 14, range: 105, rate: 7 },
     ],
   }),
   T({
     kind: 'cannon', cat: 'basic', name: 'Cannon', short: 'Cannon', desc: 'Heavy splash shells. Ground only.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xc77b3b, turret: 't_cannon',
     levels: [
-      { cost: 35, damage: 42, range: 125, rate: 0.85, splash: 42 },
-      { cost: 50, damage: 78, range: 135, rate: 0.9, splash: 50 },
-      { cost: 95, damage: 140, range: 150, rate: 1.0, splash: 60 },
+      { cost: 40, damage: 42, range: 125, rate: 0.85, splash: 42 },
+      { cost: 60, damage: 78, range: 135, rate: 0.9, splash: 50 },
+      { cost: 110, damage: 140, range: 150, rate: 1.0, splash: 60 },
     ],
   }),
   T({
@@ -170,9 +172,9 @@ export const TOWERS: TowerDef[] = [
     kind: 'laser', cat: 'basic', name: 'Laser', short: 'Laser', desc: 'Continuous beam, ignores armor.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xff4a5a, turret: 't_laser',
     levels: [
-      { cost: 65, damage: 38, range: 135, rate: 0 },
-      { cost: 80, damage: 72, range: 145, rate: 0 },
-      { cost: 140, damage: 135, range: 165, rate: 0 },
+      { cost: 65, damage: 46, range: 135, rate: 0 },
+      { cost: 80, damage: 86, range: 145, rate: 0 },
+      { cost: 140, damage: 160, range: 165, rate: 0 },
     ],
   }),
   T({
@@ -200,8 +202,8 @@ export const TOWERS: TowerDef[] = [
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xff7a1a, turret: 't_flame',
     levels: [
       { cost: 45, damage: 26, range: 70, rate: 0, burn: 8 },
-      { cost: 60, damage: 48, range: 76, rate: 0, burn: 14 },
-      { cost: 110, damage: 85, range: 86, rate: 0, burn: 24 },
+      { cost: 60, damage: 56, range: 76, rate: 0, burn: 14 },
+      { cost: 110, damage: 100, range: 86, rate: 0, burn: 24 },
     ],
   }),
   T({
@@ -217,9 +219,9 @@ export const TOWERS: TowerDef[] = [
     kind: 'acid', cat: 'fire', name: 'Acid Sprayer', short: 'Acid', desc: 'Corrodes armour so every other tower hits harder.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xa6e22e, turret: 't_acid',
     levels: [
-      { cost: 40, damage: 8, range: 110, rate: 1.2, splash: 26, shred: 4, duration: 5 },
-      { cost: 55, damage: 14, range: 120, rate: 1.4, splash: 30, shred: 7, duration: 5 },
-      { cost: 100, damage: 24, range: 135, rate: 1.6, splash: 34, shred: 11, duration: 6 },
+      { cost: 40, damage: 12, range: 110, rate: 1.2, splash: 26, shred: 4, duration: 5 },
+      { cost: 55, damage: 20, range: 120, rate: 1.4, splash: 30, shred: 7, duration: 5 },
+      { cost: 100, damage: 34, range: 135, rate: 1.6, splash: 34, shred: 11, duration: 6 },
     ],
   }),
   T({
@@ -247,17 +249,17 @@ export const TOWERS: TowerDef[] = [
     hitsGround: true, hitsAir: true, airMult: 1, color: 0x58b4ff, turret: 't_rail',
     levels: [
       { cost: 110, damage: 120, range: 240, rate: 0.33 },
-      { cost: 130, damage: 220, range: 260, rate: 0.38 },
-      { cost: 220, damage: 400, range: 290, rate: 0.45 },
+      { cost: 130, damage: 260, range: 260, rate: 0.38 },
+      { cost: 220, damage: 480, range: 290, rate: 0.45 },
     ],
   }),
   T({
     kind: 'gatling', cat: 'precision', name: 'Gatling', short: 'Gatling', desc: 'Spins up the longer it fires, then overheats.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xb0a080, turret: 't_gatling',
     levels: [
-      { cost: 55, damage: 5, range: 95, rate: 3 },
-      { cost: 70, damage: 8, range: 105, rate: 3.5 },
-      { cost: 125, damage: 13, range: 115, rate: 4 },
+      { cost: 55, damage: 6, range: 95, rate: 3 },
+      { cost: 70, damage: 10, range: 105, rate: 3.5 },
+      { cost: 125, damage: 17, range: 115, rate: 4 },
     ],
   }),
   T({
@@ -392,9 +394,9 @@ export const TOWERS: TowerDef[] = [
     kind: 'spikes', cat: 'maze', name: 'Spike Strip', short: 'Spikes', desc: 'Goes on the path. Shreds anything that drives over it.',
     walkable: true, hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a8a90, turret: null, aim: 'static', targeted: false,
     levels: [
-      { cost: 25, damage: 12, range: 0, rate: 0 },
-      { cost: 30, damage: 24, range: 0, rate: 0 },
-      { cost: 55, damage: 42, range: 0, rate: 0 },
+      { cost: 25, damage: 35, range: 0, rate: 0 },
+      { cost: 30, damage: 65, range: 0, rate: 0 },
+      { cost: 55, damage: 110, range: 0, rate: 0 },
     ],
   }),
   T({
@@ -406,9 +408,9 @@ export const TOWERS: TowerDef[] = [
     kind: 'bunker', cat: 'maze', name: 'Bunker', short: 'Bunker', desc: 'Short range, but fires at two units at once as they pass.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x6a7050, turret: 't_bunker',
     levels: [
-      { cost: 40, damage: 9, range: 62, rate: 4 },
-      { cost: 55, damage: 15, range: 68, rate: 5 },
-      { cost: 100, damage: 25, range: 75, rate: 6 },
+      { cost: 40, damage: 11, range: 62, rate: 4 },
+      { cost: 55, damage: 18, range: 68, rate: 5 },
+      { cost: 100, damage: 30, range: 75, rate: 6 },
     ],
   }),
 
@@ -417,36 +419,36 @@ export const TOWERS: TowerDef[] = [
     kind: 'orbital', cat: 'super', name: 'Orbital Laser', short: 'Orbital', desc: 'Charges up; then you aim (R) a beam from orbit that hunts down units.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xff3a6a, turret: 't_orbital', aim: 'spin', targeted: false, manual: true,
     levels: [
-      { cost: 250, damage: 220, range: 0, rate: 0, splash: 30, charge: 45, duration: 4 },
-      { cost: 220, damage: 380, range: 0, rate: 0, splash: 34, charge: 38, duration: 4.5 },
-      { cost: 380, damage: 600, range: 0, rate: 0, splash: 40, charge: 30, duration: 5 },
+      { cost: 250, damage: 300, range: 0, rate: 0, splash: 30, charge: 35, duration: 4 },
+      { cost: 220, damage: 500, range: 0, rate: 0, splash: 34, charge: 30, duration: 4.5 },
+      { cost: 380, damage: 800, range: 0, rate: 0, splash: 40, charge: 25, duration: 5 },
     ],
   }),
   T({
     kind: 'nuke', cat: 'super', name: 'Nuke Silo', short: 'Nuke', desc: 'One launch per charge (R), anywhere on the map. Clears a huge area.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xffe040, turret: 't_nuke', aim: 'static', targeted: false, manual: true,
     levels: [
-      { cost: 400, damage: 2500, range: 0, rate: 0, splash: 150, charge: 90 },
-      { cost: 350, damage: 4500, range: 0, rate: 0, splash: 170, charge: 80 },
-      { cost: 600, damage: 8000, range: 0, rate: 0, splash: 200, charge: 70 },
+      { cost: 300, damage: 2500, range: 0, rate: 0, splash: 150, charge: 60 },
+      { cost: 300, damage: 4500, range: 0, rate: 0, splash: 170, charge: 52 },
+      { cost: 500, damage: 8000, range: 0, rate: 0, splash: 200, charge: 45 },
     ],
   }),
   T({
     kind: 'hive', cat: 'super', name: 'Drone Hive', short: 'Drones', desc: 'Launches drones that hunt units around the hive, air or ground.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0x50d0ff, turret: 't_hive', aim: 'static',
     levels: [
-      { cost: 150, damage: 8, range: 260, rate: 3, drones: 2 },
-      { cost: 140, damage: 12, range: 300, rate: 3.2, drones: 3 },
-      { cost: 240, damage: 18, range: 340, rate: 3.5, drones: 4 },
+      { cost: 150, damage: 14, range: 260, rate: 3, drones: 2 },
+      { cost: 140, damage: 20, range: 300, rate: 3.2, drones: 3 },
+      { cost: 240, damage: 30, range: 340, rate: 3.5, drones: 4 },
     ],
   }),
   T({
     kind: 'blackhole', cat: 'super', name: 'Black Hole Projector', short: 'Black Hole', desc: 'Opens a singularity that drags units in and swallows the weak ones.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a40ff, turret: 't_blackhole', aim: 'spin',
     levels: [
-      { cost: 350, damage: 60, range: 200, rate: 0.125, splash: 80, pull: 110, duration: 3 },
-      { cost: 300, damage: 110, range: 230, rate: 0.14, splash: 90, pull: 130, duration: 3.5 },
-      { cost: 500, damage: 180, range: 260, rate: 0.16, splash: 100, pull: 150, duration: 4 },
+      { cost: 350, damage: 80, range: 200, rate: 0.125, splash: 80, pull: 110, duration: 3 },
+      { cost: 300, damage: 140, range: 230, rate: 0.14, splash: 90, pull: 130, duration: 3.5 },
+      { cost: 500, damage: 230, range: 260, rate: 0.16, splash: 100, pull: 150, duration: 4 },
     ],
   }),
 ];
@@ -513,8 +515,8 @@ export function buildWave(wave: number): SpawnGroup[] {
 
   if (n % 10 === 0) {
     add(EN_BOSS, n / 10, 6);
-    add(EN_TANK, 3 + n / 5, 1.6, 2);
-    add(EN_INFANTRY, 10 + n, 0.35, 0);
+    add(EN_TANK, 2 + n / 6, 1.6, 2);
+    add(EN_INFANTRY, 8 + n * 0.8, 0.35, 0);
   } else if (n % 5 === 0) {
     add(EN_HELI, 6 + n * 0.6, 0.9);
     add(EN_BUGGY, 4 + n * 0.3, 0.7, 3);
