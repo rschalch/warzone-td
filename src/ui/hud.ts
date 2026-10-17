@@ -77,7 +77,7 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
 
 /** Counters for specific threats, shown in the wave preview. */
 const THREAT_TIPS: Record<number, string> = {
-  [EN_GHOST]: 'stealth — needs radar',
+  [EN_GHOST]: 'stealth — radar, or towers point-blank',
   [EN_AEGIS]: 'shields — jam them',
   [EN_MEDIC]: 'heals — focus it',
   [EN_HELI]: 'air — flies over the maze',

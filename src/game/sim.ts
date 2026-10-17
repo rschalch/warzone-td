@@ -138,7 +138,7 @@ export type PlaceStatus = 'ok' | 'blocked' | 'occupied' | 'invalid';
 export const EV_SHOT = 0; // a = tower type
 export const EV_BOOM = 1; // a = size
 export const EV_KILL = 2; // a = enemy kind, b = reward
-export const EV_LEAK = 3;
+export const EV_LEAK = 3; // a = enemy kind
 export const EV_BUILD = 4;
 export const EV_SELL = 5;
 export const EV_UPGRADE = 6;
@@ -194,6 +194,7 @@ interface Strike {
 }
 
 const TURN_RATE = 10; // rad/s for turrets
+const STEALTH_DETECT = 45; // px: any tower spots a stealth unit this close
 /** Render heights shared with the renderer: flying units and turret muzzles. */
 export const AIR_Z = 34;
 export const MUZZLE_Z = 16;
@@ -223,6 +224,7 @@ export class Sim {
   money = 0;
   lives = 0;
   private readonly hpMult: number;
+  private readonly routeFactor: number;
   private readonly bountyMult: number;
   readonly events: number[] = [];
   /** Damage dealt by each tower since the last wave report (cosmetic: never read by the simulation). */
@@ -378,7 +380,9 @@ export class Sim {
     this.config = config;
     this.rng = new Rng(config.seed);
     const diff = DIFFICULTIES[config.difficulty];
-    this.money = Math.round(START_MONEY * diff.money) + 50 * perk(config, 'logistics');
+    // every extra route splits the defence, so it pays more to hold it
+    this.routeFactor = 1 + 0.35 * (map.routes.length - 1);
+    this.money = Math.round(START_MONEY * diff.money * this.routeFactor) + 50 * perk(config, 'logistics');
     this.lives = config.modifiers.includes('oneLife') ? 1 : diff.lives + 5 * perk(config, 'fortify');
     this.hpMult = diff.hp;
     this.bountyMult = 1 + 0.1 * perk(config, 'bounty');
@@ -951,7 +955,7 @@ export class Sim {
     this.money += this.earlyBonus;
     for (let k = 0; k < 3; k++) this.items[k] = Math.min(this.itemMax, this.items[k] + (this.wave > 0 ? 1 : 0));
     if (this.wave > 0) {
-      this.money += WAVE_BONUS[0] + WAVE_BONUS[1] * this.wave + this.depotIncome;
+      this.money += Math.round((WAVE_BONUS[0] + WAVE_BONUS[1] * this.wave) * this.routeFactor) + this.depotIncome;
       for (const t of this.towers) if (t.kind === 'depot') this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
     }
     this.wave++;
@@ -1321,7 +1325,7 @@ export class Sim {
   private leak(i: number): void {
     this.lives -= ENEMIES[this.eKind[i]].lives;
     this.leakedThisWave++;
-    this.ev(EV_LEAK, this.eX[i], this.eY[i]);
+    this.ev(EV_LEAK, this.eX[i], this.eY[i], this.eKind[i]);
     this.burst(Math.min(MAP_W, Math.max(0, this.eX[i])), Math.min(MAP_H, Math.max(0, this.eY[i])), 0xff5a3a, 6, FX_GLOW, 1);
     this.freeEnemy(i);
     if (this.lives <= 0) {
@@ -1582,12 +1586,14 @@ export class Sim {
     let bestScore = -Infinity;
     for (let k = 0; k < n; k++) {
       const i = this.qbuf[k];
-      if (i === skip || !this.targetable(i)) continue;
+      if (i === skip || !this.eAlive[i] || this.eHackT[i] > 0) continue;
       if (this.eAir[i] ? !air : !ground) continue;
       const dx = this.eX[i] - x;
       const dy = this.eY[i] - y;
       const d2 = dx * dx + dy * dy;
       if (d2 > r2) continue;
+      // stealth: radar reveals it everywhere; otherwise only point-blank
+      if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
       let s: number;
       switch (mode) {

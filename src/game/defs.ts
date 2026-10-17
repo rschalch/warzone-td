@@ -25,7 +25,7 @@ export const MAX_FX = 6144;
 
 export const START_MONEY = 250;
 /** Paid at each new wave for holding the last one: base + per wave number. */
-export const WAVE_BONUS = [25, 5] as const;
+export const WAVE_BONUS = [40, 8] as const;
 export const START_LIVES = 20;
 export const TOTAL_WAVES = 30;
 export const WAVE_GAP = 18; // seconds between the end of one wave's spawns and the next wave
@@ -44,7 +44,7 @@ export interface EnemyDef {
   lives: number; // lives lost when it leaks
   tex: string;
   bio: number; // damage multiplier from gas (soft targets choke, armour seals)
-  stealth?: boolean; // untargetable unless inside a radar's range
+  stealth?: boolean; // untargetable unless inside a radar's range or right next to a tower
   shield?: number; // regenerating shield, as a fraction of max hp
   heal?: number; // medic: hp healed per pulse, as a fraction of the target's max hp
 }
@@ -504,7 +504,7 @@ export function hpScale(wave: number): number {
 }
 
 export function rewardScale(wave: number): number {
-  return 1 + 0.05 * (wave - 1);
+  return 1.3 * (1 + 0.07 * (wave - 1));
 }
 
 export function buildWave(wave: number): SpawnGroup[] {

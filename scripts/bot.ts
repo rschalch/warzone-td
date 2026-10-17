@@ -94,12 +94,15 @@ function decide(sim: Sim, built: Map<number, number>): void {
 function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number; win: boolean; lives: number; towers: number } {
   const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed });
   const built = new Map<number, number>();
+  const leaks = new Map<number, number>();
   sim.exec({ t: 'wave' });
   let lastWave = 0;
   for (let tick = 0; tick < 60 * 60 * 40 && !sim.gameOver && !sim.victory; tick++) {
     if (process.env.VERBOSE && sim.wave !== lastWave) {
       lastWave = sim.wave;
-      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} towers ${sim.towers.length} kills ${sim.totalKills}`);
+      const kinds = new Map<string, number>();
+      for (const t of sim.towers) kinds.set(t.kind, (kinds.get(t.kind) ?? 0) + 1);
+      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
     }
     if (tick % 30 === 0) decide(sim, built);
     // use items when it gets busy, roughly like a player would
@@ -108,7 +111,12 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
       sim.exec({ t: 'item', item: 0, x: sim.eX[i], y: sim.eY[i] });
     }
     sim.step();
+    for (let k = 0; k < sim.events.length; k += 5) {
+      if (sim.events[k] === 3) leaks.set(sim.events[k + 3], (leaks.get(sim.events[k + 3]) ?? 0) + 1);
+    }
+    sim.events.length = 0;
   }
+  if (process.env.VERBOSE) console.log('  leaks by kind', JSON.stringify([...leaks].map(([k, n]) => `${k}:${n}`)));
   return { wave: sim.wave, win: sim.victory, lives: sim.lives, towers: sim.towers.length };
 }
 
