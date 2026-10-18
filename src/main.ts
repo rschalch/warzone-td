@@ -548,24 +548,43 @@ function updateHover(e: { clientX: number; clientY: number }): void {
 }
 
 /** A click on the battlefield (mouse release or touch tap) that wasn't a drag. */
+/** The tower under the pointer: towers stand up off the ground, so try their deck, then the ground. */
+function towerUnder(e: { clientX: number; clientY: number }): Tower | null {
+  const s = sim();
+  if (!s) return null;
+  const [sx, sy] = canvasToScreen(...pointerToCanvas(e));
+  const [dx, dy] = projection.toWorld(sx, sy + 12 * projection.lift);
+  const [gx, gy] = projection.toWorld(sx, sy);
+  return s.towerAtTile(Math.floor(dx / TILE), Math.floor(dy / TILE)) ?? s.towerAtTile(Math.floor(gx / TILE), Math.floor(gy / TILE));
+}
+
+/** Clicking an existing tower while a build tool is active selects it instead (and drops the tool). */
+function selectInstead(e: { clientX: number; clientY: number }): boolean {
+  const t = towerUnder(e);
+  if (!t) return false;
+  placing = -1;
+  clearSelection();
+  selected = t;
+  return true;
+}
+
 function clickAt(e: { clientX: number; clientY: number }): void {
   const s = sim();
   if (!s) return;
   updateHover(e);
   if (targeting) return fireTargeting(aimX, aimY);
   if (placing >= 0) {
-    issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
+    if (!selectInstead(e)) issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
     return;
   }
-  // the commander first, then towers (they stand up off the ground: try their deck, then the ground)
+  // the commander first, then towers
   const [sx, sy] = canvasToScreen(...pointerToCanvas(e));
   if (s.hero) {
     const hx = projection.x(s.hero.x, s.hero.y);
     const hy = projection.y(s.hero.x, s.hero.y) - 8 * projection.lift;
     if (Math.hypot(hx - sx, hy - sy) < 14) return selectHero();
   }
-  const [dx, dy] = projection.toWorld(sx, sy + 12 * projection.lift);
-  const t = s.towerAtTile(Math.floor(dx / TILE), Math.floor(dy / TILE)) ?? s.towerAtTile(cellCol, cellRow);
+  const t = towerUnder(e);
   if (heroSelected && !t && session!.mode !== 'replay') {
     issue({ t: 'heroMove', x: aimX, y: aimY });
     return;
@@ -619,8 +638,9 @@ function bindInput(): void {
     if (e.button === 1) e.preventDefault(); // no autoscroll
     updateHover(e);
     if (e.button === 0 && !touch && placing >= 0 && !targeting && session.mode !== 'replay') {
-      // the tower stays selected so walls can be laid quickly; drag to paint a line
-      issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
+      // pressing on an existing tower selects it; otherwise build, and dragging paints a line
+      // (the tower type stays selected so walls can be laid quickly)
+      if (!selectInstead(e)) issue({ t: 'place', type: placing, col: hoverCol, row: hoverRow });
       drag.painted = true;
     }
   });
