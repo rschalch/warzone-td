@@ -70,7 +70,8 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score: six pieces played in turn (`TRACKS`), strings/brass/choir over taikos, layered by `intensity` |
 | `src/audio/dsp.ts`, `sfx.worker.ts` | Offline synthesis of every effect into sample banks (a few variations each), rendered in a worker ~1.5 s after boot. No audio files |
 | `src/render/models.ts` | Every 3D model as stacked top-down parts (sprite stacking) |
-| `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain, atlas packing, tower icons |
+| `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain markings, atlas packing, tower icons |
+| `src/render/landscape.ts`, `landscape.worker.ts`, `terrainGL.ts` | Terrain: eroded heightfield + fields, built in a worker; WebGL2 ground shader with CC0 photo textures |
 | `src/render/renderer.ts` | Draws a sim each frame: depth-sorted sprites, projectiles, effects, beams, overlays, wrecks, floating text |
 | `src/ui/hud.ts` | DOM HUD: build palette (all towers at once), side info panel, tactical bar, wave preview, reports |
 | `src/ui/codex.ts` | The long "how it works" texts for towers, enemies, items, abilities |
@@ -117,11 +118,14 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 
 **Terrain:** `MapDef.rivers` / `mountains` (generated) or `paint` (editor). Water is walkable at `WATER_SLOW` speed
 (`Sim.groundSlow`, folded into `tarGrid`) and costs `1 / WATER_SLOW` in the flow fields; mountains are `blocked`.
-Neither is buildable (`footprint` needs `T_BUILD`). The look: `landLayers()` (`atlas.ts`) computes elevation and
-moisture over the whole map and turns them into per-texture masks, water and light; `buildBackground()` composites
-the CC0 photo textures in `public/terrain/` (loaded at boot by `loadTerrainTextures()`) through those masks on the
-GPU (Pixi, rendered once into a RenderTexture); the minimap and previews use `paintLand()` (canvas, flat average
-colours). Canvas 2D compositing at full size was ~0.8 s, so keep the full-size path on the GPU. Adding fields to a campaign
+Neither is buildable (`footprint` needs `T_BUILD`). The look (all cosmetic, never read by the sim):
+`render/landscape.ts` builds a heightfield (hills, a ridged spine over every massif, river valleys) and carves it
+with droplet hydraulic erosion, plus moisture, sediment, cast shadows and AO; `render/terrainGL.ts` paints it in
+one WebGL2 fragment shader with the CC0 photo textures in `public/terrain/` (stochastic no-tile sampling, rules
+on moisture/slope/height/sediment, height blending, lighting, grading). The game starts with a coarse landscape
+(`buildBackground`, sub=1) and `refineBackground()` swaps in the detailed one built in `landscape.worker.ts`.
+Height inputs must be smooth to their slope (multi-pass blurs, no hard `max`), or the light draws crease lines.
+Without WebGL2, `landLayers()`/`paintLand()` (canvas) are the fallback. Adding fields to a campaign
 `MapDef` changes that map for new games only: saves and replays carry their own copy of the def.
 
 ## Balance notes

@@ -3,6 +3,8 @@ import { COLS, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
 import { T_BUILD, T_GATE, T_MOUNT, T_ROCK, T_WATER, type GameMap } from '../game/maps';
 import { Rng } from '../game/rng';
 import { DIRS, models } from './models';
+import { buildLandscape, type Landscape } from './landscape';
+import { renderGround } from './terrainGL';
 
 export { DIRS, MODEL_TOP, TOWER_DECK } from './models';
 
@@ -747,8 +749,75 @@ const TERRAIN_MAX_PX = 12e6;
  * map and layered through the landscape's masks, then water, light and grading; the grid, gates and
  * other markings (a transparent canvas) go on top.
  */
+/** Landscapes are costly (erosion): one per map, shared by the battlefield and the minimap. */
+const landscapes = new WeakMap<GameMap, Landscape>();
+function landscapeOf(map: GameMap, sub: number): Landscape {
+  let L = landscapes.get(map);
+  if (!L || L.sub < sub) landscapes.set(map, (L = buildLandscape(map, sub)));
+  return L;
+}
+const groundImages = () => TEX_NAMES.map((n) => groundTex[n].img);
+
+/** Ground (from a landscape) plus the markings, rendered into one texture; null without WebGL2. */
+function composeBackground(map: GameMap, renderer: Renderer, L: Landscape, res: number): Texture | null {
+  const painted = renderGround(L, groundImages(), res);
+  if (!painted) return null;
+  const root = new Container();
+  const ground = Texture.from(painted);
+  const marks = Texture.from(drawTerrain(map, res, false, false));
+  for (const t of [ground, marks]) {
+    const sp = new Sprite(t);
+    sp.width = MAP_W;
+    sp.height = MAP_H;
+    root.addChild(sp);
+  }
+  const target = RenderTexture.create({ width: MAP_W, height: MAP_H, resolution: res });
+  renderer.render({ container: root, target });
+  root.destroy({ children: true });
+  ground.destroy(true);
+  marks.destroy(true);
+  return target;
+}
+
+const backgroundRes = () => Math.min(RES, Math.sqrt(TERRAIN_MAX_PX / (MAP_W * MAP_H)), 8192 / Math.max(MAP_W, MAP_H));
+/** Samples per cell side of the detailed landscape. */
+const detailSub = () => (COLS * ROWS > 9000 ? 3 : 4);
+
+let landWorker: Worker | null = null;
+let landJobs = 0;
+
+/**
+ * The detailed battlefield ground: the landscape is eroded in a worker, then painted. Resolves to
+ * null if the map size changed meanwhile (another map was started) or WebGL2 is missing.
+ */
+export async function refineBackground(map: GameMap, renderer: Renderer): Promise<Texture | null> {
+  const cols = COLS;
+  const rows = ROWS;
+  const sub = detailSub();
+  const job = ++landJobs;
+  let L: Landscape;
+  try {
+    landWorker ??= new Worker(new URL('./landscape.worker.ts', import.meta.url), { type: 'module' });
+    const w = landWorker;
+    L = await new Promise<Landscape>((resolve, reject) => {
+      w.onmessage = (e: MessageEvent<Landscape>) => resolve(e.data);
+      w.onerror = reject;
+      w.postMessage({ cols, rows, grid: map.grid.slice(), seed: map.def.seed, sub });
+    });
+  } catch {
+    L = buildLandscape(map, sub);
+  }
+  if (job !== landJobs || COLS !== cols || ROWS !== rows) return null;
+  landscapes.set(map, L);
+  return composeBackground(map, renderer, L, backgroundRes());
+}
+
+/** The battlefield ground for the first frames: the same landscape, coarse (cheap); see refineBackground(). */
 export function buildBackground(map: GameMap, renderer: Renderer): Texture {
-  const res = Math.min(RES, Math.sqrt(TERRAIN_MAX_PX / (MAP_W * MAP_H)), 8192 / Math.max(MAP_W, MAP_H));
+  const res = backgroundRes();
+  const quick = composeBackground(map, renderer, landscapeOf(map, 1), res);
+  if (quick) return quick;
+  // no WebGL2: the canvas-and-Pixi layering
   const rng = new Rng(map.def.seed * 7 + 1);
   const land = landLayers(map, rng, res);
   const root = new Container();
@@ -819,7 +888,12 @@ export function drawTerrain(map: GameMap, res: number, solidRocks = false, groun
   g.scale(res, res);
   const rng = new Rng(map.def.seed * 7 + 1);
 
-  if (ground) paintLand(g, landLayers(map, rng, res), res);
+  if (ground) {
+    // small overviews: the same landscape, cheaply (the battlefield's if it exists, else a coarse one)
+    const painted = renderGround(landscapeOf(map, 1), groundImages(), res);
+    if (painted) g.drawImage(painted, 0, 0, MAP_W, MAP_H);
+    else paintLand(g, landLayers(map, rng, res), res);
+  }
   if (res >= 0.5) drawWaterDetail(g, map, rng);
 
   // build grid on buildable ground only: faint cell lines, stronger every tower-width

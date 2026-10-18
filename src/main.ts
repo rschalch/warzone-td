@@ -17,7 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
-import { buildAtlas, buildBackground, drawTerrain, loadTerrainTextures, towerIcon, type Atlas } from './render/atlas';
+import { buildAtlas, buildBackground, drawTerrain, loadTerrainTextures, refineBackground, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -330,6 +330,15 @@ function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
   background = buildBackground(s.map, app.renderer);
   projection = makeProjection(cameraMode);
   buildView();
+  // the detailed (eroded) terrain is built in a worker and swapped in when ready
+  const game = session;
+  void refineBackground(s.map, app.renderer).then((tex) => {
+    if (!tex) return;
+    if (session !== game || !view) return tex.destroy(true);
+    view.setBackground(tex);
+    background?.destroy(true);
+    background = tex;
+  });
   minimap?.destroy();
   minimap = new Minimap(stage, s.map, s, (wx, wy) => lookAt(wx, wy));
   hud.configure(s);

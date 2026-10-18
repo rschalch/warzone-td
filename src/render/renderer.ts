@@ -228,6 +228,7 @@ export class GameRenderer {
   private readonly baseTex: (Texture | null)[][];
   private readonly cornerTex: Texture;
   private readonly rockTex: Texture[];
+  private readonly bg: Sprite;
   private readonly rotorTex: Texture[];
   private readonly projTex: Texture[];
   private readonly projTint: number[];
@@ -290,7 +291,7 @@ export class GameRenderer {
     this.ghost.addChild(this.ghostBase, this.ghostTurret);
     this.ghost.alpha = 0.7;
 
-    const bg = new Sprite(background);
+    const bg = (this.bg = new Sprite(background));
     bg.width = MAP_W;
     bg.height = MAP_H;
     this.ground.setFromMatrix(projection.groundMatrix());
@@ -437,6 +438,13 @@ export class GameRenderer {
   /** Painter's order: iso sorts by x + y, top-down by y (things lower on screen overlap). */
   private depth(x: number, y: number): number {
     return this.iso ? x + y : y * 2;
+  }
+
+  /** Swaps the ground picture (the detailed terrain arrives after the game has started). */
+  setBackground(t: Texture): void {
+    this.bg.texture = t;
+    this.bg.width = MAP_W;
+    this.bg.height = MAP_H;
   }
 
   /** alpha: interpolation factor between the previous and current sim tick. */

@@ -114,9 +114,11 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
   the frames come back as ImageBitmaps, keeping startup around half a second.
 - `src/render/atlas.ts` — packs every frame into one texture: per model, 16 iso headings (lit tops, shaded sides,
   outline, contact shadow) plus one top-down frame that is rotated at runtime. Also draws the effects and floor
-  decals (no image files for any of these), and the terrain: an elevation + moisture landscape decides how much
-  of each ground texture shows (grass, patchy grass, dry grass, sand, gravel, mud, rock, snow), composited once
-  on the GPU with hillshading.
+  decals (no image files for any of these), and the terrain markings (grid, gates).
+- `src/render/landscape.ts`, `terrainGL.ts` — the terrain: a heightfield shaped by the map (a ridged spine over
+  every massif, valleys under the rivers) and carved by droplet hydraulic erosion in a worker, then painted in one
+  WebGL2 shader: photo textures sampled without visible tiling, chosen by moisture, slope, height and eroded
+  sediment, height-blended at their borders and lit with the terrain's normals, cast shadows and occlusion.
 - `public/terrain/` — the only images: eight ground textures, CC0 photo materials from
   [ambientCG](https://ambientcg.com) (Grass001, Grass004, Ground037, Ground080, Ground079S, Ground109, Rock060,
   Snow004), resized to 512 px.
