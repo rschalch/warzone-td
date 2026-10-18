@@ -62,6 +62,8 @@ export interface GameConfig {
   seed: number;
   /** Set for the daily challenge (YYYY-MM-DD). */
   daily?: string;
+  /** Co-op with AI: the share of the bank the AI partner may spend (see partner.ts). */
+  partner?: number;
 }
 
 export const perk = (cfg: GameConfig, id: string) => cfg.perks[id] ?? 0;

@@ -75,6 +75,28 @@ try {
   check(det.replay, 'replaying the command log reproduces the game exactly');
   check(det.restore, 'save/restore stays identical to the original');
 
+  // co-op with AI: the partner builds on its own, and its commands replay exactly
+  const ai = await page.evaluate(() => {
+    const { Session, Sim, session } = window.game;
+    const cfg = { ...session.config, seed: 7, partner: 0.5 };
+    const a = new Session(cfg);
+    a.speed = 4;
+    a.issue({ t: 'wave' });
+    while (a.sim.ticks < 3600) a.advance(1 / 240);
+    const owned = (s) => s.towers.filter((t) => t.owner === 1).map((t) => t.id).join(',');
+    const b = new Session(cfg, { replay: a.log });
+    b.speed = 4;
+    while (b.sim.ticks < a.sim.ticks) b.advance(1 / 240);
+    const c = Sim.restore(structuredClone(a.sim.snapshot()));
+    return {
+      built: a.sim.towers.filter((t) => t.owner === 1).length,
+      replay: b.partner === null && b.sim.stateHash() === a.sim.stateHash() && owned(b.sim) === owned(a.sim),
+      restore: owned(c) === owned(a.sim),
+    };
+  });
+  check(ai.built >= 3, `AI partner builds on its own (${ai.built} towers)`);
+  check(ai.replay && ai.restore, 'AI partner games replay and restore exactly');
+
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {
   check(false, `exception: ${e.message}`);

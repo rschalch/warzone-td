@@ -2,10 +2,9 @@ import { COLS, ROWS } from './defs';
 
 const SQRT2 = Math.SQRT2;
 // 8-neighbourhood: dx, dy, cost
-const NB: [number, number, number][] = [
-  [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
-  [1, 1, SQRT2], [1, -1, SQRT2], [-1, 1, SQRT2], [-1, -1, SQRT2],
-];
+const NDX = [1, -1, 0, 0, 1, 1, -1, -1];
+const NDY = [0, 0, 1, -1, 1, -1, 1, -1];
+const NCOST = [1, 1, 1, 1, SQRT2, SQRT2, SQRT2, SQRT2];
 
 /**
  * Distance field towards a set of goal cells (Dijkstra, octile moves, no corner cutting).
@@ -20,29 +19,36 @@ export class FlowField {
 
   constructor(readonly goals: number[]) {}
 
-  /** blocked[i] != 0 means impassable. */
+  /** blocked[i] != 0 means impassable. Hot (every placement check runs it per route): heap inlined. */
   compute(blocked: Uint8Array): void {
     const dist = this.dist;
     const next = this.next;
     dist.fill(Infinity);
     next.fill(-1);
-    let size = 0;
     const heap = this.heap;
     const key = this.heapKey;
-    const push = (i: number, k: number) => {
+    let size = 0;
+    const goals = this.goals;
+    for (let g = 0; g < goals.length; g++) {
+      const i = goals[g];
+      if (blocked[i]) continue;
+      dist[i] = 0;
+      // push(i, 0)
       let p = size++;
       while (p > 0) {
         const parent = (p - 1) >> 1;
-        if (key[parent] <= k) break;
+        if (key[parent] <= 0) break;
         heap[p] = heap[parent];
         key[p] = key[parent];
         p = parent;
       }
       heap[p] = i;
-      key[p] = k;
-    };
-    const pop = (): number => {
-      const top = heap[0];
+      key[p] = 0;
+    }
+    while (size > 0) {
+      const k = key[0];
+      // pop()
+      const i = heap[0];
       const li = heap[--size];
       const lk = key[size];
       let p = 0;
@@ -57,22 +63,13 @@ export class FlowField {
       }
       heap[p] = li;
       key[p] = lk;
-      return top;
-    };
 
-    for (const g of this.goals) {
-      if (blocked[g]) continue;
-      dist[g] = 0;
-      push(g, 0);
-    }
-    while (size > 0) {
-      const k = key[0];
-      const i = pop();
       if (k > dist[i]) continue;
       const cx = i % COLS;
       const cy = (i / COLS) | 0;
       for (let n = 0; n < 8; n++) {
-        const [dx, dy, cost] = NB[n];
+        const dx = NDX[n];
+        const dy = NDY[n];
         const x = cx + dx;
         const y = cy + dy;
         if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
@@ -80,11 +77,21 @@ export class FlowField {
         if (blocked[j]) continue;
         // diagonal moves may not squeeze between two blocked cells / clip a corner
         if (dx && dy && (blocked[cy * COLS + x] || blocked[y * COLS + cx])) continue;
-        const nd = k + cost;
+        const nd = k + NCOST[n];
         if (nd < dist[j]) {
           dist[j] = nd;
           next[j] = i; // j steps toward i
-          push(j, nd);
+          // push(j, nd)
+          let q = size++;
+          while (q > 0) {
+            const parent = (q - 1) >> 1;
+            if (key[parent] <= nd) break;
+            heap[q] = heap[parent];
+            key[q] = key[parent];
+            q = parent;
+          }
+          heap[q] = j;
+          key[q] = nd;
         }
       }
     }

@@ -5,10 +5,13 @@
 // - coop:   lockstep. Commands are scheduled INPUT_DELAY ticks ahead and sent to the peer; a tick
 //           only runs once both sides have finalised their commands for it. Both machines run the
 //           same deterministic simulation, so only commands cross the network.
+// A local game may also have an AI partner (config.partner): it thinks every PARTNER_EVERY ticks and
+// its commands are applied and logged like the player's, so replaying the log needs no partner.
 
 import type { Command, LoggedCommand } from '../game/commands';
 import type { GameConfig } from '../game/config';
 import { DT } from '../game/defs';
+import { Partner, PARTNER_EVERY } from '../game/partner';
 import { Sim } from '../game/sim';
 
 export const MAX_STEPS_PER_FRAME = 16;
@@ -44,6 +47,8 @@ export class Session {
   /** Time scale for slow-motion effects (local only, never affects the outcome). */
   timeScale = 1;
   desync = false;
+  /** The AI partner (co-op with AI), in local games only. */
+  readonly partner: Partner | null = null;
   stalled = false;
   /** Results of local commands applied since the last frame, for feedback (sound, messages). */
   readonly results: { cmd: SessionCommand; ok: boolean }[] = [];
@@ -67,6 +72,7 @@ export class Session {
       this.link = opts.link;
       this.link.onMessage = (msg) => this.receive(msg);
     }
+    if (config.partner && !opts.replay && !opts.link) this.partner = new Partner(config.partner);
   }
 
   get mode(): 'local' | 'replay' | 'coop' {
@@ -139,6 +145,9 @@ export class Session {
         due.sort((a, b) => a.player - b.player);
         for (const d of due) this.apply(d.cmd, d.player === this.link.player);
       }
+    } else if (this.partner && sim.ticks % PARTNER_EVERY === 0) {
+      const cmd = this.partner.think(sim);
+      if (cmd) this.apply(cmd, false);
     }
     if (this.finished) return true;
     sim.step();

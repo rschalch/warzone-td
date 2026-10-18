@@ -3,7 +3,8 @@
 // replays, saved games and co-op lockstep are built on.
 
 export type Command =
-  | { t: 'place'; type: number; col: number; row: number }
+  /** `by` is set when the AI partner builds (it owns the tower; the player's undo skips it). */
+  | { t: 'place'; type: number; col: number; row: number; by?: number }
   | { t: 'sell'; ids: number[] }
   | { t: 'upgrade'; ids: number[] }
   | { t: 'mode'; id: number; mode: number }

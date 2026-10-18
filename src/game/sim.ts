@@ -114,6 +114,8 @@ export interface Tower {
   dmgMult: number;
   airBonus: number;
   combos: string[];
+  /** Who built it: 0 the player(s), PARTNER (1) the AI partner. */
+  owner: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -559,7 +561,8 @@ export class Sim {
     switch (cmd.t) {
       case 'place': {
         const t = this.place(cmd.type, cmd.col, cmd.row);
-        if (t) this.lastBuild = { id: t.id, tick: this.ticks };
+        if (t && cmd.by) t.owner = cmd.by;
+        else if (t) this.lastBuild = { id: t.id, tick: this.ticks };
         return !!t;
       }
       case 'sell': {
@@ -637,6 +640,11 @@ export class Sim {
       }
     }
     return cells;
+  }
+
+  /** Cheap pre-check (no path search): is the ground free and buildable for this tower type? */
+  footprintFree(type: number, col: number, row: number): boolean {
+    return this.footprint(col, row, TOWERS[type].size) !== null;
   }
 
   private checkKey = '';
@@ -726,7 +734,7 @@ export class Sim {
       mode: def.kind === 'sniper' || def.kind === 'arty' ? 2 : 0, // big guns default to Strong
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [],
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -1020,7 +1028,7 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [],
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
     };
     this.hero = { x, y, px: x, py: y, ang: 0, pang: 0, path: [], level: Math.min(HERO_MAX_LEVEL, level), xp: 0, cd: [0, 0, 0], fireCd: 0, rallyT: 0, src };
   }

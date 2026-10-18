@@ -1,10 +1,12 @@
 // A heuristic player for difficulty tuning. Each second it either upgrades or builds where a tower
 // covers the most of the current route (or lengthens it), mixing tower types by need.
 //   npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js
+// PARTNER=0.5 adds the AI partner (co-op with AI) with that bank share; SOLO=1 lets it play alone.
 
 import type { Difficulty } from '../src/game/config';
 import { COLS, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
 import { MAPS, type MapDef } from '../src/game/maps';
+import { Partner, PARTNER_EVERY } from '../src/game/partner';
 import { Sim } from '../src/game/sim';
 
 const T = {
@@ -94,6 +96,13 @@ function decide(sim: Sim, built: Map<number, number>): void {
 function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number; win: boolean; lives: number; towers: number } {
   const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed });
   const built = new Map<number, number>();
+  const share = Number(process.env.PARTNER ?? 0);
+  const solo = !!process.env.SOLO;
+  const partner = share || solo ? new Partner(solo ? 1 : share) : null;
+  let thinkMs = 0;
+  let thinkMax = 0;
+  let thinks = 0;
+  let slow = 0;
   const leaks = new Map<number, number>();
   sim.exec({ t: 'wave' });
   let lastWave = 0;
@@ -104,7 +113,17 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
       for (const t of sim.towers) kinds.set(t.kind, (kinds.get(t.kind) ?? 0) + 1);
       console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
     }
-    if (tick % 30 === 0) decide(sim, built);
+    if (tick % 30 === 0 && !solo) decide(sim, built);
+    if (partner && tick % PARTNER_EVERY === 0) {
+      const t0 = performance.now();
+      const cmd = partner.think(sim);
+      const ms = performance.now() - t0;
+      thinkMs += ms;
+      thinkMax = Math.max(thinkMax, ms);
+      if (ms > 16) slow++;
+      thinks++;
+      if (cmd) sim.exec(cmd);
+    }
     // use items when it gets busy, roughly like a player would
     if (tick % 120 === 0 && sim.liveCount > 25 && sim.items[0] > 0) {
       const i = sim.live[0];
@@ -116,16 +135,20 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
     }
     sim.events.length = 0;
   }
+  if (thinks && process.env.VERBOSE) console.log(`  partner think: avg ${(thinkMs / thinks).toFixed(2)} ms, max ${thinkMax.toFixed(1)} ms, ${slow} over 16 ms, of ${thinks}`);
   if (process.env.VERBOSE) console.log('  leaks by kind', JSON.stringify([...leaks].map(([k, n]) => `${k}:${n}`)));
   return { wave: sim.wave, win: sim.victory, lives: sim.lives, towers: sim.towers.length };
 }
 
 const diffs = (process.env.DIFF ?? 'easy,normal,hard').split(',') as Difficulty[];
 const maps = (process.env.MAPS ?? '0,1,2,3,4').split(',').map(Number);
+const seeds = Number(process.env.SEEDS ?? 1); // SEEDS=n plays each game n times with different seeds
 for (const m of maps) {
   for (const d of diffs) {
-    const t0 = Date.now();
-    const r = play(MAPS[m], d, 42);
-    console.log(`${MAPS[m].name.padEnd(14)} ${d.padEnd(7)} ${r.win ? 'WIN ' : 'lost'} wave ${String(r.wave).padStart(2)}/${TOTAL_WAVES} lives ${String(r.lives).padStart(2)} towers ${r.towers}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    for (let k = 0; k < seeds; k++) {
+      const t0 = Date.now();
+      const r = play(MAPS[m], d, 42 + k);
+      console.log(`${MAPS[m].name.padEnd(14)} ${d.padEnd(7)} ${r.win ? 'WIN ' : 'lost'} wave ${String(r.wave).padStart(2)}/${TOTAL_WAVES} lives ${String(r.lives).padStart(2)} towers ${r.towers}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    }
   }
 }

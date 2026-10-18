@@ -61,6 +61,7 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/game/commands.ts` | The `Command` union |
 | `src/game/config.ts` | `GameConfig` (map, difficulty, modifiers, perks, seed), difficulties, challenge modifiers, research perks |
 | `src/game/maps.ts`, `mapgen.ts` | Campaign maps, `buildMap()` (rocks never cut a route), seeded random maps, daily challenge |
+| `src/game/partner.ts` | The AI partner (Co-op with AI): reads the sim, returns `Command`s (`place` with `by: PARTNER`); run by `Session` every `PARTNER_EVERY` ticks in local games |
 | `src/game/flow.ts`, `spatial.ts`, `rng.ts` | Dijkstra flow fields per route, counting-sort spatial hash, mulberry32 RNG |
 | `src/app/session.ts` | A running game: sim + command log; local / replay / co-op lockstep (input delay 6 ticks, state-hash desync checks) |
 | `src/app/net.ts` | Co-op over WebRTC via PeerJS (public broker only for the introduction; room codes) |
@@ -94,6 +95,11 @@ and keep its level-1 value per dollar roughly within 0.5–1.1 of the Gun.
 `ENEMY_HELP` (`codex.ts`, same index), a wave rule in `buildWave()`, and optionally a `THREAT_TIPS` line in `hud.ts`.
 
 **Add a player action:** `Command` variant → `Sim.exec` case → UI calls `issue({...})` in `main.ts`.
+
+**AI partner:** `Partner.think(sim)` must stay read-only and cheap. Placement checks (`placeStatus`) run a path
+search per route (~1.5 ms each on the biggest map), so a placement is spread over several thinks (`Plan`); keep
+every think under ~10 ms. Its commands are logged, so replays never run it. Measure changes with
+`SOLO=1 SEEDS=4 npm run bot` (partner alone) and `PARTNER=0.5 npm run bot` (alongside the bot).
 
 **Debug in the browser:** `window.game` exposes `sim`, `session`, `app`, `camera`, `look(x, y, zoom)`,
 `quick(mapIndex, difficulty)` (start a game instantly), and the `Session`/`Sim` classes. Headless checks are

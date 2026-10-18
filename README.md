@@ -26,6 +26,9 @@ the screen: pan and zoom the camera, and use the minimap in the corner to jump a
 - **Map editor**: paint rocks, place entry/exit gates, save, play, or share the map as a link.
 - **Co-op**: two players, one shared bank. The host gets a room code; the game runs in lockstep over a direct
   WebRTC connection (PeerJS only brokers the introduction).
+- **Co-op with AI**: play alongside an AI commander that shares your bank (Support / Equal / Lead: 30, 50 or 70%).
+  It reads the next wave, builds what the defence lacks (anti-air, radars, jammers, armour piercers), lengthens
+  the maze, upgrades its own towers (marked with a cyan ring) and talks to you over the radio. It never touches yours.
 - **Replays**: every game can be shared as a link and watched back, with a skip-to-next-wave button.
 - **Difficulty** (Easy → Brutal) and **challenges** (No Barricades, Limited Arsenal, Air Raid, Ironman, Glass Cannon)
   multiply the score. Scores go to a local leaderboard.

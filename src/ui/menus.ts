@@ -8,6 +8,7 @@ import { DIFFICULTIES, MODIFIERS, PERKS, type Difficulty, type GameConfig, type 
 import { TOTAL_WAVES, TOWERS } from '../game/defs';
 import { MAP_SIZES, dailySetup, mapCode, parseMapCode, randomMap, today, type MapSize, type RandomMapOptions } from '../game/mapgen';
 import { MAPS, type MapDef } from '../game/maps';
+import { PARTNER_ROLES } from '../game/partner';
 import { Rng } from '../game/rng';
 
 export interface MenuHost {
@@ -77,6 +78,7 @@ export async function showMain(): Promise<void> {
         <button data-go="custom">Custom maps</button>
         <button data-go="editor">Map editor</button>
         <button data-go="coop">Co-op (2 players)</button>
+        <button data-go="ai">Co-op with AI</button>
         <button data-go="research">Research <b class="medal">${p.medals} ★</b></button>
         <button data-go="scores">Leaderboard</button>
         <button data-go="replay">Watch a replay</button>
@@ -89,6 +91,7 @@ export async function showMain(): Promise<void> {
     if (go === 'resume') host.resumeCurrent();
     else if (go === 'continue') host.continueSave();
     else if (go === 'maps') showMaps();
+    else if (go === 'ai') showMaps(PARTNER_ROLES[1].share);
     else if (go === 'random') showRandom();
     else if (go === 'daily') showDaily();
     else if (go === 'custom') showCustom();
@@ -124,9 +127,11 @@ function bindCards(defs: MapDef[], pick: (def: MapDef) => void): void {
   });
 }
 
-export function showMaps(): void {
-  show(`<div class="card"><h2>Campaign maps</h2>${mapCards(MAPS)}<div class="actions">${back}</div></div>`);
-  bindCards(MAPS, (def) => showSetup(def));
+/** Campaign map list; `partner` preselects an AI partner on the setup screen (Co-op with AI). */
+export function showMaps(partner?: number): void {
+  const title = partner ? 'Co-op with AI: choose a map' : 'Campaign maps';
+  show(`<div class="card"><h2>${title}</h2>${mapCards(MAPS)}<div class="actions">${back}</div></div>`);
+  bindCards(MAPS, (def) => showSetup(def, { partner }));
   bindBack();
 }
 
@@ -165,14 +170,17 @@ function limitedSet(seed: number): number[] {
   return picks.sort((a, b) => a - b);
 }
 
-export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modifier[]; seed?: number } = {}): void {
+export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modifier[]; seed?: number; partner?: number } = {}): void {
   let difficulty: Difficulty = opts.daily ? 'normal' : lastDifficulty;
+  // an AI partner is for solo games: not with a human partner, not in the (comparable) daily
+  const canPartner = !opts.daily && !coopLink;
+  let partner = canPartner ? opts.partner ?? 0 : 0;
   const mods = new Set<Modifier>(opts.modifiers ?? []);
   const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
   const render = () => {
     show(`
       <div class="card setup">
-        <h2>${esc(map.name)}${opts.daily ? ` <span class="tag">Daily ${opts.daily}</span>` : ''}${coopLink ? ' <span class="tag">Co-op</span>' : ''}</h2>
+        <h2>${esc(map.name)}${opts.daily ? ` <span class="tag">Daily ${opts.daily}</span>` : ''}${coopLink ? ' <span class="tag">Co-op</span>' : ''}${partner ? ' <span class="tag">Co-op with AI</span>' : ''}</h2>
         <div class="setup-row"><canvas width="300" height="200"></canvas>
           <div>
             <h3>Difficulty</h3>
@@ -181,6 +189,9 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
             <h3>Challenges</h3>
             ${MODIFIERS.map((m) => `<label class="mod"><input type="checkbox" data-mod="${m.id}" ${mods.has(m.id) ? 'checked' : ''} ${opts.daily ? 'disabled' : ''}> <b>${m.name}</b> <span class="d">${m.desc} Score ×${m.score}.</span></label>`).join('')}
             ${mods.has('limited') ? `<p class="d">Arsenal: ${limitedSet(seed).map((i) => TOWERS[i].short).join(', ')}</p>` : ''}
+            ${canPartner ? `<h3>AI partner</h3>
+            <div class="seg wide"><button data-partner="0" class="${partner ? '' : 'on'}">Off</button>${PARTNER_ROLES.map((r) => `<button data-partner="${r.share}" class="${partner === r.share ? 'on' : ''}">${r.name}</button>`).join('')}</div>
+            <p class="d">${partner ? `A second commander shares your bank and ${PARTNER_ROLES.find((r) => r.share === partner)!.desc}: it reads the next wave, builds what the defence lacks and upgrades its own towers. It never sells or touches yours.` : 'Play alone, or bring in an AI commander to build alongside you.'}</p>` : ''}
           </div>
         </div>
         <div class="actions"><button data-start class="primary">Deploy</button>${back}</div>
@@ -188,6 +199,10 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
     paintPreview(overlay.querySelector('canvas')!, map);
     on('[data-diff]', (el) => {
       difficulty = el.dataset.diff as Difficulty;
+      render();
+    });
+    on('[data-partner]', (el) => {
+      partner = Number(el.dataset.partner);
       render();
     });
     overlay.querySelectorAll<HTMLInputElement>('[data-mod]').forEach((el) => (el.onchange = () => {
@@ -208,6 +223,7 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
         perks: opts.daily ? {} : perks, // the daily is the same for everyone
         seed,
         daily: opts.daily,
+        partner: partner || undefined,
       };
       const link = coopLink ?? undefined;
       if (link) link.send({ m: 'start', config: cfg });

@@ -11,6 +11,7 @@ import { DIFFICULTIES, type GameConfig } from './game/config';
 import { ENEMIES, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
+import { PARTNER } from './game/partner';
 import {
   Sim as SimClass,
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
@@ -97,6 +98,12 @@ function handleResults(): void {
     if (!ok && cmd.t === 'sell' && !session.sim.canSell) flash('Ironman: no selling');
   }
   session.results.length = 0;
+  // the AI partner talks over the radio
+  const said = session.partner?.said;
+  if (said?.length) {
+    radio(said[said.length - 1]);
+    said.length = 0;
+  }
 }
 
 const hud = new Hud({
@@ -261,6 +268,24 @@ function fireTargeting(x: number, y: number): void {
 
 let flashTimer = 0;
 /** A short message over the battlefield. */
+let radioTimer = 0;
+
+/** A line from the AI partner, shown under the banner for a few seconds. */
+function radio(text: string): void {
+  let el = document.getElementById('radio');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'radio';
+    stage.appendChild(el);
+  }
+  el.innerHTML = '<b>Partner:</b> ';
+  el.append(text);
+  el.classList.add('show');
+  sound.play('click');
+  clearTimeout(radioTimer);
+  radioTimer = window.setTimeout(() => el!.classList.remove('show'), 4500);
+}
+
 function flash(text: string): void {
   let el = document.getElementById('flash');
   if (!el) {
@@ -894,6 +919,13 @@ function banner(): string {
     if (session.desync) return '<b class="bad">Out of sync with your partner</b> — the games have diverged; restart to play together again.';
     if (session.stalled) return '<b>CO-OP</b> · waiting for your partner…';
     return '<b>CO-OP</b> · shared bank, both players build';
+  }
+  if (session.partner) {
+    const s = session.sim;
+    let mine = 0;
+    let n = 0;
+    for (const t of s.towers) if (t.owner === PARTNER) (mine += t.spent), n++;
+    return `<b>CO-OP WITH AI</b> · partner: ${n} tower${n === 1 ? '' : 's'}, $${mine} invested, $${Math.max(0, Math.floor(session.partner.budget(s)))} to spend`;
   }
   return '';
 }

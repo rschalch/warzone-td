@@ -596,6 +596,8 @@ export class GameRenderer {
       const bases = this.baseTex[t.type];
       const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
+      // the AI partner's towers stand in a cyan ring, like the commander's gold one
+      if (t.owner) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, 0, (t.size * TILE * 1.25) / 128, (t.size * TILE * 1.25) / 128, 0x3ad8ff, 0.55, 0.5);
       if (def.turret) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);
       if (t.level >= 9) {
         // legendary towers glow in their own colour

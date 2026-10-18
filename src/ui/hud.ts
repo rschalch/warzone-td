@@ -418,6 +418,7 @@ export class Hud {
       const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
+        ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
         <div class="help">${TOWER_HELP[def.kind]}</div>
         <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${combos}
