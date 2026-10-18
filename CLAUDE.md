@@ -66,7 +66,7 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/app/net.ts` | Co-op over WebRTC via PeerJS (public broker only for the introduction; room codes) |
 | `src/app/share.ts` | Replay / custom-map links (deflated JSON in the URL hash) |
 | `src/app/storage.ts`, `settings.ts`, `profile.ts` | localStorage/IndexedDB, player settings, medals/perks/leaderboard/custom maps |
-| `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score (strings/brass/choir over taikos, layered by `intensity`) |
+| `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score: six pieces played in turn (`TRACKS`), strings/brass/choir over taikos, layered by `intensity` |
 | `src/audio/dsp.ts`, `sfx.worker.ts` | Offline synthesis of every effect into sample banks (a few variations each), rendered in a worker ~1.5 s after boot. No audio files |
 | `src/render/models.ts` | Every 3D model as stacked top-down parts (sprite stacking) |
 | `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain, atlas packing, tower icons |
