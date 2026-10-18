@@ -94,7 +94,7 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
   (`npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js`).
 - `src/game/maps.ts` — map definitions (size, gates, rock count, rivers, mountain ranges). Map size is a live
   module binding in `defs.ts` (`setMapSize`), so the hot loops read plain numbers. Rivers meander across the
-  first route's direction; mountain ranges are chains of noisy discs. Rocks and mountains are rejected if they
+  first route's direction; mountain ranges are chains of noisy discs gathered around the middle of the map. Rocks and mountains are rejected if they
   would cut a route: first a tiny local search (are the free cells around the obstacle still connected?), and a
   flood fill per route only when that fails.
 - `src/game/flow.ts` — one Dijkstra distance field per route (8-way moves weighted by terrain, no corner cutting), recomputed

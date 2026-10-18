@@ -683,7 +683,7 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
           cg += (fg - cg) * low;
           cb += (fb - cb) * low;
           // snow where it's high and not too steep
-          const snow = smooth(0, 6, h - 46 - 10 * noise(u * 1.3 + 3, v * 1.3)) * smooth(1.6, 0.6, Math.hypot(hx, hy));
+          const snow = smooth(0, 6, h - 60 - 12 * noise(u * 1.3 + 3, v * 1.3)) * smooth(1.6, 0.6, Math.hypot(hx, hy));
           cr += (238 - cr) * snow;
           cg += (242 - cg) * snow;
           cb += (246 - cb) * snow;

@@ -88,7 +88,7 @@ export const MAPS: MapDef[] = [
     ],
     rocks: 180,
     rivers: 1,
-    mountains: 9,
+    mountains: 7,
   },
 ];
 
@@ -279,6 +279,14 @@ function carveRiver(grid: Uint8Array, rng: Rng, vertical: boolean, at: number): 
   }
 }
 
+/** Signed turn from heading a to heading b, in (-π, π]. */
+function angleTo(a: number, b: number): number {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
 export function buildMap(def: MapDef): GameMap {
   useMapSize(def);
   const grid = new Uint8Array(COLS * ROWS);
@@ -388,25 +396,37 @@ export function buildMap(def: MapDef): GameMap {
     carveRiver(grid, tr, vertical, at);
   }
 
-  // mountain ranges: chains of noisy discs along a wandering ridge line. A disc that would cut a
-  // route is skipped, which leaves a pass through the range. They keep clear of the gates.
+  // mountain ranges: chains of noisy discs along a wandering ridge line, gathered around the middle
+  // of the map. A disc that would cut a route is skipped, which leaves a pass through the range.
+  // They keep clear of the gates and of the outer band of the map.
   const ranges = def.mountains ?? 0;
   if (ranges) {
     const edge = valueNoise(tr, 3);
     const nearGate = gateDistance(grid, 16);
-    const cap = grid.length * 0.16;
+    const cap = grid.length * 0.2;
+    const cx = COLS / 2;
+    const cy = ROWS / 2;
+    // spread from the centre: triangular, so most land in the middle third
+    const central = (half: number) => (tr.next() + tr.next() - 1) * half;
     let raised = 0;
     for (let m = 0; m < ranges && raised < cap; m++) {
       let x = 0;
       let y = 0;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        x = tr.range(6, COLS - 6);
-        y = tr.range(5, ROWS - 5);
-        if (nearGate[(y | 0) * COLS + (x | 0)] >= 16 && grid[(y | 0) * COLS + (x | 0)] === T_BUILD) break;
+      // each range starts clear of the others, so they stay separate massifs with valleys between
+      const clear = (c: number, r: number) => {
+        for (let y2 = Math.max(0, r - 9); y2 <= Math.min(ROWS - 1, r + 9); y2++) {
+          for (let x2 = Math.max(0, c - 9); x2 <= Math.min(COLS - 1, c + 9); x2++) if (grid[y2 * COLS + x2] === T_MOUNT) return false;
+        }
+        return true;
+      };
+      for (let attempt = 0; attempt < 40; attempt++) {
+        x = cx + central(COLS * (0.3 + attempt * 0.004));
+        y = cy + central(ROWS * (0.3 + attempt * 0.004));
+        if (nearGate[(y | 0) * COLS + (x | 0)] >= 16 && grid[(y | 0) * COLS + (x | 0)] === T_BUILD && clear(x | 0, y | 0)) break;
       }
       let heading = tr.range(0, Math.PI * 2);
-      const length = Math.max(COLS, ROWS) * tr.range(0.14, 0.32);
-      const peak = tr.range(3.5, 6.5);
+      const length = Math.max(COLS, ROWS) * tr.range(0.18, 0.36);
+      const peak = tr.range(4.5, 8);
       for (let walked = 0, stride = 1.8; walked < length; walked += stride) {
         const radius = peak * (0.45 + 0.55 * Math.sqrt(Math.sin((walked / length) * Math.PI)));
         const cells: number[] = [];
@@ -427,10 +447,13 @@ export function buildMap(def: MapDef): GameMap {
           raised += cells.length;
         }
         heading += tr.range(-0.35, 0.35);
+        // ridges that wander away from the middle curve back towards it
+        const off = Math.max(Math.abs(x - cx) / COLS, Math.abs(y - cy) / ROWS);
+        if (off > 0.22) heading += angleTo(heading, Math.atan2(cy - y, cx - x)) * Math.min(0.5, (off - 0.22) * 4);
         stride = Math.max(1.8, radius * 0.6);
         x += Math.cos(heading) * stride;
         y += Math.sin(heading) * stride;
-        if (x < 3 || y < 3 || x > COLS - 3 || y > ROWS - 3) break;
+        if (Math.abs(x - cx) > COLS * 0.4 || Math.abs(y - cy) > ROWS * 0.4) break;
       }
     }
   }
