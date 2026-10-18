@@ -434,7 +434,7 @@ for (const [name, size, h] of [['peak1', 22, 22], ['peak2', 34, 36], ['peak3', 5
     const snow = z > h * 0.62;
     const fill = snow
       ? grad(g, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r, [[0, '#f4f6f8'], [1, '#aab4bc']])
-      : grad(g, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r, f < 0.25 ? [[0, '#7c705c'], [1, '#463e32']] : [[0, '#948d80'], [1, '#4f4b44']]);
+      : grad(g, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r, f < 0.25 ? [[0, '#b0a58e'], [1, '#7a705e']] : [[0, '#c2bcb0'], [1, '#8a857c']]);
     finish(g, fill, z < c.h - 1 ? null : OUTLINE);
   }, true)));
 }

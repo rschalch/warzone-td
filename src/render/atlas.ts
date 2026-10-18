@@ -434,17 +434,17 @@ export function mountainPeaks(map: GameMap): { x: number; y: number; s: number }
   const depth = depthOf(map, T_MOUNT);
   const rng = new Rng(map.def.seed * 13 + 5);
   const cand: number[] = [];
-  for (let i = 0; i < depth.length; i++) if (depth[i] >= 2) cand.push(i);
+  for (let i = 0; i < depth.length; i++) if (depth[i] >= 3) cand.push(i);
   // deepest first, ties in a seeded shuffle
   const jitter = new Map(cand.map((i) => [i, rng.next()]));
   cand.sort((a, b) => depth[b] - depth[a] || jitter.get(a)! - jitter.get(b)!);
   const out: { x: number; y: number; s: number }[] = [];
   const radius = [0, 22, 34, 50];
   for (const i of cand) {
-    const s = Math.min(3, depth[i] - 1);
+    const s = Math.min(3, depth[i] - 2);
     const x = ((i % COLS) + 0.5) * TILE + rng.range(-4, 4);
     const y = (((i / COLS) | 0) + 0.5) * TILE + rng.range(-4, 4);
-    if (out.some((p) => Math.hypot(p.x - x, p.y - y) < (radius[p.s] + radius[s]) * 0.85)) continue;
+    if (out.some((p) => Math.hypot(p.x - x, p.y - y) < (radius[p.s] + radius[s]) * 1.25)) continue;
     out.push({ x, y, s });
   }
   return out;
@@ -485,13 +485,36 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
   if (!any) return;
   const water = depthOf(map, T_WATER);
   const mount = depthOf(map, T_MOUNT);
-  const sub = Math.max(2, Math.min(10, Math.round((TILE * res) / 4)));
+  // steps to the nearest mountain cell (8-neighbour), for the foothills that fade out around massifs
+  const FOOT = 10;
+  const foot = new Uint8Array(grid.length).fill(FOOT);
+  const fq: number[] = [];
+  for (let i = 0; i < grid.length; i++) if (grid[i] === T_MOUNT) {
+    foot[i] = 0;
+    fq.push(i);
+  }
+  for (let h = 0; h < fq.length; h++) {
+    const i = fq[h];
+    if (foot[i] + 1 >= FOOT) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    for (let y = Math.max(0, r - 1); y <= Math.min(ROWS - 1, r + 1); y++) {
+      for (let x = Math.max(0, c - 1); x <= Math.min(COLS - 1, c + 1); x++) {
+        const j = y * COLS + x;
+        if (foot[j] > foot[i] + 1) {
+          foot[j] = foot[i] + 1;
+          fq.push(j);
+        }
+      }
+    }
+  }
+  const sub = Math.max(2, Math.min(8, Math.round((TILE * res) / 5)));
   const W = COLS * sub;
   const H = ROWS * sub;
   const noise = lattice(rng);
   const fbm = (x: number, y: number) => noise(x, y) * 0.55 + noise(x * 2.1 + 17, y * 2.1) * 0.3 + noise(x * 4.3, y * 4.3 + 9) * 0.15;
   // bilinear over cell centres
-  const bil = (f: (i: number) => number, u: number, v: number) => {
+  const bil = (f: ArrayLike<number>, u: number, v: number) => {
     u -= 0.5;
     v -= 0.5;
     const x0 = Math.max(0, Math.min(COLS - 1, Math.floor(u)));
@@ -500,19 +523,42 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
     const y1 = Math.min(ROWS - 1, y0 + 1);
     const fx = Math.max(0, Math.min(1, u - x0));
     const fy = Math.max(0, Math.min(1, v - y0));
-    const a = f(y0 * COLS + x0) + (f(y0 * COLS + x1) - f(y0 * COLS + x0)) * fx;
-    const b = f(y1 * COLS + x0) + (f(y1 * COLS + x1) - f(y1 * COLS + x0)) * fx;
+    const a = f[y0 * COLS + x0] + (f[y0 * COLS + x1] - f[y0 * COLS + x0]) * fx;
+    const b = f[y1 * COLS + x0] + (f[y1 * COLS + x1] - f[y1 * COLS + x0]) * fx;
     return a + (b - a) * fy;
   };
-  const isM = (i: number) => (grid[i] === T_MOUNT ? 1 : 0);
-  const isW = (i: number) => (grid[i] === T_WATER ? 1 : 0);
-  const mD = (i: number) => mount[i];
-  const wD = (i: number) => water[i];
+  // 3x3 box blur passes at cell level: whole-cell steps would show as terraces on the slopes
+  const blur = (src: ArrayLike<number>, passes: number): Float32Array => {
+    let a = Float32Array.from(src);
+    let b = new Float32Array(a.length);
+    for (let p = 0; p < passes; p++) {
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          let sum = 0;
+          let n = 0;
+          for (let y = Math.max(0, r - 1); y <= Math.min(ROWS - 1, r + 1); y++) {
+            for (let x = Math.max(0, c - 1); x <= Math.min(COLS - 1, c + 1); x++) {
+              sum += a[y * COLS + x];
+              n++;
+            }
+          }
+          b[r * COLS + c] = sum / n;
+        }
+      }
+      [a, b] = [b, a];
+    }
+    return a;
+  };
+  const mSoft = blur(Array.from(grid, (t) => (t === T_MOUNT ? 1 : 0)), 1);
+  const mHigh = blur(mount, 2);
+  const fSoft = blur(foot, 2);
+  const isW = Uint8Array.from(grid, (t) => (t === T_WATER ? 1 : 0));
 
-  // cells worth sampling: terrain and a 2-cell margin (banks, shadows)
+  // cells worth sampling: water with a 2-cell margin (banks), mountains with their foothills
   const near = new Uint8Array(grid.length);
   for (let i = 0; i < grid.length; i++) {
-    if (!isM(i) && !isW(i)) continue;
+    if (foot[i] < FOOT) near[i] = 1;
+    if (!isW[i]) continue;
     const c = i % COLS;
     const r = (i / COLS) | 0;
     for (let y = Math.max(0, r - 2); y <= Math.min(ROWS - 1, r + 2); y++) for (let x = Math.max(0, c - 2); x <= Math.min(COLS - 1, c + 2); x++) near[y * COLS + x] = 1;
@@ -532,16 +578,17 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
         const u = c + (sx + 0.5) / sub;
         const v = r + (sy + 0.5) / sub;
         const k = (r * sub + sy) * W + c * sub + sx;
-        const m = bil(isM, u, v) + (fbm(u * 0.7, v * 0.7) - 0.5) * 0.3;
+        const m = bil(mSoft, u, v) + (fbm(u * 0.7, v * 0.7) - 0.5) * 0.3;
         mMask[k] = m;
         if (m > 0.4) {
-          const d = Math.max(0, bil(mD, u, v) - 0.5 + (m - 0.5));
+          const d = Math.max(0, bil(mHigh, u, v) - 0.6 + (m - 0.5) * 1.5);
           const ridge = 1 - Math.abs(2 * noise(u * 0.45 + 40, v * 0.45) - 1);
-          height[k] = 13 * Math.pow(d, 0.9) + 9 * ridge * Math.min(1, d) + 3 * fbm(u * 1.7, v * 1.7);
+          // gentle at the foot, steeper higher up
+          height[k] = 11 * Math.pow(d, 1.25) + 9 * ridge * Math.min(1, d * 0.7) + 3 * fbm(u * 1.7, v * 1.7);
         }
         const w = bil(isW, u, v) + (fbm(u * 0.9 + 70, v * 0.9) - 0.5) * 0.22;
         wMask[k] = w;
-        wDepth[k] = Math.max(0, bil(wD, u, v) - 0.5 + (w - 0.5));
+        wDepth[k] = Math.max(0, bil(water, u, v) - 0.5 + (w - 0.5));
       }
     }
   }
@@ -569,6 +616,35 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
         let A = 0;
         const m = mMask[k];
         const w = wMask[k];
+
+        // foothills: the grass fades into dry scrub (sometimes a sandy desert) and then rocky scree
+        // before the slopes start, so massifs grow out of the land instead of sitting on it
+        const desert = smooth(0.4, 0.62, noise(u * 0.04 + 300, v * 0.04 + 50));
+        const reach = (3 + 5 * noise(u * 0.09 + 200, v * 0.09)) * (0.6 + 0.6 * desert);
+        const away = Math.max(0, bil(fSoft, u, v) - 0.8 + (fbm(u * 0.35 + 60, v * 0.35) - 0.5) * 3);
+        const t = smooth(0, 1, 1 - away / reach);
+        const grain = fbm(u * 0.9 + 11, v * 0.9);
+        const dunes = desert * Math.sin((u * 1.1 + v * 0.45) * 2.6 + grain * 7) * 7;
+        // dry olive grass where it's green, warm sand where it's desert
+        let fr = 98 + (192 - 98) * desert + dunes;
+        let fg = 100 + (160 - 100) * desert + dunes * 0.85;
+        let fb = 52 + (104 - 52) * desert + dunes * 0.6;
+        const scree = smooth(0.75, 1, t);
+        fr += (124 - fr) * scree;
+        fg += (114 - fg) * scree;
+        fb += (96 - fb) * scree;
+        const tone = 0.88 + 0.24 * grain;
+        fr *= tone;
+        fg *= tone;
+        fb *= tone;
+        if (t > 0) {
+          const patchy = Math.min(1, Math.max(0, 0.65 + (fbm(u * 0.55 + 90, v * 0.55) - 0.5) * 1.6));
+          R = fr;
+          G = fg;
+          B = fb;
+          A = 255 * Math.min(1, Math.pow(t, 1.3) * (0.4 + 0.55 * desert) * patchy + scree * 0.45);
+        }
+
         if (w > 0.36) {
           // bank, then water deepening towards the middle
           const bank = smooth(0.36, 0.46, w);
@@ -579,10 +655,16 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
           const wg = 118 - 46 * f + ripple;
           const wb = 112 - 14 * f + ripple;
           const foam = smooth(0.58, 0.5, w) * 0.5;
-          R = 104 + (wr - 104) * wet + (180 - wr) * foam * wet;
-          G = 90 + (wg - 90) * wet + (200 - wg) * foam * wet;
-          B = 60 + (wb - 60) * wet + (190 - wb) * foam * wet;
-          A = 255 * bank;
+          const cr = 104 + (wr - 104) * wet + (180 - wr) * foam * wet;
+          const cg = 90 + (wg - 90) * wet + (200 - wg) * foam * wet;
+          const cb = 60 + (wb - 60) * wet + (190 - wb) * foam * wet;
+          // over whatever foothill colour is already here
+          const under = A / 255;
+          const out = bank + under * (1 - bank);
+          R = (cr * bank + R * under * (1 - bank)) / out;
+          G = (cg * bank + G * under * (1 - bank)) / out;
+          B = (cb * bank + B * under * (1 - bank)) / out;
+          A = 255 * out;
         }
         if (m > 0.4) {
           const h = height[k];
@@ -591,29 +673,37 @@ function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res:
           const n = 1 / Math.hypot(hx, hy, 1);
           const lit = Math.max(0, (-hx * lx - hy * ly + lz) * n);
           const strata = fbm(u * 0.8 + 30, v * 0.8 + h * 0.05);
-          const rocky = Math.min(1, h / 22);
-          let cr = 112 + (150 - 112) * rocky + (strata - 0.5) * 40;
-          let cg = 98 + (144 - 98) * rocky + (strata - 0.5) * 36;
-          let cb = 74 + (132 - 74) * rocky + (strata - 0.5) * 30;
+          const rocky = Math.min(1, h / 30);
+          let cr = 128 + (150 - 128) * rocky + (strata - 0.5) * 40;
+          let cg = 116 + (144 - 116) * rocky + (strata - 0.5) * 36;
+          let cb = 96 + (132 - 96) * rocky + (strata - 0.5) * 30;
+          // the lowest slopes take the colour of the foothills around them
+          const low = smooth(14, 0, h);
+          cr += (fr - cr) * low;
+          cg += (fg - cg) * low;
+          cb += (fb - cb) * low;
           // snow where it's high and not too steep
-          const snow = smooth(0, 6, h - 40 - 10 * noise(u * 1.3 + 3, v * 1.3)) * smooth(1.6, 0.6, Math.hypot(hx, hy));
+          const snow = smooth(0, 6, h - 46 - 10 * noise(u * 1.3 + 3, v * 1.3)) * smooth(1.6, 0.6, Math.hypot(hx, hy));
           cr += (238 - cr) * snow;
           cg += (242 - cg) * snow;
           cb += (246 - cb) * snow;
-          const shade = 0.3 + 0.95 * lit;
-          const a = smooth(0.44, 0.56, m);
-          R = R * (1 - a) + cr * shade * a;
-          G = G * (1 - a) + cg * shade * a;
-          B = B * (1 - a) + cb * shade * a;
-          A = Math.max(A, 255 * a);
+          // lighting relative to flat ground, fading in with height so the foot meets the land smoothly
+          const shade = 1 + ((0.3 + 0.95 * lit) / (0.3 + 0.95 * lz) - 1) * smooth(0, 10, h);
+          const a = smooth(0.36, 0.64, m);
+          const under = A / 255;
+          const out = a + under * (1 - a);
+          R = (cr * shade * a + R * under * (1 - a)) / out;
+          G = (cg * shade * a + G * under * (1 - a)) / out;
+          B = (cb * shade * a + B * under * (1 - a)) / out;
+          A = 255 * out;
         }
         // shadow cast by mountains towards the lower right, onto the ground, water or lower slopes
         const sxk = X - shadowReach;
         const syk = Y - shadowReach;
         if (sxk >= 0 && syk >= 0) {
           const up = height[syk * W + sxk];
-          if (up > height[k] + 4) {
-            const sh = Math.min(0.5, (up - height[k]) / 40);
+          if (up > height[k] + 6) {
+            const sh = Math.min(0.35, (up - height[k] - 6) / 50);
             if (A > 0) {
               R *= 1 - sh;
               G *= 1 - sh;
