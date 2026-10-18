@@ -97,6 +97,50 @@ try {
   check(ai.built >= 3, `AI partner builds on its own (${ai.built} towers)`);
   check(ai.replay && ai.restore, 'AI partner games replay and restore exactly');
 
+  // WW2 mode: its own arsenal, armour penetration, and the same determinism guarantees
+  await page.evaluate(() => window.game.quick(0, 'normal', true));
+  await page.waitForFunction(() => window.game.sim?.config.ww2 && document.querySelector('#build .tb .n')?.textContent === 'MG-42', null, { timeout: 30000 });
+  check(true, 'WW2 game starts with the German arsenal');
+  const ww2 = await page.evaluate(() => {
+    const { Session, Sim, session } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'easy' };
+    // ballistics: an MG-42 can't hurt a T-34; a Panzerschreck goes through from any side
+    const s = Sim.create(cfg);
+    const mg = s.place(0, 10, 10, true);
+    const schreck = s.place(2, 14, 10, true);
+    const t34 = s.spawnEnemy(7, 1);
+    s.eX[t34] = 300; s.eY[t34] = 230;
+    const hp = s.eHp[t34];
+    s.damage(t34, 50, false, mg);
+    const mgHurt = hp - s.eHp[t34];
+    s.damage(t34, 50, false, schreck);
+    const atHurt = hp - mgHurt - s.eHp[t34];
+    // replay and restore through tanks, aircraft and suppression
+    const a = new Session(cfg);
+    a.speed = 4;
+    const plan = [[0, { t: 'place', type: 0, col: 20, row: 30 }], [2, { t: 'place', type: 5, col: 24, row: 30 }], [4, { t: 'place', type: 9, col: 20, row: 34 }], [6, { t: 'place', type: 16, col: 28, row: 31 }]];
+    for (let w = 0; w < 6; w++) plan.push([10 + w * 700, { t: 'wave' }]);
+    plan.push([1500, { t: 'upgrade', ids: [2] }]);
+    let k = 0;
+    while (a.sim.ticks < 4800 && !a.sim.gameOver) {
+      while (k < plan.length && plan[k][0] <= a.sim.ticks) a.issue(plan[k++][1]);
+      a.advance(1 / 240);
+    }
+    const b = new Session(cfg, { replay: a.log });
+    b.speed = 4;
+    while (b.sim.ticks < a.sim.ticks) b.advance(1 / 240);
+    const replay = b.sim.ticks === a.sim.ticks && b.sim.stateHash() === a.sim.stateHash();
+    const c = Sim.restore(structuredClone(a.sim.snapshot()));
+    for (let n = 0; n < 600; n++) {
+      a.sim.step();
+      c.step();
+    }
+    return { mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
+  });
+  check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
+  check(ww2.wave >= 6 && ww2.kills > 0, `WW2 waves run (wave ${ww2.wave}, ${ww2.kills} kills)`);
+  check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly');
+
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {
   check(false, `exception: ${e.message}`);

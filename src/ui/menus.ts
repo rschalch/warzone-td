@@ -5,7 +5,9 @@ import { settings, updateSettings, type Settings } from '../app/settings';
 import { join, host as hostRoom, type NetLink } from '../app/net';
 import type { Replay } from '../app/share';
 import { DIFFICULTIES, MODIFIERS, PERKS, type Difficulty, type GameConfig, type Modifier } from '../game/config';
-import { TOTAL_WAVES, TOWERS } from '../game/defs';
+import { TOTAL_WAVES } from '../game/defs';
+import { rulesetFor } from '../game/rules';
+import { FACTIONS, type Faction } from '../game/ww2';
 import { MAP_SIZES, dailySetup, mapCode, parseMapCode, randomMap, today, type MapSize, type RandomMapOptions } from '../game/mapgen';
 import { MAPS, type MapDef } from '../game/maps';
 import { PARTNER_ROLES } from '../game/partner';
@@ -157,12 +159,14 @@ function showCustom(): void {
 // ---------------------------------------------------------------- game setup
 
 let lastDifficulty: Difficulty = 'normal';
+let lastEra: GameConfig['ww2'] = undefined;
 
 /** Eight tower types for the Limited Arsenal modifier, always including a cheap wall. */
-function limitedSet(seed: number): number[] {
+function limitedSet(seed: number, era: GameConfig['ww2']): number[] {
+  const towers = rulesetFor(era).towers;
   const rng = new Rng(seed ^ 0x5bd1e995);
-  const pool = TOWERS.map((_, i) => i).filter((i) => TOWERS[i].kind !== 'gun');
-  const picks = [TOWERS.findIndex((t) => t.kind === 'gun')];
+  const pool = towers.map((_, i) => i).filter((i) => towers[i].role !== 'gun');
+  const picks = [towers.findIndex((t) => t.role === 'gun')];
   while (picks.length < 8) {
     const i = pool.splice(rng.int(pool.length), 1)[0];
     picks.push(i);
@@ -172,23 +176,34 @@ function limitedSet(seed: number): number[] {
 
 export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modifier[]; seed?: number; partner?: number } = {}): void {
   let difficulty: Difficulty = opts.daily ? 'normal' : lastDifficulty;
+  let era = opts.daily ? undefined : lastEra;
   // an AI partner is for solo games: not with a human partner, not in the (comparable) daily
-  const canPartner = !opts.daily && !coopLink;
-  let partner = canPartner ? opts.partner ?? 0 : 0;
+  const canPartnerAt = () => !opts.daily && !coopLink && !era;
+  let partner = canPartnerAt() ? opts.partner ?? 0 : 0;
   const mods = new Set<Modifier>(opts.modifiers ?? []);
   const seed = opts.seed ?? Math.floor(Math.random() * 1e9);
   const render = () => {
+    const canPartner = canPartnerAt();
+    if (!canPartner) partner = 0;
+    const sides: { id: Faction | 'modern'; ready: boolean }[] = [{ id: 'modern', ready: true }, { id: 'de', ready: true }, { id: 'su', ready: false }];
     show(`
       <div class="card setup">
         <h2>${esc(map.name)}${opts.daily ? ` <span class="tag">Daily ${opts.daily}</span>` : ''}${coopLink ? ' <span class="tag">Co-op</span>' : ''}${partner ? ' <span class="tag">Co-op with AI</span>' : ''}</h2>
         <div class="setup-row"><canvas width="300" height="200"></canvas>
           <div>
+            <h3>Era</h3>
+            <div class="seg wide">${sides.map((f) => {
+              const on = f.id === 'modern' ? !era : era?.side === f.id;
+              const label = f.id === 'modern' ? 'Modern' : `WW2 · ${FACTIONS[f.id].name}`;
+              return `<button data-era="${f.id}" class="${on ? 'on' : ''}" ${opts.daily || !f.ready ? 'disabled' : ''} title="${f.ready ? '' : 'Coming later'}">${label}</button>`;
+            }).join('')}</div>
+            <p class="d">${era ? `1941–45 on the Eastern Front: you hold the line as ${FACTIONS[era.side].name} against the ${FACTIONS[era.foe].adj} attack. Realistic armour: small arms bounce off tanks, anti-tank guns kill from the side.` : 'The original game: lasers, railguns and superweapons.'}</p>
             <h3>Difficulty</h3>
             <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}" ${opts.daily ? 'disabled' : ''}>${DIFFICULTIES[d].name}</button>`).join('')}</div>
             <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win</p>
             <h3>Challenges</h3>
             ${MODIFIERS.map((m) => `<label class="mod"><input type="checkbox" data-mod="${m.id}" ${mods.has(m.id) ? 'checked' : ''} ${opts.daily ? 'disabled' : ''}> <b>${m.name}</b> <span class="d">${m.desc} Score ×${m.score}.</span></label>`).join('')}
-            ${mods.has('limited') ? `<p class="d">Arsenal: ${limitedSet(seed).map((i) => TOWERS[i].short).join(', ')}</p>` : ''}
+            ${mods.has('limited') ? `<p class="d">Arsenal: ${limitedSet(seed, era).map((i) => rulesetFor(era).towers[i].short).join(', ')}</p>` : ''}
             ${canPartner ? `<h3>AI partner</h3>
             <div class="seg wide"><button data-partner="0" class="${partner ? '' : 'on'}">Off</button>${PARTNER_ROLES.map((r) => `<button data-partner="${r.share}" class="${partner === r.share ? 'on' : ''}">${r.name}</button>`).join('')}</div>
             <p class="d">${partner ? `A second commander shares your bank and ${PARTNER_ROLES.find((r) => r.share === partner)!.desc}: it reads the next wave, builds what the defence lacks and upgrades its own towers. It never sells or touches yours.` : 'Play alone, or bring in an AI commander to build alongside you.'}</p>` : ''}
@@ -197,6 +212,11 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
         <div class="actions"><button data-start class="primary">Deploy</button>${back}</div>
       </div>`);
     paintPreview(overlay.querySelector('canvas')!, map);
+    on('[data-era]', (el) => {
+      const id = el.dataset.era as Faction | 'modern';
+      era = id === 'modern' ? undefined : { side: id, foe: id === 'de' ? 'su' : 'de' };
+      render();
+    });
     on('[data-diff]', (el) => {
       difficulty = el.dataset.diff as Difficulty;
       render();
@@ -212,18 +232,22 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
       render();
     }));
     on('[data-start]', () => {
-      if (!opts.daily) lastDifficulty = difficulty;
+      if (!opts.daily) {
+        lastDifficulty = difficulty;
+        lastEra = era;
+      }
       const perks: Record<string, number> = {};
       for (const p of PERKS) if (perkLevel(p.id)) perks[p.id] = perkLevel(p.id);
       const cfg: GameConfig = {
         map,
         difficulty,
         modifiers: [...mods],
-        allowed: mods.has('limited') ? limitedSet(seed) : undefined,
+        allowed: mods.has('limited') ? limitedSet(seed, era) : undefined,
         perks: opts.daily ? {} : perks, // the daily is the same for everyone
         seed,
         daily: opts.daily,
         partner: partner || undefined,
+        ww2: era,
       };
       const link = coopLink ?? undefined;
       if (link) link.send({ m: 'start', config: cfg });

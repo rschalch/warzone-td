@@ -1,8 +1,9 @@
 import {
-  COLS, COMBOS, DT, EN_BOSS, EN_HELI, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
-  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_BONUS, WAVE_GAP, buildWave, hpScale, rewardScale,
-  type SpawnGroup, type TowerKind,
+  COLS, COMBOS, DT, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
+  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_BONUS, WAVE_GAP, WW2, buildWave, hpScale, rewardScale, towerIndex,
+  type Role, type SpawnGroup, type TowerLevel,
 } from './defs';
+import { setRuleset } from './rules';
 import { DIFFICULTIES, perk, type GameConfig } from './config';
 import type { Command } from './commands';
 import { FlowField } from './flow';
@@ -21,6 +22,7 @@ export const P_FLAK = 6;
 export const P_ARTY = 7;
 export const P_CRYO = 8;
 export const P_NUKE = 9;
+export const P_AP = 10; // WW2 armour-piercing round: a fast tracer at one unit
 /** Projectiles that fly a ballistic arc to a fixed point, and how high (render only). */
 export const ARC_HEIGHT: Record<number, number> = { [P_SHELL]: 45, [P_NAPALM]: 55, [P_GAS]: 50, [P_ARTY]: 150, [P_NUKE]: 240 };
 
@@ -87,7 +89,7 @@ export const BOLT_NODES = 8;
 export interface Tower {
   id: number;
   type: number;
-  kind: TowerKind;
+  kind: Role; // what it does (TOWERS[type].role)
   level: number;
   col: number;
   row: number;
@@ -146,7 +148,7 @@ export const EV_SELL = 5;
 export const EV_UPGRADE = 6;
 export const EV_WAVE = 7; // a = wave
 export const EV_HIT = 8; // a = damage (big single hits only)
-export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed
+export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed, 5 ricochet, 6 tracked, 7 critical hit
 export const EV_NUKE = 10;
 export const EV_LEVEL = 11; // hero level up, a = level
 export const EV_ITEM = 12; // a = item
@@ -193,10 +195,13 @@ interface Strike {
   dmg: number;
   r: number;
   src: Tower | null;
+  pen: number; // WW2: penetration of the bomb or shell (top armour)
 }
 
 const TURN_RATE = 10; // rad/s for turrets
 const STEALTH_DETECT = 45; // px: any tower spots a stealth unit this close
+/** WW2: penetration of the commander's submachine gun. */
+const HERO_PEN = 8;
 /** Render heights shared with the renderer: flying units and turret muzzles. */
 export const AIR_Z = 34;
 export const MUZZLE_Z = 16;
@@ -290,6 +295,8 @@ export class Sim {
   readonly eFrozenT = new Float32Array(MAX_ENEMIES);
   readonly eHackT = new Float32Array(MAX_ENEMIES);
   readonly eStunT = new Float32Array(MAX_ENEMIES);
+  /** WW2: suppression 0..1 — pinned infantry crawl and keep their heads down. */
+  readonly eSupp = new Float32Array(MAX_ENEMIES);
   private readonly eHackDps = new Float32Array(MAX_ENEMIES);
   private readonly eFree = new Int32Array(MAX_ENEMIES);
   private eFreeTop = 0;
@@ -361,6 +368,8 @@ export class Sim {
   private readonly jamGrid = new Float32Array(COLS * ROWS);
   private readonly salvageGrid = new Float32Array(COLS * ROWS);
   private readonly tarGrid = new Float32Array(COLS * ROWS);
+  /** WW2: speed factor for infantry only (barbed wire). */
+  private readonly wireGrid = new Float32Array(COLS * ROWS).fill(1);
   private readonly spikeGrid = new Float32Array(COLS * ROWS);
   private readonly spikeSrc: (Tower | null)[] = new Array(COLS * ROWS).fill(null);
 
@@ -377,6 +386,7 @@ export class Sim {
 
   /** Builds the map (which sets the live map size) before any grid-sized arrays exist. */
   static create(config: GameConfig): Sim {
+    setRuleset(config);
     return new Sim(buildMap(config.map), config);
   }
 
@@ -418,8 +428,8 @@ export class Sim {
   allowed(type: number): boolean {
     const cfg = this.config;
     if (cfg.allowed && !cfg.allowed.includes(type)) return false;
-    const kind = TOWERS[type].kind;
-    return !(cfg.modifiers.includes('noBarricades') && (kind === 'barricade' || kind === 'gate'));
+    const role = TOWERS[type].role;
+    return !(cfg.modifiers.includes('noBarricades') && (role === 'barricade' || role === 'gate'));
   }
 
   /** Build (level 0) or upgrade cost after perks. */
@@ -437,11 +447,12 @@ export class Sim {
   waveGroups(n: number): SpawnGroup[] {
     const groups = buildWave(n);
     if (!this.config.modifiers.includes('airRaid')) return groups;
-    // everything flies: helicopters in numbers matching the ground units' threat
+    // everything flies: aircraft in numbers matching the ground units' threat
+    const air = ENEMIES.findIndex((e) => e.air);
     return groups.map((g) => ({
       ...g,
-      kind: EN_HELI,
-      count: Math.max(1, Math.round(g.count * Math.min(3, ENEMIES[g.kind].hp / ENEMIES[EN_HELI].hp))),
+      kind: air,
+      count: Math.max(1, Math.round(g.count * Math.min(3, ENEMIES[g.kind].hp / ENEMIES[air].hp))),
     }));
   }
 
@@ -737,10 +748,10 @@ export class Sim {
     if (!free) this.money -= cost;
     const size = def.size;
     const t: Tower = {
-      id: this.nextTowerId++, type, kind: def.kind, level: 0, col, row, size,
+      id: this.nextTowerId++, type, kind: def.role, level: 0, col, row, size,
       x: (col + size / 2) * TILE, y: (row + size / 2) * TILE,
       cd: 0, angle: -Math.PI / 2, prevAngle: -Math.PI / 2,
-      mode: def.kind === 'sniper' || def.kind === 'arty' ? 2 : 0, // big guns default to Strong
+      mode: def.role === 'sniper' || def.role === 'arty' ? 2 : 0, // big guns default to Strong
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
@@ -839,6 +850,20 @@ export class Sim {
     y = Math.min(MAP_H, Math.max(0, y));
     t.charge = lv.charge ?? 0;
     this.ev(EV_SHOT, t.x, t.y, t.type);
+    if (t.kind === 'stuka') {
+      // three Ju 87s dive one after another along the line from the airfield, bombs on the target
+      const d = Math.hypot(x - t.x, y - t.y) || 1;
+      const ux = (x - t.x) / d;
+      const uy = (y - t.y) / d;
+      for (let k = 0; k < 3; k++) {
+        const off = (k - 1) * 22;
+        const bx = x + ux * off - uy * this.rng.range(-12, 12);
+        const by = y + uy * off + ux * this.rng.range(-12, 12);
+        this.strikes.push({ x: bx, y: by, t: 1.6 + k * 0.45, dmg: lv.damage * t.dmgMult, r: lv.splash ?? 48, src: t, pen: lv.pen ?? 70 });
+      }
+      this.streak(x - ux * 500, y - uy * 500, 260, x + ux * 300, y + uy * 300, 40, 2.6, 0xc8ccd0, 2);
+      return true;
+    }
     if (t.kind === 'orbital') {
       this.addZone(Z_ORBITAL, x, y, lv.splash ?? 30, lv.duration ?? 4, lv.damage * t.dmgMult, 0, false, t);
     } else {
@@ -870,6 +895,7 @@ export class Sim {
     this.jamGrid.fill(0);
     this.salvageGrid.fill(0);
     this.tarGrid.set(this.groundSlow);
+    this.wireGrid.fill(1);
     this.spikeGrid.fill(0);
     this.spikeSrc.fill(null);
     const ballistics = 1 + 0.05 * perk(this.config, 'ballistics');
@@ -910,6 +936,9 @@ export class Sim {
           break;
         case 'tar':
           for (const c of this.cellsOf(t)) this.tarGrid[c] = Math.min(this.tarGrid[c], lv.slow ?? 1);
+          break;
+        case 'wire':
+          for (const c of this.cellsOf(t)) this.wireGrid[c] = Math.min(this.wireGrid[c], lv.slow ?? 1);
           break;
         case 'spikes':
           for (const c of this.cellsOf(t)) {
@@ -1002,7 +1031,7 @@ export class Sim {
       }
     }
     this.towerVersion++;
-    const kinds = [0, 1, 2, 3, 4, 6, 7, 8];
+    const kinds = ENEMIES.map((e, k) => (e.boss ? -1 : k)).filter((k) => k >= 0);
     const groups: SpawnGroup[] = kinds.map((kind) => ({
       kind, count: Math.floor(count / kinds.length), interval: 6 / (count / kinds.length), delay: 0,
     }));
@@ -1096,7 +1125,7 @@ export class Sim {
       const px = -dy / d;
       const py = dx / d;
       for (let k = -3; k <= 3; k++) {
-        this.strikes.push({ x: x + px * k * 26, y: y + py * k * 26, t: 0.9 + (k + 3) * 0.08, dmg: 140 * power * (1 + 0.1 * this.wave), r: 40, src: h.src });
+        this.strikes.push({ x: x + px * k * 26, y: y + py * k * 26, t: 0.9 + (k + 3) * 0.08, dmg: 140 * power * (1 + 0.1 * this.wave), r: 40, src: h.src, pen: 60 });
       }
       this.streak(x - px * 400, y - py * 400, 120, x + px * 400, y + py * 400, 120, 1.2, 0xc0c8d0, 2);
     } else if (a === 1) {
@@ -1189,10 +1218,10 @@ export class Sim {
       for (let k = 0; k < 8; k++) {
         const a = this.rng.next() * TWO_PI;
         const r = Math.sqrt(this.rng.next()) * 90;
-        this.strikes.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, t: 0.6 + k * 0.18, dmg, r: 45, src: null });
+        this.strikes.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, t: 0.6 + k * 0.18, dmg, r: 45, src: null, pen: 30 });
       }
     } else if (item === 1) {
-      const mine = TOWERS.findIndex((t) => t.kind === 'mine');
+      const mine = towerIndex('mine');
       let placed = 0;
       for (let tries = 0; tries < 40 && placed < 6; tries++) {
         const a = this.rng.next() * TWO_PI;
@@ -1214,7 +1243,7 @@ export class Sim {
     for (let k = this.strikes.length - 1; k >= 0; k--) {
       const st = this.strikes[k];
       if ((st.t -= DT) > 0) continue;
-      this.splash(st.x, st.y, st.r, st.dmg, 1, 0, st.src, true);
+      this.splash(st.x, st.y, st.r, st.dmg, 1, 0, st.src, true, st.pen ?? -1);
       this.explosion(st.x, st.y, 1.4, 0);
       this.strikes.splice(k, 1);
     }
@@ -1304,13 +1333,14 @@ export class Sim {
     this.eChill[i] = this.eFrozenT[i] = 0;
     this.eHackT[i] = 0;
     this.eStunT[i] = 0;
+    this.eSupp[i] = 0;
     this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06);
     this.eReward[i] = Math.round(def.reward * rewardScale(wave) * this.bountyMult);
     this.eSlowT[i] = 0;
     this.eSlowF[i] = 1;
     this.eFlash[i] = 0;
     const [ix, iy] = route.inDir;
-    const jitter = kind === EN_BOSS ? 0 : TILE * 0.3;
+    const jitter = def.boss ? 0 : TILE * 0.3;
     this.eOx[i] = this.rng.range(-jitter, jitter);
     this.eOy[i] = this.rng.range(-jitter, jitter);
     let x: number;
@@ -1368,6 +1398,9 @@ export class Sim {
 
   private ignite(i: number, dps: number, time: number, src: Tower | null): void {
     if (this.eAir[i]) return;
+    // closed-down armour doesn't catch fire; open-topped cars and soldiers do
+    const arm = ENEMIES[this.eKind[i]].arm;
+    if (WW2 && arm && arm[3] > 8) return;
     if (dps >= this.eBurn[i] || this.eBurnT[i] <= 0) {
       this.eBurn[i] = dps;
       this.eBurnBy[i] = src;
@@ -1377,7 +1410,7 @@ export class Sim {
 
   private chill(i: number, amount: number): void {
     if (this.eFrozenT[i] > 0) return;
-    const boss = this.eKind[i] === EN_BOSS;
+    const boss = ENEMIES[this.eKind[i]].boss;
     this.eChill[i] = Math.min(boss ? 0.6 : 1, this.eChill[i] + (boss ? amount * 0.4 : amount));
     if (this.eChill[i] >= 1) {
       this.eChill[i] = 0;
@@ -1446,7 +1479,7 @@ export class Sim {
         if (((this.ticks + i) & 7) === 0) {
           this.fx(FX_GLOW, 1, x + this.vr.range(-4, 4), y + this.vr.range(-4, 4), this.vr.range(-8, 8), -10, 0.35, 8, 3, 0.9, this.vr.next() < 0.5 ? 0xff7a1a : 0xffc040, 1, 8);
         }
-        if (this.damage(i, this.eBurn[i] * DT, true, this.eBurnBy[i])) continue;
+        if (this.damage(i, this.eBurn[i] * DT, true, this.eBurnBy[i], false, 999, true)) continue;
       }
       if (!air && this.spikeGrid[g] > 0 && this.damage(i, this.spikeGrid[g] * DT, true, this.spikeSrc[g])) continue;
       if (this.eShredT[i] > 0 && (this.eShredT[i] -= DT) <= 0) this.eShred[i] = 0;
@@ -1479,6 +1512,13 @@ export class Sim {
         sp = 0;
       }
       if (!air) sp *= this.tarGrid[g];
+      if (def.inf) {
+        sp *= this.wireGrid[g];
+        if (this.eSupp[i] > 0) {
+          sp *= 1 - 0.55 * this.eSupp[i];
+          this.eSupp[i] = Math.max(0, this.eSupp[i] - 0.45 * DT);
+        }
+      }
       const route = this.map.routes[this.eRoute[i]];
       let tx: number;
       let ty: number;
@@ -1556,9 +1596,14 @@ export class Sim {
    * Applies damage; returns true if the enemy died. Shields soak first; armour (minus acid shred)
    * reduces non-piercing hits; jammed and frozen units take extra, and frozen ones shatter under splash.
    */
-  damage(i: number, amount: number, pierce: boolean, src: Tower | null, shatter = false): boolean {
+  damage(i: number, amount: number, pierce: boolean, src: Tower | null, shatter = false, pen = -1, top = false): boolean {
     if (!this.eAlive[i]) return false;
     let a = amount * (1 + this.eJam[i]);
+    if (WW2) {
+      a = this.ballistics(i, a, src, pen, top);
+      if (a <= 0) return false;
+      pierce = true; // armour has been dealt with
+    }
     if (this.eFrozenT[i] > 0) a *= shatter ? 2.5 : 1.25;
     this.eFlash[i] = 1;
     if (this.eShield[i] > 0) {
@@ -1586,17 +1631,79 @@ export class Sim {
     if (src && this.hero && src === this.hero.src) this.gainHeroXp(reward);
     this.ev(EV_KILL, this.eX[i], this.eY[i], this.eKind[i], reward);
     const kind = this.eKind[i];
-    const big = kind === EN_BOSS ? 3 : ENEMIES[kind].radius >= 10 ? 1.6 : kind === 0 ? 0.6 : 1.1;
+    const big = ENEMIES[kind].boss ? 3 : ENEMIES[kind].radius >= 10 ? 1.6 : ENEMIES[kind].inf ? 0.6 : 1.1;
     this.explosion(this.eX[i], this.eY[i], big, this.eAir[i] ? AIR_Z : 4);
     this.freeEnemy(i);
     return true;
+  }
+
+  /** Level stats of a damage source (the commander stands in as a tower with id -1). */
+  private levelOf(src: Tower): TowerLevel | null {
+    return src.id === -1 ? null : TOWERS[src.type].levels[src.level];
+  }
+
+  /**
+   * WW2 rules for one hit: penetration against the armour of the side that was hit (front, side or
+   * rear from the shooter's bearing to the hull's heading; top for blasts and bombs), falling off
+   * with range. A shot that doesn't get through bounces off; a blast may still break a track.
+   * Infantry are suppressed and, once pinned, harder to hit. Returns the damage that gets through.
+   */
+  private ballistics(i: number, a: number, src: Tower | null, pen: number, top: boolean): number {
+    const def = ENEMIES[this.eKind[i]];
+    const lv = src ? this.levelOf(src) : null;
+    if (def.arm) {
+      if (pen < 0) pen = src ? lv?.pen ?? HERO_PEN : 0;
+      let armour: number;
+      if (top || !src) armour = def.arm[3];
+      else {
+        const dx = src.x - this.eX[i];
+        const dy = src.y - this.eY[i];
+        const rel = Math.abs(angleDiff(this.eAng[i], Math.atan2(dy, dx)));
+        armour = rel < Math.PI / 4 ? def.arm[0] : rel > (Math.PI * 3) / 4 ? def.arm[2] : def.arm[1];
+        const range = lv ? lv.range * src.rangeMult : this.heroRange();
+        if (range > 0) pen *= 1.1 - 0.25 * Math.min(1, Math.hypot(dx, dy) / range);
+      }
+      const r = armour > 0 ? pen / armour : 9;
+      if (r < 1) {
+        // bounced: a glancing hit near the limit still chips something off
+        const big = a >= 20;
+        if (top && big && this.eStunT[i] <= 0 && this.rng.next() < 0.12) {
+          this.eStunT[i] = 1.5;
+          this.ev(EV_STATUS, this.eX[i], this.eY[i], 6);
+        }
+        if (!top && big) {
+          this.ev(EV_STATUS, this.eX[i], this.eY[i], 5);
+          this.fx(FX_SPARK, 1, this.eX[i], this.eY[i], this.vr.range(-120, 120), this.vr.range(-120, 120), 0.25, 6, 1, 1, 0xffe0a0, 4, 8);
+        }
+        return r < 0.7 ? 0 : a * 0.25 * ((r - 0.7) / 0.3);
+      }
+      if (r >= 1.5 && a >= 20 && this.rng.next() < 0.12) {
+        // through and through: ammunition or fuel goes up
+        this.ev(EV_STATUS, this.eX[i], this.eY[i], 7);
+        return a * 2.5;
+      }
+      return a;
+    }
+    if (def.inf) {
+      const supp = lv?.supp ?? 0;
+      if (supp > 0) this.eSupp[i] = Math.min(1, this.eSupp[i] + supp);
+      a *= 1 - 0.35 * this.eSupp[i];
+    }
+    return a;
+  }
+
+  /** WW2 targeting: can a weapon of this penetration hurt unit i at all (from its weakest side, or from above)? */
+  private canHurt(i: number, pen: number, top: boolean): boolean {
+    const arm = ENEMIES[this.eKind[i]].arm;
+    if (!arm) return true;
+    return pen >= (top ? arm[3] : Math.min(arm[1], arm[2])) * 0.9;
   }
 
   /**
    * Best target in range by targeting mode. `skip` excludes one slot; `spot` > 0 means the unit must
    * be within `spot` px or under radar cover (artillery).
    */
-  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0): number {
+  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0, pen = 0, top = false): number {
     const n = this.hash.query(x, y, range, this.qbuf);
     const r2 = range * range;
     let best = -1;
@@ -1612,6 +1719,7 @@ export class Sim {
       // stealth: radar reveals it everywhere; otherwise only point-blank
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
+      if (pen > 0 && !this.canHurt(i, pen, top)) continue;
       let s: number;
       switch (mode) {
         case 0: s = -this.eRemain[i]; break;
@@ -1639,6 +1747,18 @@ export class Sim {
   private lead(i: number, fx: number, fy: number, speed: number): [number, number] {
     const tt = Math.hypot(this.eX[i] - fx, this.eY[i] - fy) / speed;
     return [this.eX[i] + ((this.eX[i] - this.ePx[i]) / DT) * tt, this.eY[i] + ((this.eY[i] - this.ePy[i]) / DT) * tt];
+  }
+
+  /** Like lob(), but returns the projectile (or -1). */
+  private lobAt(kind: number, t: Tower, i: number, fx: number, fy: number, speed: number, dmg: number, splash: number): number {
+    const [ax, ay] = this.lead(i, fx, fy, speed);
+    const d = Math.hypot(ax - fx, ay - fy) || 1;
+    const p = this.spawnProjectile(kind, fx, fy, (ax - fx) / d, (ay - fy) / d, speed, dmg, splash, 0, i, t, d / speed);
+    if (p >= 0) {
+      this.pTx[p] = ax;
+      this.pTy[p] = ay;
+    }
+    return p;
   }
 
   /** Fires a ballistic round at where target `i` will be. */
@@ -1683,10 +1803,10 @@ export class Sim {
     switch (t.kind) {
       // ------------------------------------------------ passive: auras, walls, floor traps
       case 'jammer': case 'depot': case 'radar': case 'command': case 'salvage':
-      case 'barricade': case 'gate': case 'tar': case 'spikes':
+      case 'barricade': case 'gate': case 'tar': case 'spikes': case 'wire':
         return;
 
-      case 'orbital': case 'nuke':
+      case 'orbital': case 'nuke': case 'stuka':
         if (t.charge > 0) t.charge = Math.max(0, t.charge - DT);
         return;
 
@@ -1704,7 +1824,14 @@ export class Sim {
 
       case 'mine': {
         if (t.cd > 0) return;
-        const v = this.findTarget(t.x, t.y, lv.range, false, true, 3);
+        // WW2 mines only go off under what they are made for
+        let v = -1;
+        if (def.trigger) {
+          const veh = def.trigger === 'vehicle';
+          this.forEachInRange(t.x, t.y, lv.range, false, true, (i) => {
+            if (v < 0 && !ENEMIES[this.eKind[i]].inf === veh && this.eHackT[i] <= 0) v = i;
+          });
+        } else v = this.findTarget(t.x, t.y, lv.range, false, true, 3);
         if (v < 0) return;
         this.splash(t.x, t.y, lv.splash!, dmg, 1, 0, t, true);
         this.explosion(t.x, t.y, 1.1, 2);
@@ -1733,7 +1860,7 @@ export class Sim {
       case 'repulsor': {
         if (t.cd > 0 || this.findTarget(t.x, t.y, range, false, true, 3) < 0) return;
         this.forEachInRange(t.x, t.y, range, false, true, (i) => {
-          const back = this.eKind[i] === EN_BOSS ? 0.25 : 1;
+          const back = ENEMIES[this.eKind[i]].boss ? 0.25 : 1;
           // push against the direction of travel, so it has to walk that stretch again
           this.shove(i, -Math.cos(this.eAng[i]) * lv.knock! * back, -Math.sin(this.eAng[i]) * lv.knock! * back);
           this.damage(i, dmg, false, t);
@@ -1770,7 +1897,7 @@ export class Sim {
         let best = -1;
         let hp = 0;
         this.forEachInRange(t.x, t.y, range, false, true, (i) => {
-          if (this.eKind[i] === EN_BOSS || !this.targetable(i) || this.eKind[i] === 0) return;
+          if (ENEMIES[this.eKind[i]].boss || !this.targetable(i) || ENEMIES[this.eKind[i]].inf) return;
           if (this.eHp[i] > hp) {
             hp = this.eHp[i];
             best = i;
@@ -1790,7 +1917,9 @@ export class Sim {
 
     // ------------------------------------------------ everything below picks a target
     const spot = t.kind === 'arty' ? 140 : 0;
-    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, t.mode, -1, spot);
+    // WW2: crews don't waste rounds on armour they can't get through (blasts count against the top)
+    const pen = WW2 ? lv.pen ?? 0 : 0;
+    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at');
     if (tgt < 0) {
       if (t.kind === 'gatling') t.spin = Math.max(0, t.spin - DT * 0.5);
       if (t.kind === 'gatling') t.heat = Math.max(0, t.heat - DT * 0.4);
@@ -1881,10 +2010,47 @@ export class Sim {
         break;
       }
       case 'cannon':
+        if (lv.salvo) {
+          // a rocket salvo: one round after another, scattered over the target area
+          for (let k = 0; k < lv.salvo; k++) {
+            const a = this.rng.next() * TWO_PI;
+            const r = Math.sqrt(this.rng.next()) * lv.splash! * 1.4;
+            const p = this.lobAt(P_SHELL, t, tgt, mx, my, 300 + k * 18, dmg, lv.splash!);
+            if (p >= 0) {
+              this.pTx[p] += Math.cos(a) * r;
+              this.pTy[p] += Math.sin(a) * r;
+              this.pVx[p] = (this.pTx[p] - mx) / this.pTtl[p];
+              this.pVy[p] = (this.pTy[p] - my) / this.pTtl[p];
+            }
+          }
+          for (let s = 0; s < 8; s++) this.fx(FX_SMOKE, 0, mx, my, -ca * 50 + this.vr.range(-30, 30), -sa * 50 + this.vr.range(-30, 30), 1.2, 8, 26, 0.55, 0xb0aca0, 2, MUZZLE_Z);
+          this.muzzleFlash(mx, my, 18, 0xff9a50);
+          break;
+        }
         this.lob(P_SHELL, t, tgt, mx, my, 420, dmg, lv.splash!);
         this.muzzleFlash(mx, my, 16, 0xffc070);
         for (let s = 0; s < 3; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 40 + this.vr.range(-20, 20), sa * 40 + this.vr.range(-20, 20), 0.6, 6, 16, 0.5, 0x9a948a, 3, MUZZLE_Z);
         break;
+      case 'at': {
+        if (this.eAir[tgt]) {
+          // the 88 against aircraft: time-fused shells bursting at altitude
+          const [ax, ay] = this.lead(tgt, mx, my, 620);
+          const d = Math.hypot(ax - mx, ay - my) || 1;
+          const p = this.spawnProjectile(P_FLAK, mx, my, (ax - mx) / d, (ay - my) / d, 620, dmg * airMult, lv.splash ?? 30, 1, tgt, t, d / 620);
+          if (p >= 0) {
+            this.pTx[p] = ax;
+            this.pTy[p] = ay;
+          }
+        } else {
+          this.spawnProjectile(P_AP, mx, my, ca, sa, 1100, dmg, 0, 1, tgt, t, 1);
+        }
+        const big = dmg >= 100 ? 1.3 : 1;
+        this.muzzleFlash(mx, my, 18 * big, 0xffd080);
+        for (let s = 0; s < 5; s++) this.fx(FX_SMOKE, 0, mx, my, ca * 50 + this.vr.range(-25, 25), sa * 50 + this.vr.range(-25, 25), 0.9, 7 * big, 22 * big, 0.5, 0xa8a49a, 3, MUZZLE_Z);
+        // muzzle blast kicks up dust around the gun
+        for (let s = 0; s < 3; s++) this.fx(FX_SMOKE, 0, t.x, t.y, this.vr.range(-40, 40), this.vr.range(-40, 40), 0.8, 8, 20, 0.3, 0x9a8a6a, 3, 2);
+        break;
+      }
       case 'napalm':
         this.lob(P_NAPALM, t, tgt, mx, my, 260, dmg, lv.splash!, lv.duration!);
         this.muzzleFlash(mx, my, 12, 0xff8040);
@@ -2096,7 +2262,7 @@ export class Sim {
             const dx = zn.x - this.eX[i];
             const dy = zn.y - this.eY[i];
             const d = Math.hypot(dx, dy);
-            if (d < 16 && this.eKind[i] !== EN_BOSS && this.eHp[i] < this.eMaxHp[i] * 0.25) {
+            if (d < 16 && !ENEMIES[this.eKind[i]].boss && this.eHp[i] < this.eMaxHp[i] * 0.25) {
               this.ev(EV_STATUS, this.eX[i], this.eY[i], 4);
               this.damage(i, 1e9, true, zn.src); // swallowed
               return;
@@ -2259,11 +2425,11 @@ export class Sim {
   }
 
   /** Area damage falling off to half at the edge. mask: 1 ground, 2 air, 3 both. */
-  private splash(x: number, y: number, r: number, dmg: number, mask: number, airMult: number, src: Tower | null, shatter = false): void {
+  private splash(x: number, y: number, r: number, dmg: number, mask: number, airMult: number, src: Tower | null, shatter = false, pen = -1): void {
     this.forEachInRange(x, y, r, (mask & 2) !== 0, (mask & 1) !== 0, (i) => {
       const d2 = (this.eX[i] - x) ** 2 + (this.eY[i] - y) ** 2;
       const fall = 1 - 0.5 * Math.sqrt(d2 / (r * r));
-      this.damage(i, dmg * fall * (this.eAir[i] ? airMult : 1), false, src, shatter);
+      this.damage(i, dmg * fall * (this.eAir[i] ? airMult : 1), false, src, shatter, pen, true);
     });
   }
 
@@ -2330,7 +2496,7 @@ export class Sim {
       this.pPy[p] = this.pY[p];
       const kind = this.pKind[p];
 
-      if (kind === P_BULLET || kind === P_ACID || kind === P_CRYO) {
+      if (kind === P_BULLET || kind === P_AP || kind === P_ACID || kind === P_CRYO) {
         // straight at the target, following it
         const valid = this.targetValid(p);
         if (valid) {
@@ -2342,7 +2508,11 @@ export class Sim {
         const d = Math.hypot(dx, dy);
         const step = this.pSpeed[p] * DT;
         if (d <= step + 4) {
-          if (kind !== P_BULLET) this.impact(p, kind, this.pTx[p], this.pTy[p]);
+          if (kind === P_AP) {
+            if (valid) this.damage(this.pTarget[p], this.pDmg[p], false, this.pSrc[p]);
+            this.fx(FX_GLOW, 1, this.pTx[p], this.pTy[p], 0, 0, 0.1, 6, 18, 0.9, 0xffe0a0, 0, 8);
+            for (let k = 0; k < 3; k++) this.fx(FX_SMOKE, 0, this.pTx[p], this.pTy[p], this.vr.range(-30, 30), this.vr.range(-30, 30), 0.7, 5, 16, 0.45, 0x8a8478, 3, 6);
+          } else if (kind !== P_BULLET) this.impact(p, kind, this.pTx[p], this.pTy[p]);
           else if (valid) {
             const t = this.pTarget[p];
             this.damage(t, this.pDmg[p] * (this.eAir[t] ? this.pAirMult[p] : 1), false, this.pSrc[p]);

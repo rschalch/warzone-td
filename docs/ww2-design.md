@@ -106,6 +106,8 @@ Seelow Heights.
 
 ## 7. Phases
 
+Status: phases 0 and 1 are done (Germany vs Soviet Union).
+
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs
    Soviets on one map, ~12 emplacements, ~8 enemy types, models, sounds. Playable.

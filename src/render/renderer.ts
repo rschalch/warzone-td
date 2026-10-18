@@ -1,9 +1,9 @@
 import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
 import { palette, settings } from '../app/settings';
-import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
+import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, WW2 } from '../game/defs';
 import type { FlowField } from '../game/flow';
 import {
-  AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
+  AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
   P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
@@ -107,7 +107,10 @@ const C_DRONE = 3 << 16;
 const C_HERO = 4 << 16;
 const C_SCENERY = 5 << 16;
 
-const STATUS_WORDS = [['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff]] as const;
+const STATUS_WORDS = [
+  ['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff],
+  ['BOUNCED', 0xc8ccd0], ['TRACKED', 0xfff07a], ['AMMO RACK!', 0xff7a3a],
+] as const;
 const MAX_WRECKS = 220;
 const MAX_SCORCH = 260;
 const MAX_TEXTS = 70;
@@ -276,20 +279,23 @@ export class GameRenderer {
     this.turretFrames = TOWERS.map((t) => (t.turret ? frames(t.turret) : []));
     this.turretTopTex = TOWERS.map((t) => (t.turret ? atlas[`${t.turret}_t`] : atlas.px));
     this.cornerTex = atlas[`basecorners_${view}`];
+    // WW2 emplacements sit in sandbags and earthworks instead of steel plating
+    const base = WW2 ? 'wbase' : 'basel';
     this.baseTex = TOWERS.map((t) => {
-      if (t.turret) return t.levels.map((_, lv) => atlas[`basel${lv}_${view}`]);
-      return [t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null];
+      if (t.turret) return t.levels.map((_, lv) => atlas[`${base}${lv}_${view}`]);
+      return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.kind}_${view}`] : null];
     });
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
     this.sceneryTex = SCENERY.map((n) => atlas[`${n}_${view}`]);
     this.scenery = scenery(sim.map);
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
-    this.heroFrames = this.iso ? frames('hero') : [atlas.hero_t];
+    const hero = WW2 ? 'w_officer' : 'hero';
+    this.heroFrames = this.iso ? frames(hero) : [atlas[`${hero}_t`]];
     // indexed by projectile kind
-    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas.nukeshell];
-    this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff];
-    this.projScale = [1, 1.1, 1, 1.1, 0.9, 1, 0.7, 1.6, 0.9, 1];
+    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas.nukeshell, atlas.bullet];
+    this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff, 0xffd060];
+    this.projScale = [1, 1.1, 1, 1.1, 0.9, 1, 0.7, 1.6, 0.9, 1, 1.7];
     this.fxTex = [atlas.glow, atlas.smoke, atlas.spark, atlas.ring, atlas.px];
     this.fxTexW = this.fxTex.map((t) => t.width);
 
@@ -334,7 +340,7 @@ export class GameRenderer {
       const a = ev[k + 3];
       const b = ev[k + 4];
       if (type === EV_KILL) {
-        if (settings.wrecks && !ENEMIES[a].air && a !== 0) this.addMark(this.wrecks, MAX_WRECKS, { x, y, a: Math.random() * TWO_PI, kind: a, t: WRECK_LIFE });
+        if (settings.wrecks && !ENEMIES[a].air && !ENEMIES[a].inf) this.addMark(this.wrecks, MAX_WRECKS, { x, y, a: Math.random() * TWO_PI, kind: a, t: WRECK_LIFE });
         if (settings.numbers && b > 0) this.floatText(`+$${b}`, x, y, 0xffd84a, 0.9, ENEMIES[a].air ? AIR_Z : 10);
       } else if (type === EV_BOOM) {
         if (settings.wrecks && a >= 0.8) this.addMark(this.scorch, MAX_SCORCH, { x, y, a, kind: 0, t: SCORCH_LIFE });
@@ -548,7 +554,7 @@ export class GameRenderer {
         const z = k === P_BULLET || k === P_MISSILE || k === P_FLAK ? s.missileZ(p) : 10;
         const sx = k === P_BULLET ? 1.4 : sc;
         this.proj.push(tex, this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, rot, sx, sc, this.projTint[k], 1);
-        if (k === P_ACID || k === P_CRYO) this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, 0, 0.25, 0.25, this.projTint[k], 0.6, 0.5);
+        if (k === P_ACID || k === P_CRYO || k === P_AP) this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, 0, 0.25, 0.25, this.projTint[k], 0.6, 0.5);
       }
     }
     this.proj.end();
@@ -623,7 +629,7 @@ export class GameRenderer {
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
       // the AI partner's towers stand in a cyan ring, like the commander's gold one
       if (t.owner) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, 0, (t.size * TILE * 1.25) / 128, (t.size * TILE * 1.25) / 128, 0x3ad8ff, 0.55, 0.5);
-      if (def.turret) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);
+      if (def.turret && !WW2) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);
       if (t.level >= 9) {
         // legendary towers glow in their own colour
         this.glow.push(this.fxTex[FX_GLOW], sx, sy - 10 * p.lift, 0, 1.1, 1.1 * (this.iso ? 0.7 : 1), def.color, 0.22 + 0.08 * Math.sin(time * 3 + t.id), 0.5);
@@ -721,7 +727,7 @@ export class GameRenderer {
         this.shadows.push(this.fxTex[FX_GLOW], x, y, 0, (r * 2.4) / 64, (r * 2.4) / 64, 0x000000, 0.45, 0.5);
         sy -= AIR_Z + Math.sin(time * 3 + i) * 2;
         this.air.push(tex, sx, sy, 0, 1, 1, tint, 1);
-        this.air.push(this.rotorTex[(time * 30 + i) & 3], sx, sy - this.enemyTop[type] + 1, 0, 1, 1, 0xffffff, 0.9);
+        if (ENEMIES[type].rotor) this.air.push(this.rotorTex[(time * 30 + i) & 3], sx, sy - this.enemyTop[type] + 1, 0, 1, 1, 0xffffff, 0.9);
       } else {
         this.world.push(tex, sx, sy, 0, 1, 1, tint, ea);
       }
@@ -732,7 +738,7 @@ export class GameRenderer {
         const bob = 1.08 + Math.sin(time * 3 + i) * 0.02;
         this.shadows.push(tex, x + AIR_Z * 0.3, y + AIR_Z * 0.45, ang, 0.9, 0.9, 0x000000, 0.35);
         this.air.push(tex, sx, sy, ang, bob, bob, tint, 1);
-        this.air.push(this.rotorTex[0], sx, sy, time * 30 + i, bob, bob, 0xffffff, 0.9);
+        if (ENEMIES[type].rotor) this.air.push(this.rotorTex[0], sx, sy, time * 30 + i, bob, bob, 0xffffff, 0.9);
       } else {
         if (!hidden) this.shadows.push(tex, x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
         this.world.push(tex, sx, sy, ang, 1, 1, tint, ea);
@@ -763,8 +769,13 @@ export class GameRenderer {
   private drawDecal(t: Tower, time: number): void {
     const a = this.atlas;
     switch (t.kind) {
+      case 'wire':
+        this.decals.push(a.d_wire, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        break;
       case 'mine': {
-        this.decals.push(a.d_mine, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        const decal = TOWERS[t.type].decal;
+        this.decals.push(decal ? a[decal] : a.d_mine, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
+        if (decal) break;
         const armed = t.cd <= 0;
         // blinking arming light
         if (armed && Math.sin(time * 6 + t.id) > 0) this.decals.push(a.d_mine_light, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);

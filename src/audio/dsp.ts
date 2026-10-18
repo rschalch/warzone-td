@@ -288,6 +288,63 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
   cannon: { variants: 3, render: () => firearm({ dur: 2.0, crack: 0.006, body: 0.12, bodyF: 3500, thumpF: 55, thump: 1.2, tail: 0.5, tailLp: 600, drive: 3, echo: [[0.3, 0.3], [0.7, 0.15]], mech: 0.06 }) },
   arty: { variants: 2, render: () => firearm({ dur: 3.0, crack: 0.01, body: 0.18, bodyF: 2500, thumpF: 45, thump: 1.3, tail: 0.9, tailLp: 450, drive: 3, echo: [[0.4, 0.35], [0.9, 0.2], [1.5, 0.1]] }) },
 
+  // ---- WW2 weapons
+  /** MG-42: one short, sharp shot; fired ten times a second it becomes the famous tearing rip. */
+  mg42: { variants: 4, render: () => firearm({ dur: 0.25, crack: 0.002, body: 0.008, bodyF: 8000, thumpF: 160, thump: 0.4, tail: 0.04, tailLp: 2000, drive: 3.5, echo: [[0.08, 0.08]] }) },
+  flak38: { variants: 3, render: () => firearm({ dur: 0.6, crack: 0.004, body: 0.03, bodyF: 4500, thumpF: 90, thump: 0.8, tail: 0.12, tailLp: 1100, drive: 3, echo: [[0.12, 0.15], [0.28, 0.06]], mech: 0.06 }) },
+  /** High-velocity anti-tank guns: a whip-crack, a deep punch and the breech clanging open. */
+  pak40: { variants: 3, render: () => firearm({ dur: 2.2, crack: 0.004, body: 0.08, bodyF: 5000, thumpF: 60, thump: 1.3, tail: 0.6, tailLp: 700, drive: 3.2, echo: [[0.35, 0.3], [0.8, 0.15]], mech: 0.1 }) },
+  flak88: { variants: 3, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.12, bodyF: 4000, thumpF: 48, thump: 1.4, tail: 0.8, tailLp: 550, drive: 3.2, echo: [[0.4, 0.35], [1.0, 0.18]], mech: 0.12 }) },
+  tiger: { variants: 2, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.13, bodyF: 3600, thumpF: 44, thump: 1.5, tail: 0.85, tailLp: 520, drive: 3.4, echo: [[0.42, 0.33], [1.05, 0.16]], mech: 0.14 }) },
+  schreck: { variants: 3, render: () => rocket(0.9, 800, 2200, 0.25, 70) },
+  /** Mortar: the hollow "thoonk" of a bomb leaving the tube. */
+  mortar: {
+    variants: 3,
+    render: () => finish(echoes(mix(1.2,
+      [tone(0.4, { f0: rnd(280, 320), f1: 110, fTau: 0.03, decay: 0.08, gain: 1 })],
+      [noise(0.3, { decay: 0.03, f0: 2500, f1: 400, fTau: 0.03, gain: 0.6 })],
+      [noise(1, { color: 'brown', decay: 0.25, f0: 500, gain: 0.5 })],
+    ), [[0.2, 0.2], [0.5, 0.1]])),
+  },
+  /** Nebelwerfer: six rockets in quick succession, each a rising, moaning screech. */
+  nebel: {
+    variants: 2,
+    render: () => {
+      const layers: [Buf, number?, number?][] = [];
+      for (let k = 0; k < 6; k++) {
+        const f = rnd(420, 560);
+        const scream = tone(1.4, {
+          wave: 'saw', lp: 2600, gain: 0.5,
+          freq: (t) => f + 900 * Math.min(1, t / 0.45) + 70 * Math.sin(2 * Math.PI * 7 * t),
+          env: (t) => Math.min(1, t / 0.06) * Math.exp(-Math.max(0, t - 0.5) / 0.35),
+        });
+        layers.push([scream, k * 0.17 + rnd(0, 0.03)]);
+        layers.push([noise(0.9, { attack: 0.01, decay: 0.3, shape: 'bp', f0: 900, f1: 2400, fTau: 0.3, q: 1.2, gain: 0.7, flutter: [30, 0.4] }), k * 0.17]);
+      }
+      layers.push([noise(2.5, { color: 'brown', attack: 0.05, decay: 0.8, f0: 700, gain: 0.8, flutter: [20, 0.4] })]);
+      return finish(echoes(sat(mix(2.8, ...layers), 1.6), [[0.3, 0.2], [0.7, 0.1]]));
+    },
+  },
+  /** Ju 87 dive: the "Jericho trumpet" siren wailing up as it dives, over the engine. */
+  stuka: {
+    variants: 1,
+    render: () => {
+      const swell = (t: number) => Math.min(1, t / 0.4) * Math.exp(-Math.max(0, t - 2.2) / 0.3);
+      return finish(sat(mix(3,
+        [tone(2.8, { wave: 'saw', lp: 1800, gain: 0.55, freq: (t) => 420 + 380 * Math.min(1, t / 2.2) + 12 * Math.sin(2 * Math.PI * 23 * t), env: swell })],
+        [tone(2.8, { wave: 'square', lp: 1400, gain: 0.25, freq: (t) => 630 + 570 * Math.min(1, t / 2.2), env: swell })],
+        [noise(3, { color: 'brown', env: (t) => swell(t) * 0.9, f0: 400, gain: 1, flutter: [28, 0.5] })],
+      ), 1.4));
+    },
+  },
+  ricochet: {
+    variants: 3,
+    render: () => finish(mix(0.6,
+      [noise(0.04, { decay: 0.004, shape: 'hp', f0: 3000, gain: 0.8 })],
+      [tone(0.5, { f0: rnd(3000, 3800), f1: rnd(1400, 1900), fTau: 0.12, decay: 0.16, gain: 0.45 })],
+    )),
+  },
+
   boom0: { variants: 3, render: () => explosion(0.8) },
   boom1: { variants: 3, render: () => explosion(1.5) },
   boom2: { variants: 3, render: () => explosion(2.3) },

@@ -2,6 +2,7 @@
 // research perks and the random seed. Together with the command log it reproduces a game exactly.
 
 import type { MapDef } from './maps';
+import type { Faction } from './ww2';
 
 export type Difficulty = 'easy' | 'normal' | 'hard' | 'brutal';
 
@@ -64,6 +65,8 @@ export interface GameConfig {
   daily?: string;
   /** Co-op with AI: the share of the bank the AI partner may spend (see partner.ts). */
   partner?: number;
+  /** WW2 mode: the side you play and the one attacking you. Absent: the classic (modern) game. */
+  ww2?: { side: Faction; foe: Faction };
 }
 
 export const perk = (cfg: GameConfig, id: string) => cfg.perks[id] ?? 0;

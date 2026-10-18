@@ -17,7 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
-import { buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
+import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -321,6 +321,17 @@ interface StartOpts {
 }
 
 function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
+  if (cfg.ww2 && !atlasHas('ww2')) {
+    // the WW2 models are baked the first time they are needed, keeping the boot fast
+    flash('Loading WW2 models…');
+    const old = atlas;
+    void buildAtlas(['classic', 'ww2']).then((a) => {
+      atlas = a;
+      startGame(cfg, opts);
+      old.px.source.destroy();
+    });
+    return;
+  }
   link?.close();
   link = opts.link ?? null;
   session = new Session(cfg, { link: opts.link, replay: opts.replay?.log, restore: opts.restore, log: opts.log });
@@ -848,7 +859,7 @@ function bindInput(): void {
 const SHOT_SOUND: Record<string, string> = {
   nuke: 'nukeLaunch', mine: '',
 };
-const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow'];
+const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom'];
 
 function handleEvents(s: Sim): void {
   const ev = s.events;
@@ -859,8 +870,8 @@ function handleEvents(s: Sim): void {
     const a = ev[k + 3];
     switch (type) {
       case EV_SHOT: {
-        const kind = TOWERS[a].kind;
-        const name = SHOT_SOUND[kind] ?? kind;
+        const def = TOWERS[a];
+        const name = def.sfx ?? SHOT_SOUND[def.kind] ?? def.kind;
         if (name) sound.play(name, x, y);
         break;
       }
@@ -1100,8 +1111,8 @@ async function boot(): Promise<void> {
     start: (cfg: GameConfig) => startGame(cfg),
     Session,
     Sim: SimClass,
-    quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal') =>
-      startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234 }),
+    quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal', ww2 = false) =>
+      startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234, ww2: ww2 ? { side: 'de', foe: 'su' } : undefined }),
   };
   hud.camera(projection.mode);
 

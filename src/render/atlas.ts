@@ -2,7 +2,7 @@ import { CanvasSource, Container, Rectangle, RenderTexture, Sprite, Texture, typ
 import { COLS, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
 import { T_BUILD, T_GATE, T_MOUNT, T_ROCK, T_TREE, T_WATER, type GameMap } from '../game/maps';
 import { Rng } from '../game/rng';
-import { DIRS, models } from './models';
+import { DIRS, models, type ModelSet } from './models';
 import { buildLandscape, type Landscape } from './landscape';
 import { renderGround } from './terrainGL';
 
@@ -23,6 +23,9 @@ interface Entry {
 const entries: Entry[] = [];
 const def = (name: string, w: number, h: number, draw: Draw, anchor?: [number, number]) =>
   entries.push({ name, w, h, draw, anchor });
+/** Baked model frames, kept across atlas rebuilds (a model set is only baked once). */
+const baked = new Map<string, Entry>();
+const bakedSets = new Set<ModelSet>();
 
 // ---------------------------------------------------------------- helpers
 
@@ -208,6 +211,74 @@ def('d_gate_open', 40, 40, (g) => {
   g.stroke();
 });
 
+// WW2 floor obstacles
+def('d_wire', 40, 40, (g) => {
+  // two rows of concertina coils between stakes
+  g.fillStyle = 'rgba(70,58,40,0.35)';
+  rrect(g, -19, -19, 38, 38, 4);
+  g.fill();
+  for (const y of [-8, 8]) {
+    g.strokeStyle = 'rgba(30,28,24,0.55)';
+    g.lineWidth = 1.6;
+    for (let x = -17; x <= 17; x += 3.4) {
+      g.beginPath();
+      g.ellipse(x + 0.6, y + 0.8, 3.2, 6, 0, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.strokeStyle = '#a8a8a0';
+    g.lineWidth = 0.8;
+    for (let x = -17; x <= 17; x += 3.4) {
+      g.beginPath();
+      g.ellipse(x, y, 3.2, 6, 0, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.fillStyle = '#5a3c22';
+    for (const x of [-18, 0, 18]) g.fillRect(x - 1, y - 1, 2, 2);
+  }
+});
+def('d_teller', 20, 20, (g) => {
+  g.fillStyle = 'rgba(80,62,40,0.6)';
+  g.beginPath();
+  g.arc(0, 0, 9, 0, Math.PI * 2);
+  g.fill();
+  const gr = g.createRadialGradient(-2, -2, 0.5, 0, 0, 6.5);
+  gr.addColorStop(0, '#8a8a6a');
+  gr.addColorStop(1, '#3e4030');
+  g.fillStyle = gr;
+  g.beginPath();
+  g.arc(0, 0, 6.5, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.5)';
+  g.lineWidth = 0.6;
+  g.stroke();
+  g.fillStyle = '#5a5c48';
+  g.beginPath();
+  g.arc(0, 0, 2.6, 0, Math.PI * 2);
+  g.fill();
+  g.stroke();
+  // loose earth over the edge
+  g.fillStyle = 'rgba(110,90,60,0.7)';
+  for (const [x, y, r] of [[-5, 4, 2], [4, -5, 1.6], [5, 4, 1.4]]) {
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.fill();
+  }
+});
+def('d_smine', 20, 20, (g) => {
+  g.fillStyle = 'rgba(80,62,40,0.55)';
+  g.beginPath();
+  g.arc(0, 0, 7, 0, Math.PI * 2);
+  g.fill();
+  // just the three prongs of the igniter showing
+  g.fillStyle = '#2a2a24';
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2;
+    g.beginPath();
+    g.arc(Math.cos(a) * 1.4, Math.sin(a) * 1.4, 0.8, 0, Math.PI * 2);
+    g.fill();
+  }
+});
+
 def('pip', 8, 5, (g) => {
   g.fillStyle = '#ffd34a';
   g.strokeStyle = '#3a2a00';
@@ -225,7 +296,7 @@ def('pip', 8, 5, (g) => {
  * visible pixels, since baked frames carry room for the longest barrel at every heading.
  */
 function fitEntry(g: CanvasRenderingContext2D, name: string, size: number, zoom = 1): void {
-  const e = entries.find((en) => en.name === name);
+  const e = baked.get(name) ?? entries.find((en) => en.name === name);
   if (!e) return;
   const res = 3;
   const tmp = document.createElement('canvas');
@@ -272,13 +343,14 @@ export function towerIcon(type: number, size = 28): HTMLCanvasElement {
   c.style.width = c.style.height = `${size}px`;
   const g = c.getContext('2d')!;
   g.scale(dpr, dpr);
-  if (ICON_DECALS[t.kind]) {
+  const decal = t.decal ?? ICON_DECALS[t.kind];
+  if (decal) {
     // lay the trap flat in the same 2:1 projection as the iso camera
     g.translate(size / 2, size / 2);
     g.scale(1, 0.55);
     g.rotate(Math.PI / 4);
     g.translate(-size / 2, -size / 2);
-    fitEntry(g, ICON_DECALS[t.kind], size, t.size === 1 ? 0.8 : 1);
+    fitEntry(g, decal, size, t.size === 1 ? 0.8 : 1);
   } else if (t.turret) {
     fitEntry(g, dirFrame(t.turret, -Math.PI * 0.75, models[t.turret].dirs), size, 0.95);
   } else {
@@ -301,8 +373,8 @@ export type Atlas = Record<string, Texture>;
  * Bakes every model, in parallel across workers when possible. Each worker gets a share of the
  * models balanced by estimated cost and sends the frames back as ImageBitmaps.
  */
-async function bakeAll(): Promise<BakedFrame[]> {
-  const names = Object.keys(models).sort((a, b) => bakeCost(b) - bakeCost(a));
+async function bakeAll(sets: ModelSet[]): Promise<BakedFrame[]> {
+  const names = Object.keys(models).filter((n) => sets.includes(models[n].set)).sort((a, b) => bakeCost(b) - bakeCost(a));
   const n = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
   const shares: string[][] = Array.from({ length: n }, () => []);
   const load = new Array(n).fill(0);
@@ -332,11 +404,18 @@ async function bakeAll(): Promise<BakedFrame[]> {
   }
 }
 
-export async function buildAtlas(): Promise<Atlas> {
-  for (const f of await bakeAll()) {
+/** Has the atlas the models of this set? */
+export const atlasHas = (set: ModelSet) => bakedSets.has(set);
+
+/** Bakes the model sets not baked yet and packs everything into a fresh atlas texture. */
+export async function buildAtlas(sets: ModelSet[] = ['classic']): Promise<Atlas> {
+  const todo = sets.filter((s) => !bakedSets.has(s));
+  for (const f of await bakeAll(todo)) {
     const { w, h, image } = f;
-    def(f.name, w, h, (g) => g.drawImage(image, -w / 2, -h / 2, w, h), f.anchor);
+    baked.set(f.name, { name: f.name, w, h, draw: (g) => g.drawImage(image, -w / 2, -h / 2, w, h), anchor: f.anchor });
   }
+  for (const s of todo) bakedSets.add(s);
+  const all = [...entries, ...baked.values()];
   const pad = 2;
   const size = 1024;
   // shelf-pack first to know the height we need
@@ -344,7 +423,7 @@ export async function buildAtlas(): Promise<Atlas> {
   let x = pad;
   let y = pad;
   let rowH = 0;
-  const sorted = [...entries].sort((a, b) => b.h - a.h);
+  const sorted = [...all].sort((a, b) => b.h - a.h);
   for (const e of sorted) {
     if (x + e.w + pad > size) {
       x = pad;
@@ -377,7 +456,7 @@ export async function buildAtlas(): Promise<Atlas> {
   const source = new CanvasSource({ resource: canvas, resolution: RES, scaleMode: 'linear' });
   source.autoGenerateMipmaps = true;
   const atlas: Atlas = {};
-  for (const e of entries) {
+  for (const e of all) {
     atlas[e.name] = new Texture({
       source,
       frame: frames[e.name],

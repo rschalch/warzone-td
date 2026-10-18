@@ -2,6 +2,7 @@
 // covers the most of the current route (or lengthens it), mixing tower types by need.
 //   npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js
 // PARTNER=0.5 adds the AI partner (co-op with AI) with that bank share; SOLO=1 lets it play alone.
+// WW2=1 plays the WW2 mode (Germany against the Soviet attack) with its own build order.
 
 import type { Difficulty } from '../src/game/config';
 import { COLS, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
@@ -9,6 +10,7 @@ import { MAPS, type MapDef } from '../src/game/maps';
 import { Partner, PARTNER_EVERY } from '../src/game/partner';
 import { Sim } from '../src/game/sim';
 
+const WW2 = !!process.env.WW2;
 const T = {
   gun: towerIndex('gun'), cannon: towerIndex('cannon'), missile: towerIndex('missile'), tesla: towerIndex('tesla'),
   laser: towerIndex('laser'), flak: towerIndex('flak'), radar: towerIndex('radar'), jammer: towerIndex('jammer'),
@@ -29,11 +31,47 @@ function pathCells(sim: Sim): number[] {
   return out;
 }
 
+/** Cells under the straight lines aircraft fly, entry to exit. */
+function airCells(sim: Sim): number[] {
+  const out: number[] = [];
+  for (const r of sim.map.routes) {
+    const [x0, y0] = r.airFrom;
+    const [x1, y1] = r.airTo;
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / TILE);
+    for (let k = 0; k <= n; k++) {
+      const c = Math.floor((x0 + ((x1 - x0) * k) / n) / TILE);
+      const row = Math.floor((y0 + ((y1 - y0) * k) / n) / TILE);
+      if (c >= 0 && row >= 0 && c < COLS && row < sim.map.def.rows) out.push(row * COLS + c);
+    }
+  }
+  return out;
+}
+
 function routeLength(sim: Sim, fields = sim.fields): number {
   return sim.map.routes.reduce((a, r, k) => a + fields[k].dist[r.entry[r.entry.length >> 1]], 0);
 }
 
+/** WW2 build order: MG-42s as the backbone, anti-tank guns against armour, flak against aircraft. */
+function chooseWW2(sim: Sim, built: Map<number, number>): number {
+  const W = (k: string) => towerIndex(k);
+  const n = (k: string) => built.get(W(k)) ?? 0;
+  const total = [...built.values()].reduce((a, b) => a + b, 0);
+  if (sim.wave >= 4 && n('flak38') + 2 * n('flak88') < 1 + total / 7) return W('flak38');
+  if (sim.wave >= 2 && n('pak40') + 2 * n('tiger') + 2 * n('flak88') + n('schreck') < 1 + total / 4) {
+    if (sim.wave >= 10 && sim.money >= 200) return total % 2 ? W('tiger') : W('flak88');
+    return total % 3 === 0 ? W('schreck') : W('pak40');
+  }
+  if (n('lefh18') > n('observer')) return W('observer');
+  if (sim.money >= 120 && total > 6) {
+    const opts = ['mortar', 'lefh18', 'nebel', 'mg42', 'bunker'];
+    return W(opts[total % opts.length]);
+  }
+  if (sim.money >= 40 && total % 3 === 2) return W('mortar');
+  return W('mg42');
+}
+
 function chooseType(sim: Sim, built: Map<number, number>): number {
+  if (WW2) return chooseWW2(sim, built);
   const n = (t: number) => built.get(t) ?? 0;
   const total = [...built.values()].reduce((a, b) => a + b, 0);
   if (sim.wave >= 4 && n(T.missile) + n(T.flak) < 1 + total / 8) return sim.money >= sim.cost(T.flak) && n(T.flak) <= n(T.missile) ? T.flak : T.missile;
@@ -50,13 +88,15 @@ function chooseType(sim: Sim, built: Map<number, number>): number {
 function decide(sim: Sim, built: Map<number, number>): void {
   // upgrade the busiest tower when it beats building
   const best = [...sim.towers].filter((t) => sim.upgradeCost(t) > 0).sort((a, b) => b.damage - a.damage)[0];
-  if (best && sim.towers.length > 12 && sim.money >= sim.upgradeCost(best) && sim.upgradeCost(best) < 120) {
+  const needs = WW2 && chooseWW2(sim, built) !== towerIndex('mg42') && chooseWW2(sim, built) !== towerIndex('mortar');
+  if (best && !needs && sim.towers.length > 12 && sim.money >= sim.upgradeCost(best) && sim.upgradeCost(best) < 120) {
     sim.exec({ t: 'upgrade', ids: [best.id] });
     return;
   }
   const type = chooseType(sim, built);
   if (sim.money < sim.cost(type)) return;
-  const path = pathCells(sim);
+  const aa = WW2 && (TOWERS[type].kind === 'flak38' || TOWERS[type].kind === 'flak88') && sim.wave >= 4;
+  const path = aa ? airCells(sim) : pathCells(sim);
   if (!path.length) return;
   const r = Math.max(60, TOWERS[type].levels[0].range);
   const before = routeLength(sim);
@@ -94,7 +134,7 @@ function decide(sim: Sim, built: Map<number, number>): void {
 }
 
 function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number; win: boolean; lives: number; towers: number } {
-  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed });
+  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed, ww2: WW2 ? { side: 'de', foe: 'su' } : undefined });
   const built = new Map<number, number>();
   const share = Number(process.env.PARTNER ?? 0);
   const solo = !!process.env.SOLO;
@@ -110,7 +150,7 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
     if (process.env.VERBOSE && sim.wave !== lastWave) {
       lastWave = sim.wave;
       const kinds = new Map<string, number>();
-      for (const t of sim.towers) kinds.set(t.kind, (kinds.get(t.kind) ?? 0) + 1);
+      for (const t of sim.towers) kinds.set(TOWERS[t.type].kind, (kinds.get(TOWERS[t.type].kind) ?? 0) + 1);
       console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
     }
     if (tick % 30 === 0 && !solo) decide(sim, built);

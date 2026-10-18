@@ -128,6 +128,22 @@ so they never hide a tower spot. The game starts with a coarse landscape (`build
 their slope (multi-pass blurs, no hard `max`), or the light draws crease lines. Without WebGL2: `flatGround()`. Adding fields to a campaign
 `MapDef` changes that map for new games only: saves and replays carry their own copy of the def.
 
+## WW2 mode (branch `ww2`, never merged to `main`: main deploys publicly)
+
+Design and phase plan: `docs/ww2-design.md`. `GameConfig.ww2 = { side, foe }` selects it; `Sim.create()` calls
+`setRuleset()` (`src/game/rules.ts`), which swaps the live bindings `TOWERS`, `ENEMIES`, `COMBOS`, `CATEGORIES`,
+`RANKS`, `buildWave` and the `WW2` flag in `defs.ts` (like the map size). Never call it while another game is
+running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it.
+- Data: `src/game/ww2.ts` (German emplacements, Soviet attackers, waves). A `TowerDef` has a unique `kind` and a
+  `role` (the behaviour in `Sim.updateTower`; `Tower.kind` holds the role). WW2 roles beyond the classic ones:
+  `at` (armour-piercing direct fire; flak bursts against aircraft), `wire` (slows infantry only), `stuka`.
+- Ballistics: `Sim.ballistics()` — `pen` (mm, falls off with range) against `arm` [front, side, rear, top] by the
+  shooter's bearing to the hull heading; blasts and bombs hit the top. Bounce = ~0 damage; overmatch may crit.
+  `canHurt()` keeps crews from targeting armour they can't penetrate. Infantry get suppression (`eSupp`).
+- Models: `src/render/models_ww2.ts` (set `ww2`), baked lazily the first time a WW2 game starts
+  (`buildAtlas(['classic','ww2'])` in `startGame`), so the boot stays as fast as before.
+- Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
+
 ## Balance notes
 
 The economy and tower values were tuned with `npm run gauntlet` and `npm run bot`. Last bot results: it wins

@@ -1,10 +1,12 @@
 import {
-  CATEGORIES, COMBOS, RANKS, EN_AEGIS, EN_BOSS, EN_GHOST, EN_HELI, EN_MEDIC, ENEMIES, TARGET_MODES, TOTAL_WAVES, TOWERS, hpScale,
-  type TowerDef, type TowerLevel,
+  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOTAL_WAVES, TOWERS, WW2, hpScale,
+  type EnemyDef, type TowerDef, type TowerLevel,
 } from '../game/defs';
+import { rulesetKey } from '../game/rules';
+import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
 import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, type Sim, type Tower, type TowerStats } from '../game/sim';
-import { ABILITY_HELP, ENEMY_HELP, FOREST_HELP, HERO_HELP, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, TOWER_HELP } from './codex';
+import { ABILITY_HELP, FOREST_HELP, HERO_HELP, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 
 /** Something to explain in the side panel (hovered button, or a target being aimed). */
@@ -64,20 +66,24 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
   const dmg = eff?.damage ?? lv.damage;
   const range = eff?.range ?? lv.range;
   const rate = eff?.rate ?? lv.rate;
-  if (lv.damage) rows.push([def.kind === 'hacker' ? 'Hijacked DPS' : DPS_KINDS.has(def.kind) ? 'DPS' : 'Damage', num(dmg)]);
-  if (lv.range > 14) rows.push([AURA_KINDS.has(def.kind) ? 'Radius' : 'Range', num(range)]);
-  if (lv.rate && !lv.charge) rows.push([def.kind === 'mine' ? 'Re-arm' : 'Rate', def.kind === 'mine' ? `${num(1 / rate)}s` : `${num(rate)}/s`]);
+  const role = def.role;
+  if (lv.damage) rows.push([role === 'hacker' ? 'Hijacked DPS' : DPS_KINDS.has(role) ? 'DPS' : 'Damage', num(dmg)]);
+  if (lv.pen !== undefined) rows.push(['Penetration', `${lv.pen} mm`]);
+  if (lv.range > 14) rows.push([AURA_KINDS.has(role) ? 'Radius' : 'Range', num(range)]);
+  if (lv.rate && !lv.charge) rows.push([role === 'mine' ? 'Re-arm' : 'Rate', role === 'mine' ? `${num(1 / rate)}s` : `${num(rate)}/s`]);
+  if (lv.salvo) rows.push(['Rockets', `${lv.salvo}`]);
+  if (lv.supp) rows.push(['Suppression', `${pct(lv.supp)}/hit`]);
   if (lv.splash) rows.push(['Splash', `${lv.splash}`]);
   if (lv.chain) rows.push(['Chain', `${lv.chain}`]);
-  if (lv.slow) rows.push(['Slow', pct(1 - lv.slow)]);
+  if (lv.slow) rows.push([role === 'wire' ? 'Slows infantry' : 'Slow', pct(1 - lv.slow)]);
   if (lv.burn) rows.push(['Burn', `${lv.burn}/s`]);
   if (lv.shred) rows.push(['Armour shred', `${lv.shred}`]);
   if (lv.chill) rows.push(['Chill per hit', pct(lv.chill)]);
   if (lv.pull) rows.push(['Pull', `${lv.pull}px/s`]);
   if (lv.knock) rows.push(['Knockback', `${lv.knock}px`]);
-  if (lv.duration) rows.push([def.kind === 'hacker' ? 'Hack time' : 'Lasts', `${lv.duration}s`]);
+  if (lv.duration) rows.push([role === 'hacker' ? 'Hack time' : 'Lasts', `${lv.duration}s`]);
   if (lv.buff) {
-    const label = { radar: 'Range bonus', command: 'Fire-rate bonus', salvage: 'Bounty bonus', jammer: 'Extra damage taken' }[def.kind as string] ?? 'Bonus';
+    const label = { radar: 'Range bonus', command: 'Fire-rate bonus', salvage: 'Bounty bonus', jammer: 'Extra damage taken' }[role as string] ?? 'Bonus';
     rows.push([label, `+${pct(lv.buff)}`]);
   }
   if (lv.income) rows.push(['Per wave', `$${lv.income} + ${pct(lv.interest ?? 0)} (max $${lv.cap})`]);
@@ -87,13 +93,27 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
 }
 
 /** Counters for specific threats, shown in the wave preview. */
-const THREAT_TIPS: Record<number, string> = {
-  [EN_GHOST]: 'stealth — radar, or towers point-blank',
-  [EN_AEGIS]: 'shields — jam them',
-  [EN_MEDIC]: 'heals — focus it',
-  [EN_HELI]: 'air — flies over the maze',
-  [EN_BOSS]: 'boss',
-};
+function threatTip(e: EnemyDef): string {
+  if (e.boss) return 'boss';
+  if (e.stealth) return WW2 ? 'hidden — observation posts reveal' : 'stealth — radar, or towers point-blank';
+  if (e.shield) return 'shields — jam them';
+  if (e.heal) return 'heals — focus it';
+  if (e.air) return WW2 ? (e.arm ? 'armoured aircraft — flak' : 'aircraft — flies over the maze') : 'air — flies over the maze';
+  if (WW2 && e.arm && e.arm[0] >= 40) return `armour ${e.arm[0]}/${e.arm[1]}/${e.arm[2]} mm`;
+  return '';
+}
+
+/** WW2: which armoured enemies a weapon gets through, and from where. */
+function penRows(lv: TowerLevel): string {
+  if (!WW2 || !lv.pen || !lv.damage) return '';
+  const words = { all: 'any side', side: 'side & rear', rear: 'rear only', none: 'no', soft: '' };
+  const top = !!lv.splash;
+  const cells = ENEMIES.filter((e) => e.arm && !e.air).map((e) => {
+    const v = top ? (lv.pen! >= e.arm![3] ? 'all' : 'none') : penVerdict(lv.pen!, e.arm);
+    return `<span class="${v === 'none' ? 'bad' : v === 'all' ? 'good' : ''}">${e.name.replace(/ (Heavy|Light) Tank| Armoured Car/, '')}: ${top && v === 'all' ? 'from above' : words[v]}</span>`;
+  });
+  return `<div class="desc pen"><b>Gets through</b> ${cells.join(' · ')}</div>`;
+}
 
 /** DOM HUD. Every write is diffed so per-frame updates cost almost nothing. */
 export class Hud {
@@ -124,9 +144,16 @@ export class Hud {
   private lastSample = 0;
   /** Button under the mouse: its description replaces the panel while hovered. */
   private hover: Inspect | null = null;
-  constructor(act: HudActions) {
-    // every tower at once, grouped by category; the first ten have number keys
+  private palette: unknown = null;
+  private iconFn: ((type: number) => HTMLCanvasElement) | null = null;
+
+  /** Every tower of the current ruleset at once, grouped by category; the first ten have number keys. */
+  private buildPalette(act: HudActions): void {
+    if (this.palette === rulesetKey()) return;
+    this.palette = rulesetKey();
     const build = $('build');
+    build.replaceChildren();
+    this.buttons.length = 0;
     for (const c of CATEGORIES) {
       const h = document.createElement('div');
       h.className = 'cat';
@@ -145,6 +172,11 @@ export class Hud {
         this.buttons[i] = b;
       });
     }
+    if (this.iconFn) this.setIcons(this.iconFn);
+  }
+
+  constructor(private readonly act: HudActions) {
+    this.buildPalette(act);
     this.next.onclick = () => act.next();
     $('menu').onclick = () => act.menu();
     $('gear').onclick = () => act.settings();
@@ -210,6 +242,7 @@ export class Hud {
 
   /** Per-game setup: perk-adjusted prices and the towers this game allows. */
   configure(sim: Sim): void {
+    this.buildPalette(this.act);
     this.buttons.forEach((b, i) => {
       b.querySelector('.c')!.textContent = `$${sim.cost(i)}`;
       b.classList.toggle('locked', !sim.allowed(i));
@@ -231,6 +264,7 @@ export class Hud {
 
   /** Puts a picture of each tower on its button (needs the baked atlas). */
   setIcons(icon: (type: number) => HTMLCanvasElement): void {
+    this.iconFn = icon;
     this.buttons.forEach((b, i) => b.querySelector('.ic')!.replaceChildren(icon(i)));
   }
 
@@ -307,7 +341,10 @@ export class Hud {
     const counts = new Map<number, number>();
     for (const g of sim.waveGroups(n)) counts.set(g.kind, (counts.get(g.kind) ?? 0) + g.count);
     const hp = hpScale(n) * DIFFICULTIES[sim.config.difficulty].hp;
-    const rows = [...counts].map(([k, c]) => `<div><b>${c}×</b> ${ENEMIES[k].name}${THREAT_TIPS[k] ? ` <span class="tip">${THREAT_TIPS[k]}</span>` : ''}</div>`).join('');
+    const rows = [...counts].map(([k, c]) => {
+      const tip = threatTip(ENEMIES[k]);
+      return `<div><b>${c}×</b> ${ENEMIES[k].name}${tip ? ` <span class="tip">${tip}</span>` : ''}</div>`;
+    }).join('');
     this.waveBox.innerHTML = `<div class="wt">Next: wave ${n} <span class="hp">HP ×${hp.toFixed(1)}</span></div>${rows}`;
   }
 
@@ -408,12 +445,12 @@ export class Hud {
         return `<div class="combo"><b>${c.name}</b> ${c.desc}</div>`;
       }).join('');
       let special = '';
-      if (def.kind === 'gate') special = `<div class="row"><button data-act="gate" class="primary" ${ro}>${t.open ? 'Close gate (G)' : 'Open gate (G)'}</button></div>`;
+      if (def.role === 'gate') special = `<div class="row"><button data-act="gate" class="primary" ${ro}>${t.open ? 'Close gate (G)' : 'Open gate (G)'}</button></div>`;
       if (def.manual) {
         const c = sim.chargeLevel(t);
         special = `<div class="row"><button data-act="fire" class="primary" ${c < 1 || ro ? 'disabled' : ''}>${c < 1 ? `Charging ${Math.floor(c * 100)}%` : 'Fire! (R)'}</button></div>`;
       }
-      if (def.kind === 'depot') special = `<div class="desc">All depots pay <b>$${sim.depotIncome}</b> at the next wave.</div>`;
+      if (def.role === 'depot') special = `<div class="desc">All depots pay <b>$${sim.depotIncome}</b> at the next wave.</div>`;
       const record = def.hitsGround || def.hitsAir ? `
           <tr><td>Live DPS</td><td>${Math.round(this.dps(t))}</td><td></td></tr>
           <tr><td>Kills</td><td>${t.kills}</td><td></td></tr>
@@ -423,8 +460,9 @@ export class Hud {
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
-        <div class="help">${TOWER_HELP[def.kind]}</div>
+        <div class="help">${towerHelp(def)}</div>
         <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
+        ${penRows(lv)}
         ${combos}
         ${special}
         ${modes}
@@ -444,8 +482,9 @@ export class Hud {
           : 'Click or drag on the field to build. Enemies path around your towers, but you can\'t fully block them.';
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">$${sim.cost(ui.placing)}</span></div>
-        <div class="help">${TOWER_HELP[def.kind]}</div>
+        <div class="help">${towerHelp(def)}</div>
         <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>
+        ${penRows(def.levels[0])}
         ${partners}
         <div class="desc" style="margin-top:8px">${how}</div>`;
     } else if (ui.ground === T_WATER) {
@@ -474,8 +513,8 @@ export class Hud {
       const price = tower ? `Lv ${tower.level + 1}` : `$${sim.cost(type)}`;
       const locked = !tower && !sim.allowed(type) ? '<div class="desc bad">Not available in this game.</div>' : '';
       return `<div class="title">${def.name}<span class="lvl">${price}</span></div>${aimNote}${locked}
-        <div class="help">${TOWER_HELP[def.kind]}</div>
-        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>${partners}`;
+        <div class="help">${towerHelp(def)}</div>
+        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>${penRows(lv)}${partners}`;
     }
     if (w.kind === 'item') {
       const it = ITEMS[w.index];
@@ -504,20 +543,21 @@ export class Hud {
     if (sim.eBurnT[i] > 0) tags.push('burning');
     if (sim.eSlowT[i] > 0) tags.push('slowed');
     if (sim.eJam[i] > 0) tags.push('jammed');
+    if (sim.eSupp[i] > 0.05) tags.push(`suppressed ${Math.round(sim.eSupp[i] * 100)}%`);
     return tags.join(', ');
   }
 
   private enemyPanel(sim: Sim, i: number): string {
     const kind = sim.eKind[i];
     const def = ENEMIES[kind];
-    const help = ENEMY_HELP[kind];
+    const help = enemyHelp(kind);
     const status = this.enemyStatus(sim, i);
     return `<div class="title">${def.name}<span class="lvl">${def.air ? 'air' : 'ground'}</span></div>
       <div class="help">${help.text}</div>
       <table>
         <tr><td>HP</td><td>${Math.ceil(sim.eHp[i])} / ${Math.ceil(sim.eMaxHp[i])}</td></tr>
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
-        <tr><td>Armour</td><td>${def.armor}</td></tr>
+        <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
         <tr><td>Speed</td><td>${def.speed}</td></tr>
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
         <tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>

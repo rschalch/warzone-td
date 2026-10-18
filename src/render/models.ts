@@ -3,121 +3,16 @@
 // A model is a stack of top-down parts drawn in model space (facing +x, origin at the centre,
 // world pixels). Each part is extruded from z0 to z1; `sliced` parts are redrawn per slice so
 // their colour can change with height (coil windings, banding). atlas.ts bakes these into frames.
+// The WW2 models are in models_ww2.ts; both draw with the kit in modelkit.ts.
 
 import { TOWERS } from '../game/defs';
 import { Rng } from '../game/rng';
+import {
+  DIRS, OUTLINE, P, TOWER_DECK, box, camo, circ, finish, grad, line, model, models, poly, rgrad, star, tread, wheel, type Ctx, type Part,
+} from './modelkit';
+import './models_ww2';
 
-export type Ctx = CanvasRenderingContext2D;
-
-export interface Part {
-  z0: number;
-  z1: number;
-  draw: (g: Ctx, z: number) => void;
-  sliced?: boolean;
-}
-
-export interface Model {
-  r: number; // footprint radius (frame size)
-  parts: Part[];
-  dirs: number; // iso headings to bake (1 = static)
-  grounded: boolean; // bake a contact shadow
-  outline: boolean; // dark silhouette edge (off for translucent things like rotor blur)
-}
-
-export const models: Record<string, Model> = {};
-const model = (name: string, r: number, dirs: number, parts: Part[], grounded = true, outline = true) =>
-  (models[name] = { r, dirs, parts, grounded, outline });
-const P = (z0: number, z1: number, draw: Part['draw'], sliced = false): Part => ({ z0, z1, draw, sliced });
-
-export const DIRS = 16;
-export const TOWER_DECK = 10; // z of a tower block's top; turrets start here
-
-// ---------------------------------------------------------------- drawing helpers
-
-const OUTLINE = 'rgba(10,12,8,0.55)';
-
-function grad(g: Ctx, x0: number, y0: number, x1: number, y1: number, stops: [number, string][]): CanvasGradient {
-  const gr = g.createLinearGradient(x0, y0, x1, y1);
-  for (const [o, c] of stops) gr.addColorStop(o, c);
-  return gr;
-}
-
-function rgrad(g: Ctx, x: number, y: number, r: number, stops: [number, string][]): CanvasGradient {
-  const gr = g.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.05, x, y, r);
-  for (const [o, c] of stops) gr.addColorStop(o, c);
-  return gr;
-}
-
-function finish(g: Ctx, fill: string | CanvasGradient, stroke: string | null = OUTLINE, lw = 0.6) {
-  g.fillStyle = fill;
-  g.fill();
-  if (stroke) {
-    g.strokeStyle = stroke;
-    g.lineWidth = lw;
-    g.stroke();
-  }
-}
-
-function box(g: Ctx, x: number, y: number, w: number, h: number, r: number, fill: string | CanvasGradient, stroke: string | null = OUTLINE) {
-  g.beginPath();
-  g.roundRect(x, y, w, h, r);
-  finish(g, fill, stroke);
-}
-
-function circ(g: Ctx, x: number, y: number, r: number, fill: string | CanvasGradient, stroke: string | null = OUTLINE) {
-  g.beginPath();
-  g.arc(x, y, r, 0, Math.PI * 2);
-  finish(g, fill, stroke);
-}
-
-function poly(g: Ctx, pts: number[], fill: string | CanvasGradient, stroke: string | null = OUTLINE) {
-  g.beginPath();
-  g.moveTo(pts[0], pts[1]);
-  for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]);
-  g.closePath();
-  finish(g, fill, stroke);
-}
-
-function line(g: Ctx, pts: number[], color: string, lw = 0.5) {
-  g.beginPath();
-  g.moveTo(pts[0], pts[1]);
-  for (let i = 2; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]);
-  g.strokeStyle = color;
-  g.lineWidth = lw;
-  g.stroke();
-}
-
-/** Lighter/darker blobs clipped to the current path — camouflage and weathering. */
-function camo(g: Ctx, path: () => void, colors: string[], seed: number, n: number, size: number, area: number) {
-  const rng = new Rng(seed);
-  g.save();
-  path();
-  g.clip();
-  for (let i = 0; i < n; i++) {
-    g.fillStyle = colors[i % colors.length];
-    g.beginPath();
-    g.ellipse(rng.range(-area, area), rng.range(-area, area), size * rng.range(0.5, 1), size * rng.range(0.3, 0.7), rng.next() * Math.PI, 0, Math.PI * 2);
-    g.fill();
-  }
-  g.restore();
-}
-
-/** A track belt: dark rubber with tread bars. */
-function tread(g: Ctx, x: number, y: number, w: number, h: number, step = 1.7) {
-  box(g, x, y, w, h, Math.min(2, h / 2), grad(g, 0, y, 0, y + h, [[0, '#2a2a26'], [0.5, '#1a1a17'], [1, '#2a2a26']]));
-  g.save();
-  g.beginPath();
-  g.roundRect(x, y, w, h, Math.min(2, h / 2));
-  g.clip();
-  for (let tx = x + 0.6; tx < x + w; tx += step) line(g, [tx, y, tx, y + h], 'rgba(90,90,80,0.55)', 0.6);
-  g.restore();
-}
-
-function wheel(g: Ctx, x: number, y: number, w: number, h: number) {
-  box(g, x, y, w, h, 1, '#1b1b19');
-  for (let tx = x + 0.7; tx < x + w; tx += 1.2) line(g, [tx, y + 0.2, tx, y + h - 0.2], 'rgba(80,80,70,0.6)', 0.4);
-}
-
+export { DIRS, TOWER_DECK, models, type Ctx, type Model, type ModelSet, type Part } from './modelkit';
 
 // palettes
 const OLIVE = ['#7f8f4a', '#5b6b34', '#3b4622'];
@@ -472,15 +367,6 @@ const PLATING = [
   { side: ['#f0d478', '#8a6a1c'], top: ['#d8b85a', '#8a6a24'], ring: '#5a4410', trim: '#fff0b0' },
 ];
 
-function star(g: Ctx, x: number, y: number, r: number, fill: string) {
-  const pts: number[] = [];
-  for (let k = 0; k < 10; k++) {
-    const a = -Math.PI / 2 + (k * Math.PI) / 5;
-    const rr = k % 2 ? r * 0.45 : r;
-    pts.push(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
-  }
-  poly(g, pts, fill, 'rgba(0,0,0,0.6)');
-}
 
 /** Rank insignia for level lv (0-based) on the front edge of a base. */
 function rankBadge(g: Ctx, lv: number) {
