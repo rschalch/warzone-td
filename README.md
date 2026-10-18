@@ -113,8 +113,13 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
 - `src/render/bake.ts` + `bake.worker.ts` — model baking runs in parallel Web Workers (OffscreenCanvas) and
   the frames come back as ImageBitmaps, keeping startup around half a second.
 - `src/render/atlas.ts` — packs every frame into one texture: per model, 16 iso headings (lit tops, shaded sides,
-  outline, contact shadow) plus one top-down frame that is rotated at runtime. Also draws the effects, floor
-  decals and the terrain. No image files.
+  outline, contact shadow) plus one top-down frame that is rotated at runtime. Also draws the effects and floor
+  decals (no image files for any of these), and the terrain: an elevation + moisture landscape decides how much
+  of each ground texture shows (grass, patchy grass, dry grass, sand, gravel, mud, rock, snow), composited once
+  on the GPU with hillshading.
+- `public/terrain/` — the only images: eight ground textures, CC0 photo materials from
+  [ambientCG](https://ambientcg.com) (Grass001, Grass004, Ground037, Ground080, Ground079S, Ground109, Rock060,
+  Snow004), resized to 512 px.
 - `src/ui/` — DOM HUD with diffed writes, and a 2D-canvas minimap redrawn at 10 Hz.
 
 The **Stress test** button in the footer builds a serpentine maze of maxed towers and spawns 3000 enemies. The footer also shows FPS and sim/render cost.

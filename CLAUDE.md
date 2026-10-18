@@ -77,7 +77,7 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/ui/menus.ts`, `editor.ts`, `minimap.ts` | Menu screens, map editor, minimap |
 | `src/main.ts` | Boot, camera (pan/zoom/shake), input (mouse, keys, touch), event → sound/effects dispatch, game lifecycle, saves |
 | `scripts/` | `smoke.mjs` (browser test), `gauntlet.ts` + `bot.ts` (balance; built with `vite build --ssr`) |
-| `public/` | PWA manifest, icon, service worker (offline play) |
+| `public/` | PWA manifest, icon, service worker (offline play; bump `CACHE` when cached files change), `terrain/` ground textures (CC0, ambientCG) |
 
 Data flow per frame: `main.frame()` → `session.advance(dt)` (runs due commands, then `sim.step()` per tick) →
 `handleEvents()` (sound, shake, renderer marks) → `view.render(alpha, overlayState)` → `hud.update()`.
@@ -117,8 +117,11 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 
 **Terrain:** `MapDef.rivers` / `mountains` (generated) or `paint` (editor). Water is walkable at `WATER_SLOW` speed
 (`Sim.groundSlow`, folded into `tarGrid`) and costs `1 / WATER_SLOW` in the flow fields; mountains are `blocked`.
-Neither is buildable (`footprint` needs `T_BUILD`). The look is per-pixel hillshading in `drawLandforms()`
-(`atlas.ts`) plus 3D `peak1-3` sprites on massifs in iso view only (`mountainPeaks()`). Adding fields to a campaign
+Neither is buildable (`footprint` needs `T_BUILD`). The look: `landLayers()` (`atlas.ts`) computes elevation and
+moisture over the whole map and turns them into per-texture masks, water and light; `buildBackground()` composites
+the CC0 photo textures in `public/terrain/` (loaded at boot by `loadTerrainTextures()`) through those masks on the
+GPU (Pixi, rendered once into a RenderTexture); the minimap and previews use `paintLand()` (canvas, flat average
+colours). Canvas 2D compositing at full size was ~0.8 s, so keep the full-size path on the GPU. Adding fields to a campaign
 `MapDef` changes that map for new games only: saves and replays carry their own copy of the def.
 
 ## Balance notes

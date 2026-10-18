@@ -17,7 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
-import { buildAtlas, buildBackground, drawTerrain, towerIcon, type Atlas } from './render/atlas';
+import { buildAtlas, buildBackground, drawTerrain, loadTerrainTextures, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -327,7 +327,7 @@ function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
   const s = session.sim;
   s.fxScale = QUALITY[settings.quality];
   background?.destroy(true);
-  background = buildBackground(s.map);
+  background = buildBackground(s.map, app.renderer);
   projection = makeProjection(cameraMode);
   buildView();
   minimap?.destroy();
@@ -1045,7 +1045,7 @@ async function boot(): Promise<void> {
   });
   stage.appendChild(app.canvas);
   app.stage.addChild(cam);
-  atlas = await buildAtlas();
+  [atlas] = await Promise.all([buildAtlas(), loadTerrainTextures()]);
   hud.setIcons((type) => towerIcon(type));
   fit();
   new ResizeObserver(fit).observe(stage);
