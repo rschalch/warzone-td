@@ -987,7 +987,8 @@ function frame(): void {
     });
     minimap?.update(viewQuad());
     renderTimeAcc += performance.now() - t1;
-    sound.intensity = Math.min(1, s.spawning ? 0.55 + s.liveCount / 150 : s.liveCount / 60);
+    // never below a marching pulse: between waves the drums keep the war going
+    sound.intensity = Math.min(1, s.spawning ? 0.55 + s.liveCount / 150 : 0.32 + s.liveCount / 60);
 
     if (!endShown && session.finished) void showEnd(s.victory);
   }

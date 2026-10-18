@@ -592,6 +592,27 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
   // ---- music: drums for the soundtrack (tonal parts are played live by oscillators)
   m_taiko: { variants: 3, render: () => drum(rnd(105, 115), rnd(55, 60), 0.35, 1200, 1.4) },
   m_tom: { variants: 2, render: () => drum(rnd(170, 185), 105, 0.22, 1800, 0.9) },
+  /** Orchestral bass drum (gran cassa): a deep, booming thud for the march. */
+  m_kick: { variants: 3, render: () => drum(rnd(68, 74), rnd(40, 44), 0.42, 700, 1.3) },
+  m_toml: { variants: 2, render: () => drum(rnd(125, 135), 78, 0.28, 1400, 0.9) },
+  /** Military field snare: tight head, rattling wires. */
+  m_field: {
+    variants: 4,
+    render: () => finish(sat(mix(0.4,
+      [tone(0.12, { f0: 240, f1: 190, fTau: 0.015, decay: 0.03, gain: 0.6 })],
+      [noise(0.02, { decay: 0.004, shape: 'hp', f0: 2500, gain: 1.2 })],
+      [noise(0.4, { decay: rnd(0.09, 0.12), shape: 'bp', f0: rnd(4200, 5200), q: 0.7, gain: 0.9 })],
+      [noise(0.25, { decay: 0.05, shape: 'bp', f0: 1800, q: 1, gain: 0.5 })],
+    ), 1.8), 0.9, 0.05),
+  },
+  /** Anvil / metal clank for the heaviest moments. */
+  m_anvil: {
+    variants: 2,
+    render: () => finish(mix(1.2,
+      [ring(1.2, [[rnd(880, 940), 1, 0.35], [2410, 0.6, 0.22], [3970, 0.4, 0.15], [5820, 0.25, 0.1]])],
+      [noise(0.05, { decay: 0.008, shape: 'hp', f0: 3000, gain: 1 })],
+    ), 0.6, 0.02),
+  },
   m_snare: {
     variants: 3,
     render: () => finish(mix(0.45,

@@ -39,8 +39,9 @@ const LIVE = new Set(['wave', 'level', 'rally', 'victory', 'defeat']);
 // ---------------------------------------------------------------- the score
 //
 // Six cinematic pieces played one after another, each an 8-bar loop in a minor key repeated a few
-// times. Calm: string pad, sub, a lead line and a distant drum. As the fighting intensifies:
-// low-string ostinato, taikos, snare, timpani, brass, choir.
+// times. A field-drum march (snare cadence + bass drum) always plays under a string pad, sub and a
+// lead line. As the fighting intensifies: low-string ostinato, taikos, tom fills, timpani, brass,
+// choir, anvil.
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -81,6 +82,10 @@ interface Track {
   accent: number[];
   /** Taiko steps at medium / high / full intensity. */
   drums: [number[], number[], number[]];
+  /** Field drums per 16th, [calm, battle]. Snare: X accent, x normal, . ghost, r roll (two 32nds),
+   *  f flam, - rest. Bass drum: O strong, o soft, - rest. */
+  snare: [string, string];
+  kick: [string, string];
   /** Brass stabs: [step, length in 16ths]. */
   brass: [number, number][];
   /** Times through the 8 bars before the next piece. */
@@ -91,57 +96,63 @@ const ch = (bass: number, ...pad: number[]) => ({ bass, pad });
 
 const TRACKS: Track[] = [
   { // Last Stand: D minor, Dm Bb F C | Dm Bb Gm A
-    bpm: 76,
+    bpm: 84,
     chords: [ch(38, 50, 53, 57, 62), ch(34, 50, 53, 58, 62), ch(41, 48, 53, 57, 60), ch(36, 48, 52, 55, 60),
       ch(38, 50, 53, 57, 62), ch(34, 50, 53, 58, 65), ch(31, 50, 55, 58, 62), ch(33, 49, 52, 57, 61)],
     melody: [[69, 69], [70, 65], [69, 72], [67, 64], [69, 74], [70, 74], [70, 67], [69, 73]], lead: VIOLIN,
     ostinato: [0, 0, 0, 12, 0, 0, 12, 0, 0, 0, 0, 12, 0, 0, 7, 12], accent: [0, 3, 6, 8, 11, 14],
     drums: [[0, 6, 10], [0, 3, 6, 10, 12, 14], [0, 3, 6, 8, 10, 12, 14, 15]],
+    snare: ['X..x..x.X..x.rr.', 'f.xrX.xrf.xrXrrr'], kick: ['O-------o-------', 'O--o--O-O--o-O-o'],
     brass: [[0, 5], [6, 1.5], [8, 7]], loops: 4,
   },
   { // Iron Rain: E minor, driving, Em C G D | Em C Am B
-    bpm: 92,
+    bpm: 98,
     chords: [ch(40, 52, 55, 59, 64), ch(36, 52, 55, 60, 64), ch(43, 50, 55, 59, 62), ch(38, 50, 54, 57, 62),
       ch(40, 52, 55, 59, 64), ch(36, 52, 55, 60, 67), ch(33, 52, 57, 60, 64), ch(35, 51, 54, 59, 63)],
     melody: [[71, 67], [72, 76], [74, 71], [69, 74], [71, 79], [76, 72], [72, 69], [71, 75]], lead: VIOLIN,
     ostinato: [0, 0, 12, 0, 0, 12, 0, 7, 0, 0, 12, 0, 0, 12, 7, 12], accent: [0, 4, 8, 12],
     drums: [[0, 8], [0, 4, 8, 10, 12], [0, 2, 4, 7, 8, 10, 12, 14, 15]],
+    snare: ['X.x.x.x.X.x.xrx.', 'XrxrXrxrXrxrXrrr'], kick: ['O---o---O---o---', 'O-o-O-o-O-o-O-oo'],
     brass: [[0, 3], [4, 3], [8, 3], [12, 4]], loops: 4,
   },
   { // Ashes: C minor, slow and mournful, cello lead, Cm Ab Eb Bb | Cm Ab Fm G
-    bpm: 66,
+    bpm: 70,
     chords: [ch(36, 48, 51, 55, 60), ch(32, 48, 51, 56, 60), ch(39, 51, 55, 58, 63), ch(34, 50, 53, 58, 62),
       ch(36, 48, 51, 55, 60), ch(32, 48, 51, 56, 63), ch(41, 48, 53, 56, 60), ch(31, 50, 55, 59, 62)],
     melody: [[67, 63], [68, 72], [70, 67], [65, 70], [72, 75], [75, 72], [72, 68], [71, 74]], lead: CELLO, leadShift: -12,
     ostinato: [0, 0, 7, 0, 12, 0, 7, 0, 0, 0, 7, 0, 12, 0, 7, 0], accent: [0, 4, 8, 12],
     drums: [[0], [0, 10], [0, 6, 10, 14]],
+    snare: ['X-----.-x-----r-', 'X..xX..xf..xXrrr'], kick: ['O-------O-------', 'O-----o-O-----o-'],
     brass: [[0, 8], [8, 8]], loops: 3,
   },
   { // Blitz: A minor, fast and aggressive, Am F C G | Am F E E
-    bpm: 104,
+    bpm: 112,
     chords: [ch(33, 52, 57, 60, 64), ch(41, 53, 57, 60, 65), ch(36, 52, 55, 60, 64), ch(43, 50, 55, 59, 62),
       ch(33, 52, 57, 60, 64), ch(41, 53, 57, 60, 65), ch(40, 52, 56, 59, 64), ch(40, 52, 56, 59, 62)],
     melody: [[76, 72], [77, 81], [79, 76], [74, 79], [81, 76], [77, 72], [76, 71], [68, 64]], lead: VIOLIN,
     ostinato: [0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 0, 12, 7, 12, 7, 12], accent: [0, 3, 6, 10, 12],
     drums: [[0, 6, 8, 14], [0, 3, 6, 8, 11, 14], [0, 2, 3, 6, 8, 10, 11, 12, 14, 15]],
+    snare: ['X.xxX.x.X.xxXrx.', 'fxrxXrxrfxrxXrrr'], kick: ['O--o--O---o-O---', 'O-oO-oO-O-oO-ooo'],
     brass: [[0, 2], [3, 2], [6, 2], [10, 6]], loops: 5,
   },
   { // Frontline: G minor, march with a horn lead, Gm Eb Bb F | Gm Cm D D
-    bpm: 84,
+    bpm: 90,
     chords: [ch(43, 50, 55, 58, 62), ch(39, 51, 55, 58, 63), ch(34, 50, 53, 58, 62), ch(41, 48, 53, 57, 60),
       ch(43, 50, 55, 58, 62), ch(36, 51, 55, 60, 63), ch(38, 50, 54, 57, 62), ch(38, 50, 54, 57, 60)],
     melody: [[70, 74], [75, 70], [74, 77], [72, 69], [67, 70], [72, 75], [74, 69], [66, 62]], lead: HORN, leadShift: -12,
     ostinato: [0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 12, 0, 7, 0], accent: [0, 4, 8, 12],
     drums: [[0, 8], [0, 4, 8, 12, 14], [0, 2, 4, 6, 8, 10, 12, 13, 14, 15]],
+    snare: ['X.xxX.x.X.xxXrrr', 'fxxrXxxrfxxrXrrr'], kick: ['O---o---O---o---', 'O-o-O-o-O-o-O-o-'],
     brass: [[0, 4], [4, 2], [6, 2], [8, 8]], loops: 4,
   },
   { // Eclipse: F# minor, epic and wide, choir lead, F#m D A E | F#m D Bm C#
-    bpm: 72,
+    bpm: 78,
     chords: [ch(42, 54, 57, 61, 66), ch(38, 54, 57, 62, 66), ch(33, 52, 57, 61, 64), ch(40, 52, 56, 59, 64),
       ch(42, 54, 57, 61, 66), ch(38, 54, 57, 62, 69), ch(35, 50, 54, 59, 62), ch(37, 49, 53, 56, 61)],
     melody: [[73, 69], [74, 78], [76, 73], [71, 76], [78, 73], [74, 69], [71, 74], [73, 77]], lead: { ...CHOIR, attack: 0.5, gain: 0.08 }, leadShift: -12,
     ostinato: [0, 7, 12, 7, 0, 7, 12, 7, 0, 7, 12, 7, 0, 7, 12, 15], accent: [0, 4, 8, 12],
     drums: [[0, 10], [0, 6, 10, 12], [0, 3, 6, 10, 12, 14, 15]],
+    snare: ['X..x..X...x.Xrr.', 'XrxrX.xrXrxrXrrr'], kick: ['O-----o-O-------', 'O--oO--oO--oO-oo'],
     brass: [[0, 6], [6, 2], [8, 8]], loops: 3,
   },
 ];
@@ -452,6 +463,36 @@ export class Sound {
     this.timer = 0;
   }
 
+  /** The march: snare cadence and bass drum at every intensity, tom fills and rolls into each phrase. */
+  private fieldDrums(bus: AudioNode, tr: Track, t: number, STEP: number, s: number, bar: number, I: number): void {
+    const battle = I > 0.6 ? 1 : 0;
+    const vol = 0.55 + 0.45 * I;
+    // the last beats of every 4th bar: a tom fill (calm) or a crescendo snare roll (battle)
+    const fill = bar % 4 === 3 && s >= 12;
+    if (fill && I > 0.35 && !(battle && bar === 7)) {
+      this.sample(bus, s < 14 ? 'm_tom' : 'm_toml', t, (0.4 + 0.05 * (s - 12)) * vol, 1, false);
+      if (I > 0.6) this.sample(bus, s < 14 ? 'm_tom' : 'm_toml', t + STEP / 2, 0.3 * vol, 1, false);
+    } else if (battle && bar === 7 && s >= 8) {
+      const g = (0.12 + (s - 8) * 0.05) * vol;
+      this.sample(bus, 'm_field', t, g, 1, false);
+      this.sample(bus, 'm_field', t + STEP / 2, g, 1, false);
+    } else {
+      const c = tr.snare[battle][s];
+      if (c === 'X') this.sample(bus, 'm_field', t, 0.55 * vol, 1, false);
+      else if (c === 'x') this.sample(bus, 'm_field', t, 0.32 * vol, 1, false);
+      else if (c === '.') this.sample(bus, 'm_field', t, 0.1 * vol, 1, false);
+      else if (c === 'r') {
+        this.sample(bus, 'm_field', t, 0.24 * vol, 1, false);
+        this.sample(bus, 'm_field', t + STEP / 2, 0.2 * vol, 1, false);
+      } else if (c === 'f') {
+        this.sample(bus, 'm_field', t - 0.025, 0.14 * vol, 1, false);
+        this.sample(bus, 'm_field', t, 0.55 * vol, 1, false);
+      }
+    }
+    const k = tr.kick[battle][s];
+    if (k !== '-') this.sample(bus, 'm_kick', t, (k === 'O' ? 0.85 : 0.5) * vol, 1, false);
+  }
+
   private schedule(): void {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running' || settings.music <= 0 || !this.banks.has('m_taiko')) {
@@ -478,7 +519,6 @@ export class Sound {
         if (I > 0.75) for (const m of ch.pad) this.note(bus, t, barDur - 0.3, m + 12, CHOIR, Math.min(1, (I - 0.75) * 5));
         if (I > 0.4 && bar % 4 === 0) this.sample(bus, 'm_timp', t, 0.7, mtof(ch.bass + 12) / 73.4, false);
         if (I > 0.7 && bar === 0) this.sample(bus, 'm_hit', t, 0.6, 1, false);
-        if (I < 0.3 && bar % 2 === 0) this.sample(bus, 'm_taiko', t, 0.35, 0.85, false);
       }
       // the lead line fades out once the brass takes over
       if ((s === 0 || s === 8) && I < 0.85) {
@@ -492,14 +532,13 @@ export class Sound {
           this.note(bus, t, STEP * 0.5, ch.bass + 12 + tr.ostinato[s], { ...SPICCATO, cut: 900 + 2200 * I }, amt);
         }
       }
-      if (I > 0.3) {
+      this.fieldDrums(bus, tr, t, STEP, s, bar, I);
+      if (I > 0.25) {
         const hits = tr.drums[I > 0.8 ? 2 : I > 0.55 ? 1 : 0];
         if (hits.includes(s)) this.sample(bus, s === 0 || s === hits[1] ? 'm_taiko' : s >= 14 ? 'm_tom' : 'm_taiko', t, (s === 0 ? 0.9 : 0.6) * Math.min(1, 0.5 + I), 1, false);
       }
-      if (I > 0.5) {
-        if (s === 4 || s === 12) this.sample(bus, 'm_snare', t, 0.45, 1, false);
-        else if (I > 0.7 && (s === 13 || s === 15 || (bar === 7 && s > 8))) this.sample(bus, 'm_snare', t, 0.12 + (bar === 7 ? (s - 8) * 0.04 : 0), 1, false);
-      }
+      if (I > 0.5 && (s === 4 || s === 12)) this.sample(bus, 'm_snare', t, 0.3, 1, false);
+      if (I > 0.8 && bar % 2 === 1 && s === 12) this.sample(bus, 'm_anvil', t, 0.22, 1, false);
       if (I > 0.6) {
         const brass = Math.min(1, (I - 0.6) * 4);
         for (const [at, len] of tr.brass) {
