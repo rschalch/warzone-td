@@ -66,7 +66,8 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/app/net.ts` | Co-op over WebRTC via PeerJS (public broker only for the introduction; room codes) |
 | `src/app/share.ts` | Replay / custom-map links (deflated JSON in the URL hash) |
 | `src/app/storage.ts`, `settings.ts`, `profile.ts` | localStorage/IndexedDB, player settings, medals/perks/leaderboard/custom maps |
-| `src/audio/sound.ts` | All sound effects and music synthesised with WebAudio (no audio files) |
+| `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score (strings/brass/choir over taikos, layered by `intensity`) |
+| `src/audio/dsp.ts`, `sfx.worker.ts` | Offline synthesis of every effect into sample banks (a few variations each), rendered in a worker ~1.5 s after boot. No audio files |
 | `src/render/models.ts` | Every 3D model as stacked top-down parts (sprite stacking) |
 | `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain, atlas packing, tower icons |
 | `src/render/renderer.ts` | Draws a sim each frame: depth-sorted sprites, projectiles, effects, beams, overlays, wrecks, floating text |
@@ -86,7 +87,7 @@ Data flow per frame: `main.frame()` → `session.advance(dt)` (runs due commands
 stats in `levels: [{...}]`; `grow()` generates levels 2-10 (mark `single: true` for a tower with no upgrades).
 Implement its behaviour as a `case` in `Sim.updateTower()` (passive/aura towers: in
 `refreshAuras()`). Add a turret model `t_<kind>` in `models.ts`, a description in `codex.ts` (`TOWER_HELP`), and a
-sound name in `sound.ts` (the `EV_SHOT` event plays the sound named after the kind). Then run `npm run gauntlet`
+sound: a recipe in `RECIPES` (`dsp.ts`) named after the kind plus `GAIN`/`THROTTLE` entries in `sound.ts` (the `EV_SHOT` event plays the sound named after the kind). Then run `npm run gauntlet`
 and keep its level-1 value per dollar roughly within 0.5–1.1 of the Gun.
 
 **Add an enemy:** `ENEMIES` + an `EN_*` constant in `defs.ts`, a model (`tex` name) in `models.ts`, an entry in

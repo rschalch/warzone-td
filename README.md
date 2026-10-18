@@ -80,7 +80,7 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
   simulation is deterministic (gameplay and particles use separate RNGs), so a config plus the command log
   reproduces a game exactly: that is what replays, co-op lockstep (with periodic state-hash checks) and saves use.
 - `src/game/config.ts` — difficulty, challenge modifiers and research perks.
-- `src/audio/sound.ts` — all sound effects and the music are synthesised with WebAudio; no audio files.
+- `src/audio/` — all sound effects (rendered into sample banks in a worker by `dsp.ts`) and the orchestral score are synthesised with WebAudio; no audio files.
 - `scripts/gauntlet.ts` and `scripts/bot.ts` — headless balance tools: damage per dollar for every tower against a
   standard wave, and a heuristic bot that plays whole games
   (`npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js`).
