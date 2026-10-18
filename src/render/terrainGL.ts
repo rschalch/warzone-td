@@ -64,93 +64,81 @@ vec3 noTile(int i, vec2 uv, vec2 dx, vec2 dy) {
 }
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
+vec3 rgb(int r, int g, int b) { return vec3(r, g, b) / 255.0; }
+// soft-edged step, for painted bands with a little anti-aliasing
+float band(float x, float t, float w) { return smoothstep(t - w, t + w, x); }
+// thin line where a field crosses a level (screen-space width)
+float isoline(float f, float level, float px) { float d = abs(f - level) / max(fwidth(f), 1e-4); return 1.0 - smoothstep(px * 0.5, px, d); }
+
 void main() {
   vec2 world = vUv * uWorld;
-  vec2 uv = world / uTile;
-  vec2 dx = dFdx(uv), dy = dFdy(uv);
   vec4 A = texture(uA, vUv);
   vec4 B = texture(uB, vUv);
   vec4 C = texture(uC, vUv);
   vec2 nxy = A.xy * 2.0 - 1.0;
   vec3 n = normalize(vec3(nxy, sqrt(max(0.0, 1.0 - dot(nxy, nxy)))));
-  float slope = 1.0 - n.z;
-  float h = mix(uHeight.x, uHeight.y, A.z);
-  float m = A.w;
-  float water = B.x, depth = B.y * 4.0, sed = B.w;
-  float jag = fbm(world * 0.02) - 0.5;          // ragged borders
-  float mo = B.z + jag * 0.16;
+  float hf = A.z;                       // 0-1 of the map's height range
+  float m = A.w;                        // mountain cells (soft)
+  float water = B.x, depth = B.y * 4.0, mo = B.z, sed = B.w;
 
-  // rules: how much each ground wants to be here
-  float w[8];
-  w[0] = smoothstep(0.42, 0.68, mo);                                   // lush grass
-  w[1] = smoothstep(0.52, 0.34, mo) * smoothstep(0.12, 0.3, mo);       // dry grass
-  w[2] = (1.0 - abs(mo - 0.46) * 4.0) * 0.8 + smoothstep(0.08, 0.2, slope) * 0.4; // patchy grass and dirt
-  w[3] = smoothstep(0.26, 0.1, mo);                                    // sand
-  // mountains like seen from above: vegetation on the lower slopes, scree down the gullies, bare rock
-  // on steep and high ground, snow on the tops; the blocked cells are always at least half rock
-  float mountain = smoothstep(0.38, 0.6, m + jag * 0.15);
-  float hf = clamp((h - uHeight.x) / (uHeight.y - uHeight.x), 0.0, 1.0);
-  float high = smoothstep(0.22, 0.5, hf + jag * 0.12);
-  float steep = smoothstep(0.3, 0.55, slope);
-  w[4] = sed * 1.3 + smoothstep(0.12, 0.3, slope) * 0.6 * (1.0 - high);   // gravel: fans, gullies, foothills
-  float bank = smoothstep(0.22, 0.42, water) * (1.0 - smoothstep(0.5, 0.56, water));
-  w[5] = bank * 1.6 + smoothstep(0.75, 0.95, mo) * 0.35;               // mud
-  w[6] = max(mountain * 1.0, max(high, steep) * (0.6 + 0.8 * mountain)); // rock
-  // vegetation stays on the buildable foothills: whatever blocks reads as rock at a glance
-  for (int i = 0; i < 4; i++) w[i] *= 1.0 - 0.7 * mountain;
-  float snowline = 0.62 + jag * 0.1;
-  w[7] = smoothstep(snowline, snowline + 0.16, hf) * smoothstep(0.45, 0.15, slope) * 1.5; // snow
+  // ---- painted grass: three greens in soft blobs, a warmer dry tone where it's dry, brush grain
+  float p1 = fbm(world * 0.006);
+  float p2 = fbm(world * 0.018 + 7.0);
+  float stroke = vnoise(vec2(world.x * 0.09 + world.y * 0.03, world.y * 0.35)) - 0.5;
+  vec3 grassDark = rgb(86, 128, 40), grassMid = rgb(118, 162, 52), grassLight = rgb(156, 190, 70);
+  vec3 col = mix(grassDark, grassMid, band(p1 + stroke * 0.05, 0.45, 0.03));
+  col = mix(col, grassLight, band(p2 + p1 * 0.4 + stroke * 0.06, 0.78, 0.03) * 0.85);
+  vec3 dry = mix(rgb(182, 160, 92), rgb(204, 182, 112), band(p2, 0.5, 0.05));
+  float dryness = band(mo + (p2 - 0.5) * 0.15, 0.3, 0.03);
+  col = mix(dry, col, dryness);
+  col *= 1.0 + stroke * 0.06;
 
-  // height blending: each texture's own relief (luminance) decides who wins along the border
-  vec3 col[8];
-  float best = -1e9;
-  float score[8];
-  for (int i = 0; i < 8; i++) {
-    col[i] = vec3(0.0);
-    if (w[i] <= 0.01) { score[i] = -1e9; continue; }
-    float s = i == 6 ? 0.7 : 1.0;
-    vec3 a = noTile(i, uv * s, dx * s, dy * s);
-    if (i == 6) a = mix(vec3(lum(a)) * vec3(1.02, 0.98, 0.93), a, 0.7) * 0.6 + 0.16; // rock: flatter, so the relief reads
-    if (uDetail > 0.5 && i < 4) a = mix(a, noTile(i, uv * 0.37 + 11.0, dx * 0.37, dy * 0.37), 0.35); // a second, larger scale
-    col[i] = a;
-    // (snow is bright everywhere: its brightness says nothing about relief, so it doesn't count)
-    score[i] = clamp(w[i], 0.0, 1.5) + lum(a) * (i == 7 ? 0.08 : 0.45);
-    best = max(best, score[i]);
-  }
-  vec3 albedo = vec3(0.0);
-  float total = 0.0;
-  for (int i = 0; i < 8; i++) {
-    float b = max(score[i] - best + (i == 7 ? 0.35 : 0.18), 0.0);
-    albedo += col[i] * b;
-    total += b;
-  }
-  albedo /= max(total, 1e-4);
-  // large-scale tone variation so wide fields aren't uniform
-  albedo *= 0.88 + 0.24 * fbm(world * 0.004 + 31.0);
+  // ---- mountains: terraced tiers with cliff faces, ink at every tier edge, grassy low tiers and rock above
+  float steps = 7.0;
+  float hs = hf * steps + (fbm(world * 0.02) - 0.5) * 0.6;
+  float tier = floor(hs);
+  float f = fract(hs);
+  float face = smoothstep(0.78, 0.9, f) * band(m, 0.42, 0.05);   // the riser of each step
+  vec3 rockTop = mix(rgb(150, 138, 118), rgb(176, 166, 146), band(p2, 0.5, 0.1));
+  vec3 rockFace = mix(rgb(112, 96, 80), rgb(92, 78, 66), stroke + 0.5);
+  float rocky = smoothstep(1.5, 3.0, tier);
+  vec3 top = mix(mix(col, rgb(124, 150, 64), 0.5), rockTop, rocky);
+  top = mix(top, rgb(236, 240, 244), smoothstep(5.0, 5.6, hs) * band(m, 0.6, 0.05)); // snow caps
+  float inM = band(m, 0.42, 0.04);
+  col = mix(col, top, inM);
+  // the cliff face, lit by which way it faces
+  float faceLit = clamp(0.75 + 0.6 * dot(n.xy, normalize(vec2(-0.55, -0.62))), 0.45, 1.25);
+  col = mix(col, rockFace * faceLit, face);
+  // ink: the foot of the massif and the top edge of every tier
+  float ink = max(isoline(m, 0.42, 2.2), inM * isoline(hs, tier + 0.79, 1.6) * step(0.5, tier));
+  // foliage rim: a darker green band at the foot, like bushes along the cliffs
+  float foot = band(m, 0.2, 0.08) * (1.0 - inM);
+  col = mix(col, grassDark * 0.85, foot * 0.45);
 
-  // light: direct sun (with cast shadows) relative to flat ground, ambient occlusion
+  // ---- light: flat-banded (cel) sun, soft cool shadows
   float diff = max(dot(n, uSun), 0.0) / uSun.z;
-  float light = C.y * (0.3 + 0.7 * diff * mix(0.3, 1.0, C.x));
-  vec3 colr = albedo * light;
+  float light = 0.84 + 0.14 * band(diff, 0.8, 0.06) + 0.1 * band(diff, 1.25, 0.06);
+  float shade = mix(0.72, 1.0, band(C.x, 0.5, 0.15));
+  col *= light;
+  col = mix(col * vec3(0.78, 0.82, 0.95), col, shade);
 
-  // water over its bed: murky green-brown in the shallows to deep blue-green, sky glints, foam line
-  float wet = smoothstep(0.46, 0.54, water);
+  // ---- water: sandy bank, white foam line, bright teal that deepens, painted wave strokes
+  float bank = band(water, 0.36, 0.04) * (1.0 - band(water, 0.5, 0.01));
+  col = mix(col, rgb(214, 196, 140), bank);
+  float wet = band(water, 0.5, 0.01);
   if (wet > 0.0) {
-    float d = clamp(depth / 2.5, 0.0, 1.0);
-    vec3 wc = mix(vec3(0.24, 0.33, 0.27), vec3(0.08, 0.2, 0.25), d);
-    float ripple = fbm(vec2(world.x * 0.09, world.y * 0.03)) - 0.5;
-    wc += ripple * 0.06 + vec3(0.55, 0.62, 0.6) * pow(max(0.0, ripple + 0.25), 3.0) * 1.2;
-    float foam = (1.0 - smoothstep(0.5, 0.6, water)) * 0.35 * (0.6 + fbm(world * 0.15));
-    wc = mix(wc, vec3(0.75, 0.78, 0.72), foam);
-    colr = mix(colr, wc * mix(0.75, 1.0, C.x), wet * mix(0.8, 0.95, d));
+    float d = clamp(depth / 2.0, 0.0, 1.0);
+    vec3 wc = mix(rgb(96, 190, 200), rgb(44, 128, 168), band(d + (p2 - 0.5) * 0.3, 0.45, 0.08));
+    float wave = band(vnoise(vec2(world.x * 0.05, world.y * 0.25)) , 0.8, 0.02) * (1.0 - band(water, 0.62, 0.02) * 0.0);
+    wc = mix(wc, rgb(186, 234, 236), wave * 0.55);
+    float foam = isoline(water, 0.56, 3.0) + (1.0 - band(water, 0.54, 0.015)) * 0.8;
+    wc = mix(wc, rgb(240, 250, 250), clamp(foam, 0.0, 1.0));
+    col = mix(col, wc, wet);
   }
+  ink = max(ink, isoline(water, 0.5, 2.0) * 0.7);
+  col = mix(col, rgb(46, 34, 24), ink * 0.85);
 
-  // grade towards the game's palette: a little less saturated, warm, gentle contrast
-  float g = lum(colr);
-  colr = mix(vec3(g), colr, 0.8);
-  colr *= vec3(1.0, 0.97, 0.9);
-  colr = (colr - 0.5) * 1.05 + 0.5;
-  outColor = vec4(clamp(colr, 0.0, 1.0), 1.0);
+  outColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {

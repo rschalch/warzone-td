@@ -749,6 +749,37 @@ const TERRAIN_MAX_PX = 12e6;
  * map and layered through the landscape's masks, then water, light and grading; the grid, gates and
  * other markings (a transparent canvas) go on top.
  */
+/** Scenery models, indexed by Scenery.k. */
+export const SCENERY = ['tree0', 'tree1', 'tree2', 'pine0', 'pine1', 'bush0', 'bush1'];
+export interface Scenery {
+  x: number;
+  y: number;
+  k: number;
+}
+
+/**
+ * Trees and bushes on the mountains (never on buildable ground, so they can't hide towers): leafy
+ * woods and bushes on the lower slopes, pines higher up, bare rock on the tops. Deterministic per map.
+ */
+export function scenery(map: GameMap): Scenery[] {
+  const depth = depthOf(map, T_MOUNT);
+  const rng = new Rng(map.def.seed * 31 + 9);
+  const out: Scenery[] = [];
+  for (let i = 0; i < depth.length; i++) {
+    const d = depth[i];
+    if (!d) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    const n = d <= 1 ? 3 : d === 2 ? 2 : d <= 4 ? 1 : 0;
+    for (let k = 0; k < n; k++) {
+      if (rng.next() < (d <= 2 ? 0.15 : 0.55)) continue;
+      const kind = d <= 1 ? (rng.next() < 0.3 ? 5 + rng.int(2) : rng.int(3)) : d === 2 ? rng.int(3) + (rng.next() < 0.4 ? 3 - rng.int(3) + rng.int(2) : 0) : 3 + rng.int(2);
+      out.push({ x: (c + rng.range(0.1, 0.9)) * TILE, y: (r + rng.range(0.1, 0.9)) * TILE, k: Math.min(SCENERY.length - 1, kind) });
+    }
+  }
+  return out;
+}
+
 /** Landscapes are costly (erosion): one per map, shared by the battlefield and the minimap. */
 const landscapes = new WeakMap<GameMap, Landscape>();
 function landscapeOf(map: GameMap, sub: number): Landscape {

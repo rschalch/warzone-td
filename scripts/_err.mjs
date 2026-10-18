@@ -1,0 +1,12 @@
+import { chromium } from 'playwright-core';
+import { createServer } from 'vite';
+const server = await createServer({ server: { port: 5292, strictPort: true }, logLevel: 'error' });
+await server.listen();
+const b = await chromium.launch({ channel: 'chrome', headless: true });
+const p = await b.newPage();
+p.on('console', (m) => { if (m.type() === 'warning' || m.type() === 'error') console.log(m.type(), m.text().slice(0, 600)); });
+await p.goto('http://localhost:5292/');
+await p.waitForSelector('[data-go="maps"]', { timeout: 30000 });
+await p.evaluate(() => window.game.quick(0, 'normal'));
+await p.waitForTimeout(1500);
+await b.close(); await server.close();

@@ -6,7 +6,7 @@ import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
   P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
-import { DIRS, MODEL_TOP, dirFrame, type Atlas } from './atlas';
+import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
 import { models } from './models';
 import type { Projection } from './projection';
@@ -105,6 +105,7 @@ const C_TOWER = 1 << 16;
 const C_ENEMY = 2 << 16;
 const C_DRONE = 3 << 16;
 const C_HERO = 4 << 16;
+const C_SCENERY = 5 << 16;
 
 const STATUS_WORDS = [['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff]] as const;
 const MAX_WRECKS = 220;
@@ -228,6 +229,8 @@ export class GameRenderer {
   private readonly baseTex: (Texture | null)[][];
   private readonly cornerTex: Texture;
   private readonly rockTex: Texture[];
+  private readonly sceneryTex: Texture[];
+  private readonly scenery: Scenery[];
   private readonly bg: Sprite;
   private readonly rotorTex: Texture[];
   private readonly projTex: Texture[];
@@ -278,6 +281,8 @@ export class GameRenderer {
       return [t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null];
     });
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
+    this.sceneryTex = SCENERY.map((n) => atlas[`${n}_${view}`]);
+    this.scenery = scenery(sim.map);
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
     this.heroFrames = this.iso ? frames('hero') : [atlas.hero_t];
@@ -467,6 +472,10 @@ export class GameRenderer {
       const rr = (rocks[r].r + rocks[r].s / 2) * TILE;
       if (this.visible(p.x(c, rr), p.y(c, rr))) sorter.add(this.depth(c, rr), C_ROCK | r);
     }
+    for (let k = 0; k < this.scenery.length; k++) {
+      const sc = this.scenery[k];
+      if (this.visible(p.x(sc.x, sc.y), p.y(sc.x, sc.y))) sorter.add(this.depth(sc.x, sc.y), C_SCENERY | k);
+    }
     this.decals.begin();
     for (let t = 0; t < s.towers.length; t++) {
       const tw = s.towers[t];
@@ -595,6 +604,13 @@ export class GameRenderer {
       const y = (r.r + r.s / 2) * TILE;
       if (!this.iso) this.shadows.push(this.rockTex[r.s - 1], x + 3, y + 4, 0, 1, 1, 0x000000, 0.35);
       this.world.push(this.rockTex[r.s - 1], p.x(x, y), p.y(x, y), 0, 1, 1, 0xffffff, 1);
+      return;
+    }
+    if (kind === C_SCENERY) {
+      const sc = this.scenery[idx];
+      const tex = this.sceneryTex[sc.k];
+      if (!this.iso) this.shadows.push(tex, sc.x + 3, sc.y + 4, 0, 1, 1, 0x000000, 0.3);
+      this.world.push(tex, p.x(sc.x, sc.y), p.y(sc.x, sc.y), 0, 1, 1, 0xffffff, 1);
       return;
     }
     if (kind === C_TOWER) {

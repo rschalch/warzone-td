@@ -405,6 +405,57 @@ for (const [name, size, h] of [['rock1', 9, 9], ['rock2', 19, 16]] as const) {
   }, true)));
 }
 
+// ================================================================ trees and bushes (scenery)
+
+// Cartoon foliage in the Kingdom Rush manner: fluffy round canopies built from a few lumps, lit from
+// the top left with a dark ink outline. Several variants each so forests don't repeat.
+const leafy = (g: Ctx, lumps: { x: number; y: number; r: number }[], dark: string, mid: string, light: string, outline: boolean) => {
+  g.beginPath();
+  for (const l of lumps) {
+    g.moveTo(l.x + l.r, l.y);
+    g.arc(l.x, l.y, l.r, 0, Math.PI * 2);
+  }
+  finish(g, rgrad(g, 0, 0, Math.max(...lumps.map((l) => Math.hypot(l.x, l.y) + l.r)), [[0, light], [0.55, mid], [1, dark]]), outline ? OUTLINE : null, 0.7);
+};
+for (let v = 0; v < 3; v++) {
+  const rng = new Rng(500 + v * 17);
+  const size = 7 + v * 1.6;
+  const greens = [['#2c5a1c', '#4c8a2c', '#86c24a'], ['#2a5420', '#3f7d2a', '#79b443'], ['#33601e', '#5a9632', '#9ccd56']][v];
+  const layers = [0, 1, 2].map((k) => {
+    const r = size * (1 - k * 0.22);
+    return Array.from({ length: 5 }, (_, i) => {
+      const a = (i / 5) * Math.PI * 2 + rng.range(-0.3, 0.3);
+      return { x: Math.cos(a) * r * 0.45 - k * 0.6, y: Math.sin(a) * r * 0.45 - k * 0.6, r: r * rng.range(0.5, 0.62) };
+    }).concat([{ x: -k * 0.6, y: -k * 0.6, r: r * 0.6 }]);
+  });
+  model(`tree${v}`, size + 3, 1, [
+    P(0, 4, (g) => circ(g, 0, 0, 1.6, '#5a3c22')),
+    ...layers.map((lumps, k) => P(4 + k * 3.5, 7 + k * 3.5, (g) => leafy(g, lumps, greens[0], greens[1], greens[2], true))),
+  ]);
+}
+for (let v = 0; v < 2; v++) {
+  const size = 6 + v * 1.5;
+  // pines: stacked star-shaped tiers narrowing upwards
+  model(`pine${v}`, size + 3, 1, [
+    P(0, 3, (g) => circ(g, 0, 0, 1.3, '#4e3420')),
+    ...[0, 1, 2, 3].map((k) => P(3 + k * 3, 6 + k * 3, (g) => {
+      const r = size * (1 - k * 0.22);
+      const pts: number[] = [];
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const rr = i % 2 ? r * 0.72 : r;
+        pts.push(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      poly(g, pts, rgrad(g, 0, 0, r, [[0, '#5f9a3e'], [0.6, '#2f6a2c'], [1, '#1d4620']]), OUTLINE);
+    })),
+  ]);
+}
+for (let v = 0; v < 2; v++) {
+  const rng = new Rng(900 + v);
+  const lumps = Array.from({ length: 4 }, (_, i) => ({ x: Math.cos(i * 1.7) * 2.6, y: Math.sin(i * 1.7) * 2, r: rng.range(2.2, 3.2) }));
+  model(`bush${v}`, 7, 1, [P(0, 3.5, (g) => leafy(g, lumps, '#2e5c1e', v ? '#5c9a34' : '#4f8c30', v ? '#a6d45e' : '#8cc650', true))]);
+}
+
 // ================================================================ towers
 
 const D = TOWER_DECK;
