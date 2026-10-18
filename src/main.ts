@@ -8,7 +8,7 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { CATEGORIES, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
+import { MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import {
@@ -160,7 +160,21 @@ function pick(t: number): void {
   if (!s.allowed(t)) return flash('Not available in this game');
   clearSelection();
   placing = placing === t ? -1 : t;
-  if (placing >= 0) hud.showCategory(CATEGORIES.findIndex((c) => c.id === TOWERS[placing].cat));
+  if (placing >= 0) hud.reveal(placing);
+}
+
+/** Q/E: the previous/next tower in the palette that this game allows. */
+function stepTower(dir: number): void {
+  const s = sim();
+  if (!s) return;
+  let t = placing < 0 ? (dir > 0 ? -1 : 0) : placing;
+  for (let n = 0; n < TOWERS.length; n++) {
+    t = (t + dir + TOWERS.length) % TOWERS.length;
+    if (s.allowed(t)) {
+      if (placing !== t) pick(t);
+      return;
+    }
+  }
 }
 
 function toggleGate(): void {
@@ -704,12 +718,8 @@ function bindInput(): void {
       keysHeld.add('Tab');
       return;
     }
-    if (k === 'q' || k === 'e') return hud.showCategory(hud.cat + (k === 'e' ? 1 : -1));
-    if (k >= '1' && k <= '9') {
-      const type = hud.typeAt(Number(k) - 1);
-      if (type >= 0) pick(type);
-      return;
-    }
+    if (k === 'q' || k === 'e') return stepTower(k === 'e' ? 1 : -1);
+    if (k >= '0' && k <= '9') return pick(k === '0' ? 9 : Number(k) - 1);
     if (k === 'g') return toggleGate();
     if (k === 'r') return startSuper();
     if (k === 'h') return selectHero();

@@ -36,7 +36,7 @@ Games are saved at every wave and when you leave the tab, and can be continued f
 as an app and works offline.
 
 ## Towers
-34 towers in seven tabs. Each has three levels except the barricade and the gate.
+34 towers in seven groups, all shown at once in the build palette. Each has three levels except the barricade and the gate.
 - **Basic** — Gun, Cannon, Missile, Laser, Tesla, EMP.
 - **Fire & Chem** — Flamethrower (cone, fire spreads), Napalm Mortar (burning ground), Acid Sprayer (shreds armour),
   Gas Launcher (drifting clouds, strong vs infantry).
@@ -57,7 +57,7 @@ Later waves add **Ghosts** (stealth: need radar), **Aegis** (regenerating shield
 (heal nearby units).
 
 ## Controls
-`Q`/`E` switch build tab, `1`–`6` pick a tower in it, then click or drag to build (the tower type stays selected) · `Esc`/right-click stop ·
+All 34 towers are in one palette: click one, or `1`–`9`, `0` for the first ten and `Q`/`E` for previous/next; then click or drag to build (the tower type stays selected) · `Esc`/right-click stop ·
 `U` upgrade · `S` sell · `T` cycle targeting (First/Last/Strong/Close) · `N` next wave (early-call bonus) ·
 `Space` pause · `F` cycle speed (1×/2×/4×) · `V` switch camera (top / isometric) · `G` open/close the selected
 gate · `R` aim the selected superweapon (then click a target).

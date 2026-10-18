@@ -40,24 +40,23 @@ main { flex: 1; display: flex; min-height: 0; }
 #stage canvas.minimap { position: absolute; right: 12px; bottom: 12px; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); cursor: crosshair; opacity: 0.92; touch-action: none; }
 .maps .size { display: block; font-size: 11px; opacity: 0.6; margin: 2px 0 4px; }
 
-#side { width: 260px; background: var(--panel); border-left: 1px solid var(--line); padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+#side { width: 340px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 #side > * { flex-shrink: 0; }
 #side h3 { margin: 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
-#tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
-#tabs button { padding: 3px 7px; font-size: 11px; }
-#tabs button.on { border-color: var(--accent); color: var(--accent); background: #3a3a1c; }
-#build { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+#build { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+#build .cat { grid-column: 1 / -1; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
+#build .cat:first-child { margin-top: 0; }
 #info .combo { font-size: 11px; color: var(--dim); margin-top: 4px; }
 #info .combo b { color: var(--good); }
-.tb { display: flex; flex-direction: column; align-items: flex-start; padding: 7px 9px; text-align: left; position: relative; }
-.tb .n { font-weight: 600; }
-.tb .c { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
-.tb .k { position: absolute; top: 5px; right: 7px; font-size: 10px; color: var(--dim); }
-.tb .sw { position: absolute; bottom: 8px; right: 8px; width: 9px; height: 9px; border-radius: 2px; }
+.tb { display: flex; flex-direction: column; align-items: flex-start; padding: 2px 4px 2px 10px; text-align: left; position: relative; min-width: 0; border-radius: 5px; line-height: 1.25; }
+.tb .n { font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tb .c { color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
+.tb .k { position: absolute; top: 3px; right: 5px; font-size: 9px; color: var(--dim); }
+.tb .sw { position: absolute; left: 3px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; }
 .tb.on { border-color: var(--accent); background: #3a3a1c; }
 .tb.poor .c { color: var(--bad); }
 
-#info { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 120px; }
+#info { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; flex: 1 1 auto !important; min-height: 150px; overflow-y: auto; }
 #info .title { font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; }
 #info .lvl { color: var(--accent); font-size: 12px; }
 #info .desc { color: var(--dim); font-size: 12px; margin: 2px 0 8px; }
@@ -88,7 +87,8 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 .maps .d { color: var(--dim); font-size: 12px; }
 .card .actions { display: flex; gap: 10px; margin-top: 18px; }
 @media (max-width: 900px) {
-  #side { width: 210px; }
+  #side { width: 300px; }
+  #build { grid-template-columns: repeat(3, 1fr); }
   .maps { grid-template-columns: 1fr; }
   #topbar { gap: 10px; flex-wrap: wrap; }
 }
@@ -118,7 +118,7 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 #tactical button.hero { border-color: #8a6a10; }
 #tactical button.hero.on { background: #4a3c10; border-color: var(--accent); }
 #tactical .sep { width: 8px; }
-#wavebox { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+#wavebox { position: absolute; top: 12px; right: 12px; z-index: 3; width: 230px; background: rgba(20,22,16,0.9); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; pointer-events: none; }
 #wavebox .wt { font-weight: 700; display: flex; justify-content: space-between; margin-bottom: 3px; }
 #wavebox .hp { color: var(--dim); font-weight: 400; }
 #wavebox .tip { color: #f0b860; font-size: 11px; }
@@ -170,12 +170,13 @@ b.code { font-size: 22px; letter-spacing: 3px; color: var(--accent); }
 /* ---- phones and small tablets */
 @media (max-width: 760px) {
   main { flex-direction: column; }
-  #side { width: auto; height: 38vh; border-left: 0; border-top: 1px solid var(--line); padding: 8px; }
+  #side { width: auto; height: 42vh; border-left: 0; border-top: 1px solid var(--line); padding: 8px; overflow-y: auto; }
+  #wavebox { width: 170px; font-size: 11px; top: 8px; right: 8px; }
   #help, #perf { display: none; }
   #topbar { gap: 8px; padding: 6px 8px; flex-wrap: wrap; }
   .brand { display: none; }
   .stat { min-width: 44px; }
-  #build { grid-template-columns: repeat(3, 1fr); }
+  #build { grid-template-columns: repeat(4, 1fr); }
   #tactical { right: 8px; left: 8px; bottom: 8px; overflow-x: auto; }
   #tactical button { min-width: 0; padding: 3px 7px; font-size: 10px; flex: none; }
   #tactical button b { font-size: 11px; }

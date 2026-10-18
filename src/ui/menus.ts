@@ -431,7 +431,7 @@ export function showSettings(done: () => void): void {
       </div>
       <h3>Controls</h3>
       <table class="keys">
-        <tr><td>Q / E · 1–6</td><td>Build tab · pick a tower</td></tr>
+        <tr><td>1–9, 0 · Q / E</td><td>First ten towers · previous / next tower</td></tr>
         <tr><td>Click / drag</td><td>Build (drag paints walls) · select</td></tr>
         <tr><td>Shift-drag</td><td>Select a group of towers</td></tr>
         <tr><td>Esc / right-click</td><td>Cancel</td></tr>

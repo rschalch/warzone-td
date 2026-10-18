@@ -101,7 +101,6 @@ export class Hud {
   private readonly perf = $('perf');
   private readonly perfText: HTMLSpanElement;
   private readonly buttons: HTMLButtonElement[] = []; // indexed by tower type
-  private readonly tabs: HTMLButtonElement[] = [];
   private readonly speedBtns: HTMLButtonElement[];
   private readonly itemBtns: HTMLButtonElement[] = [];
   private readonly abilityBtns: HTMLButtonElement[] = [];
@@ -112,31 +111,26 @@ export class Hud {
   /** Recent damage totals per tower, sampled once a second, for live DPS. */
   private dmgSamples = new Map<number, number[]>();
   private lastSample = 0;
-  /** Index into CATEGORIES of the tab being shown. */
-  cat = 0;
-
   constructor(act: HudActions) {
+    // every tower at once, grouped by category; the first ten have number keys
     const build = $('build');
-    const tabs = $('tabs');
-    CATEGORIES.forEach((c, k) => {
-      const b = document.createElement('button');
-      b.textContent = c.name;
-      b.title = 'Q / E to switch';
-      b.onclick = () => this.showCategory(k);
-      tabs.appendChild(b);
-      this.tabs.push(b);
-    });
-    TOWERS.forEach((t, i) => {
-      const b = document.createElement('button');
-      b.className = 'tb';
-      const k = TOWERS.filter((o) => o.cat === t.cat).indexOf(t) + 1;
-      b.innerHTML = `<span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span><span class="k">${k}</span><span class="sw" style="background:${hex(t.color)}"></span>`;
-      b.title = `${t.name} — ${t.desc}`;
-      b.onclick = () => act.pick(i);
-      build.appendChild(b);
-      this.buttons.push(b);
-    });
-    this.showCategory(0);
+    for (const c of CATEGORIES) {
+      const h = document.createElement('div');
+      h.className = 'cat';
+      h.textContent = c.name;
+      build.appendChild(h);
+      TOWERS.forEach((t, i) => {
+        if (t.cat !== c.id) return;
+        const b = document.createElement('button');
+        b.className = 'tb';
+        const key = i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : '';
+        b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span>${key}`;
+        b.title = `${t.name} — ${t.desc}`;
+        b.onclick = () => act.pick(i);
+        build.appendChild(b);
+        this.buttons[i] = b;
+      });
+    }
     this.next.onclick = () => act.next();
     $('menu').onclick = () => act.menu();
     $('gear').onclick = () => act.settings();
@@ -211,18 +205,9 @@ export class Hud {
     this.report.classList.remove('show');
   }
 
-  showCategory(k: number): void {
-    this.cat = (k + CATEGORIES.length) % CATEGORIES.length;
-    const id = CATEGORIES[this.cat].id;
-    this.tabs.forEach((b, i) => b.classList.toggle('on', i === this.cat));
-    this.buttons.forEach((b, i) => (b.style.display = TOWERS[i].cat === id ? '' : 'none'));
-  }
-
-  /** Tower type for hotkey n (0-based) in the current tab, or -1. */
-  typeAt(n: number): number {
-    const id = CATEGORIES[this.cat].id;
-    const types = TOWERS.map((t, i) => (t.cat === id ? i : -1)).filter((i) => i >= 0);
-    return types[n] ?? -1;
+  /** Keeps the picked tower's button in view (the palette can scroll on small screens). */
+  reveal(type: number): void {
+    this.buttons[type]?.scrollIntoView({ block: 'nearest' });
   }
 
   private set(el: HTMLElement, text: string, html = false): void {
@@ -253,7 +238,6 @@ export class Hud {
 
     for (let i = 0; i < this.buttons.length; i++) {
       const b = this.buttons[i];
-      if (b.style.display === 'none') continue;
       b.classList.toggle('on', ui.placing === i);
       b.classList.toggle('poor', sim.money < sim.cost(i));
     }
