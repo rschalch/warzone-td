@@ -6,7 +6,8 @@ import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_BULLET,
   P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
-import { DIRS, MODEL_TOP, dirFrame, type Atlas } from './atlas';
+import { DIRS, MODEL_TOP, dirFrame, mountainPeaks, type Atlas } from './atlas';
+import { T_WATER } from '../game/maps';
 import { models } from './models';
 import type { Projection } from './projection';
 
@@ -104,6 +105,7 @@ const C_TOWER = 1 << 16;
 const C_ENEMY = 2 << 16;
 const C_DRONE = 3 << 16;
 const C_HERO = 4 << 16;
+const C_PEAK = 5 << 16;
 
 const STATUS_WORDS = [['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff]] as const;
 const MAX_WRECKS = 220;
@@ -227,6 +229,8 @@ export class GameRenderer {
   private readonly baseTex: (Texture | null)[][];
   private readonly cornerTex: Texture;
   private readonly rockTex: Texture[];
+  private readonly peakTex: Texture[];
+  private readonly peaks: { x: number; y: number; s: number }[];
   private readonly rotorTex: Texture[];
   private readonly projTex: Texture[];
   private readonly projTint: number[];
@@ -276,6 +280,9 @@ export class GameRenderer {
       return [t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null];
     });
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
+    this.peakTex = [atlas.peak1_0, atlas.peak2_0, atlas.peak3_0];
+    // from above, the hillshaded terrain already shows the relief; summits only stand up in iso
+    this.peaks = this.iso ? mountainPeaks(sim.map) : [];
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
     this.heroFrames = this.iso ? frames('hero') : [atlas.hero_t];
@@ -458,6 +465,10 @@ export class GameRenderer {
       const rr = (rocks[r].r + rocks[r].s / 2) * TILE;
       if (this.visible(p.x(c, rr), p.y(c, rr))) sorter.add(this.depth(c, rr), C_ROCK | r);
     }
+    for (let k = 0; k < this.peaks.length; k++) {
+      const pk = this.peaks[k];
+      if (this.visible(p.x(pk.x, pk.y), p.y(pk.x, pk.y))) sorter.add(this.depth(pk.x, pk.y), C_PEAK | k);
+    }
     this.decals.begin();
     for (let t = 0; t < s.towers.length; t++) {
       const tw = s.towers[t];
@@ -588,6 +599,12 @@ export class GameRenderer {
       this.world.push(this.rockTex[r.s - 1], p.x(x, y), p.y(x, y), 0, 1, 1, 0xffffff, 1);
       return;
     }
+    if (kind === C_PEAK) {
+      const pk = this.peaks[idx];
+      const tex = this.peakTex[pk.s - 1];
+      this.world.push(tex, p.x(pk.x, pk.y), p.y(pk.x, pk.y), 0, 1, 1, 0xffffff, 1);
+      return;
+    }
     if (kind === C_TOWER) {
       const t = s.towers[idx];
       const def = TOWERS[t.type];
@@ -679,6 +696,16 @@ export class GameRenderer {
     const sx = p.x(x, y);
     let sy = p.y(x, y);
     const air = s.eAir[i] === 1;
+    if (!air) {
+      // wading: ripples spread from units in a river
+      const c = (x / TILE) | 0;
+      const row = (y / TILE) | 0;
+      if (c >= 0 && row >= 0 && c < COLS && row < ROWS && s.map.grid[row * COLS + c] === T_WATER) {
+        const k = (time * 1.4 + i * 0.37) % 1;
+        const sc = (r * 2.2 * (0.8 + k)) / 128;
+        this.groundFx.push(this.fxTex[FX_RING], x, y, 0, sc, sc, 0xd8f4ff, 0.45 * (1 - k), 0.5);
+      }
+    }
     if (this.iso) {
       const tex = this.enemyFrames[type][dirIndex(ang)];
       if (air) {

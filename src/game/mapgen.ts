@@ -1,4 +1,4 @@
-// Seeded random maps: pick a size, a number of routes and a rock density, get a playable MapDef.
+// Seeded random maps: pick a size, a number of routes, a rock density and the terrain, get a playable MapDef.
 // The same options and seed always produce the same map, so a map can be shared as a short code.
 
 import type { Gate, MapDef, Side } from './maps';
@@ -18,19 +18,29 @@ export interface RandomMapOptions {
   size: MapSize;
   routes: number; // 1-3
   density: number; // 0-3: rocks per 1000 cells ≈ density * 6
+  terrain: number; // 0-3: none, hills, rivers and mountains, rugged
 }
+
+/** Rivers and mountain ranges for each terrain setting; ranges are per 7000 cells. */
+const TERRAIN = [
+  { rivers: 0, ranges: 0 },
+  { rivers: 0, ranges: 1.5 },
+  { rivers: 1, ranges: 2 },
+  { rivers: 2, ranges: 3.5 },
+];
 
 const GATE_W = 4;
 const OPPOSITE: Record<Side, Side> = { L: 'R', R: 'L', T: 'B', B: 'T' };
 
-/** Short shareable code, e.g. "M2-1-48213". */
+/** Short shareable code, e.g. "M2-12-48213" (size, routes, rock density, terrain, seed). */
 export function mapCode(o: RandomMapOptions): string {
-  return `${o.size}${o.routes}-${o.density}-${o.seed}`;
+  return `${o.size}${o.routes}-${o.density}${o.terrain}-${o.seed}`;
 }
 
+/** Codes from before terrain existed ("M2-1-48213") still give the same flat map. */
 export function parseMapCode(code: string): RandomMapOptions | null {
-  const m = /^(S|M|L|XL)([1-3])-([0-3])-(\d{1,9})$/.exec(code.trim().toUpperCase());
-  return m ? { size: m[1] as MapSize, routes: Number(m[2]), density: Number(m[3]), seed: Number(m[4]) } : null;
+  const m = /^(S|M|L|XL)([1-3])-([0-3])([0-3])?-(\d{1,9})$/.exec(code.trim().toUpperCase());
+  return m ? { size: m[1] as MapSize, routes: Number(m[2]), density: Number(m[3]), terrain: Number(m[4] ?? 0), seed: Number(m[5]) } : null;
 }
 
 export function randomMap(o: RandomMapOptions): MapDef {
@@ -71,6 +81,8 @@ export function randomMap(o: RandomMapOptions): MapDef {
     rows,
     routes,
     rocks: Math.round(((cols * rows) / 1000) * o.density * 6),
+    rivers: TERRAIN[o.terrain].rivers,
+    mountains: Math.round(((cols * rows) / 7000) * TERRAIN[o.terrain].ranges),
   };
 }
 
@@ -87,8 +99,8 @@ export function dailySetup(date: string): { opts: RandomMapOptions; towerSeed: n
   const seed = (h >>> 0) % 1_000_000_000;
   const rng = new Rng(seed);
   const sizes: MapSize[] = ['S', 'M', 'L'];
-  return {
-    opts: { seed, size: sizes[rng.int(3)], routes: 1 + rng.int(3), density: 1 + rng.int(3) },
-    towerSeed: rng.int(1_000_000),
-  };
+  const opts = { seed, size: sizes[rng.int(3)], routes: 1 + rng.int(3), density: 1 + rng.int(3), terrain: 0 };
+  const towerSeed = rng.int(1_000_000);
+  opts.terrain = 1 + rng.int(3);
+  return { opts, towerSeed };
 }

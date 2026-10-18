@@ -71,3 +71,7 @@ export const ABILITY_HELP = [
 ];
 
 export const HERO_HELP = 'Your commander: a unit you move around the battlefield. Select it (H or click it), then click the ground to walk there. It shoots anything in range, earns XP from its kills and gains damage and range with every level. It cannot be hurt.';
+
+export const RIVER_HELP = 'Ground units wade through water at 55% speed, so a river is a natural slow zone — and they would rather walk around it when a dry way is about as quick. Aircraft fly over. Nothing can be built in the water.';
+
+export const MOUNTAIN_HELP = 'Impassable high ground: ground units must find a way around it, and nothing can be built on it. Mountains never close a route completely; the passes between peaks are natural choke points. Aircraft fly over.';

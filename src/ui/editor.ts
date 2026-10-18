@@ -1,9 +1,11 @@
-// Map editor: paint rocks, put entry/exit gates on the edges (paired in order: entry 1 → exit 1),
-// then save, share as a link, or play. Rocks that would cut a route are refused, as in generated maps.
+// Map editor: paint rocks, rivers and mountains, put entry/exit gates on the edges (paired in order:
+// entry 1 → exit 1), then save, share as a link, or play. Rocks and mountains that would cut a route are
+// dropped when the map is built, as in generated maps.
 
-import type { Gate, MapDef, Side } from '../game/maps';
+import { T_MOUNT, T_WATER, decodePaint, encodePaint, type Gate, type MapDef, type Side } from '../game/maps';
 
-type Tool = 'rock1' | 'rock2' | 'erase' | 'entry' | 'exit';
+type Tool = 'rock1' | 'rock2' | 'river' | 'mountain' | 'erase' | 'entry' | 'exit';
+const BRUSH = 1.6; // cells, radius of the river / mountain brush
 
 const GATE_W = 4;
 const SIZES = [[64, 44], [96, 64], [128, 84], [176, 112]] as const;
@@ -31,6 +33,7 @@ export function blankMap(cols = 96, rows = 64): MapDef {
 export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): void {
   const def: MapDef = structuredClone(start);
   def.rockList ??= [];
+  let cells = def.paint ? decodePaint(def.paint, def.cols * def.rows) : new Uint8Array(def.cols * def.rows);
   let tool: Tool = 'rock2';
   // gates being placed: entries and exits are matched up by index into routes
   const entries: Gate[] = def.routes.map((r) => r.entry);
@@ -46,6 +49,8 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
       <div class="ed-tools">
         <button data-tool="rock2">Big rock</button>
         <button data-tool="rock1">Small rock</button>
+        <button data-tool="river">River</button>
+        <button data-tool="mountain">Mountain</button>
         <button data-tool="erase">Erase</button>
         <button data-tool="entry">Entry gate</button>
         <button data-tool="exit">Exit gate</button>
@@ -56,7 +61,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
         <button id="ed-play" class="primary">Play</button>
         <button id="ed-save">Save</button>
         <button id="ed-share">Copy share link</button>
-        <button id="ed-clear">Clear rocks</button>
+        <button id="ed-clear">Clear terrain</button>
         <button id="ed-back">Back</button>
       </div>
     </div>`;
@@ -77,6 +82,8 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     const n = Math.min(entries.length, exits.length);
     def.routes = Array.from({ length: n }, (_, k) => ({ entry: entries[k], exit: exits[k] }));
     def.rocks = def.rockList!.length;
+    if (cells.some((t) => t)) def.paint = encodePaint(cells);
+    else delete def.paint;
   };
 
   const gateCells = (gt: Gate): [number, number][] => {
@@ -109,6 +116,11 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
       g.lineTo(canvas.width, r * scale + 0.5);
       g.stroke();
     }
+    for (let i = 0; i < cells.length; i++) {
+      if (!cells[i]) continue;
+      g.fillStyle = cells[i] === T_WATER ? '#2f6a86' : '#6e6454';
+      g.fillRect((i % def.cols) * scale, Math.floor(i / def.cols) * scale, scale, scale);
+    }
     for (const k of def.rockList!) {
       g.fillStyle = '#8a8478';
       g.fillRect(k.c * scale, k.r * scale, k.s * scale, k.s * scale);
@@ -132,7 +144,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     hint.textContent = unpaired
       ? `Every entry needs an exit (${entries.length} in, ${exits.length} out).`
       : tool === 'entry' || tool === 'exit' ? 'Click on an edge to add a gate; Erase removes one.'
-        : `${def.rockList!.length} rocks · ${def.routes.length} route${def.routes.length === 1 ? '' : 's'}. Drag to paint.`;
+        : `${def.rockList!.length} rocks · ${cells.filter((t) => t === T_WATER).length} water · ${cells.filter((t) => t === T_MOUNT).length} mountain cells · ${def.routes.length} route${def.routes.length === 1 ? '' : 's'}. Drag to paint.`;
   };
 
   const cellAt = (e: PointerEvent): [number, number] => {
@@ -142,15 +154,34 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
 
   const inGate = (c: number, r: number) => [...entries, ...exits].some((gt) => gateCells(gt).some(([x, y]) => x === c && y === r));
 
+  const onTerrain = (c: number, r: number, s: number) => {
+    for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) if (cells[(r + dy) * def.cols + c + dx]) return true;
+    return false;
+  };
+  const brush = (c: number, r: number, t: number) => {
+    for (let y = Math.floor(r - BRUSH); y <= r + BRUSH; y++) {
+      for (let x = Math.floor(c - BRUSH); x <= c + BRUSH; x++) {
+        if (x < 0 || y < 0 || x >= def.cols || y >= def.rows || Math.hypot(x - c, y - r) > BRUSH || inGate(x, y)) continue;
+        cells[y * def.cols + x] = t;
+      }
+    }
+    // rocks under fresh water or mountain are gone
+    if (t) def.rockList = def.rockList!.filter((k) => !onTerrain(k.c, k.r, k.s));
+  };
+
   const paint = (c: number, r: number) => {
-    if (tool === 'rock1' || tool === 'rock2') {
+    if (tool === 'river' || tool === 'mountain') {
+      brush(c, r, tool === 'river' ? T_WATER : T_MOUNT);
+    } else if (tool === 'rock1' || tool === 'rock2') {
       const s = tool === 'rock2' ? 2 : 1;
       if (c < 2 || r < 1 || c + s > def.cols - 2 || r + s > def.rows - 1) return;
       const overlaps = def.rockList!.some((k) => c < k.c + k.s && c + s > k.c && r < k.r + k.s && r + s > k.r);
       if (overlaps) return;
       for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) if (inGate(c + dx, r + dy)) return;
+      if (onTerrain(c, r, s)) return;
       def.rockList!.push({ c, r, s });
     } else if (tool === 'erase') {
+      brush(c, r, 0);
       def.rockList = def.rockList!.filter((k) => !(c >= k.c && c < k.c + k.s && r >= k.r && r < k.r + k.s));
       for (const list of [entries, exits]) {
         const i = list.findIndex((gt) => gateCells(gt).some(([x, y]) => x === c && y === r));
@@ -171,9 +202,10 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     const gt: Gate = { side, from, to: from + GATE_W - 1 };
     const clash = [...entries, ...exits].some((o) => o.side === side && from <= o.to + 2 && gt.to >= o.from - 2);
     if (clash || entries.length + exits.length >= 6 + (tool === 'entry' ? 0 : 1)) return;
-    // gates clear any rocks under them
-    const cells = gateCells(gt);
-    def.rockList = def.rockList!.filter((k) => !cells.some(([x, y]) => x >= k.c && x < k.c + k.s && y >= k.r && y < k.r + k.s));
+    // gates clear any rocks and terrain under them
+    const under = gateCells(gt);
+    def.rockList = def.rockList!.filter((k) => !under.some(([x, y]) => x >= k.c && x < k.c + k.s && y >= k.r && y < k.r + k.s));
+    for (const [x, y] of under) cells[y * def.cols + x] = 0;
     (tool === 'entry' ? entries : exits).push(gt);
     sync();
     draw();
@@ -202,6 +234,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     def.cols = c;
     def.rows = r;
     def.rockList = [];
+    cells = new Uint8Array(c * r);
     entries.splice(0, entries.length, fresh.routes[0].entry);
     exits.splice(0, exits.length, fresh.routes[0].exit);
     sync();
@@ -233,6 +266,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
   };
   root.querySelector<HTMLButtonElement>('#ed-clear')!.onclick = () => {
     def.rockList = [];
+    cells.fill(0);
     sync();
     draw();
   };

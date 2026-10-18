@@ -7,7 +7,7 @@ const NDY = [0, 0, 1, -1, 1, -1, 1, -1];
 const NCOST = [1, 1, 1, 1, SQRT2, SQRT2, SQRT2, SQRT2];
 
 /**
- * Distance field towards a set of goal cells (Dijkstra, octile moves, no corner cutting).
+ * Distance field towards a set of goal cells (Dijkstra, octile moves weighted by terrain, no corner cutting).
  * Every walkable cell knows its remaining distance and the neighbour to step to,
  * so moving thousands of units costs one array lookup each.
  */
@@ -17,11 +17,13 @@ export class FlowField {
   private readonly heap = new Int32Array(COLS * ROWS * 8);
   private readonly heapKey = new Float32Array(COLS * ROWS * 8);
 
-  constructor(readonly goals: number[]) {}
+  /** cost[i]: time to cross cell i relative to open ground (water is slower), so units take the quickest way. */
+  constructor(readonly goals: number[], private readonly cost: Float32Array) {}
 
   /** blocked[i] != 0 means impassable. Hot (every placement check runs it per route): heap inlined. */
   compute(blocked: Uint8Array): void {
     const dist = this.dist;
+    const cost = this.cost;
     const next = this.next;
     dist.fill(Infinity);
     next.fill(-1);
@@ -77,7 +79,7 @@ export class FlowField {
         if (blocked[j]) continue;
         // diagonal moves may not squeeze between two blocked cells / clip a corner
         if (dx && dy && (blocked[cy * COLS + x] || blocked[y * COLS + cx])) continue;
-        const nd = k + NCOST[n];
+        const nd = k + NCOST[n] * 0.5 * (cost[i] + cost[j]);
         if (nd < dist[j]) {
           dist[j] = nd;
           next[j] = i; // j steps toward i

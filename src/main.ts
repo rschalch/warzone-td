@@ -8,7 +8,7 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { ENEMIES, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
+import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import { PARTNER } from './game/partner';
@@ -549,7 +549,7 @@ const previews = new Map<string, HTMLCanvasElement>();
 
 /** Low-res terrain for map pickers; borrows the map size, then restores the current one. */
 function preview(def: MapDef, w: number, h: number): HTMLCanvasElement {
-  const key = JSON.stringify([def.name, def.seed, def.cols, def.rows, def.routes, def.rocks, def.rockList?.length]);
+  const key = JSON.stringify([def.name, def.seed, def.cols, def.rows, def.routes, def.rocks, def.rockList?.length, def.rivers, def.mountains, def.paint?.length]);
   let src = previews.get(key);
   if (src) return src;
   src = drawTerrain(buildMap(def), Math.min(w / (def.cols * TILE), h / (def.rows * TILE)) * 2, true);
@@ -973,6 +973,7 @@ function frame(): void {
     });
     hud.update(s, {
       placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy,
+      ground: cellCol >= 0 && cellRow >= 0 && cellCol < COLS && cellRow < ROWS ? s.map.grid[cellRow * COLS + cellCol] : -1,
       aiming: targeting ? { kind: targeting.kind, index: targeting.index } : null,
     });
     minimap?.update(viewQuad());

@@ -237,7 +237,7 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
 
 // ---------------------------------------------------------------- random maps & daily
 
-let randomOpts: RandomMapOptions = { seed: Math.floor(Math.random() * 1e6), size: 'M', routes: 1, density: 2 };
+let randomOpts: RandomMapOptions = { seed: Math.floor(Math.random() * 1e6), size: 'M', routes: 1, density: 2, terrain: 2 };
 
 export function showRandom(code?: string): void {
   if (code) randomOpts = parseMapCode(code) ?? randomOpts;
@@ -254,6 +254,8 @@ export function showRandom(code?: string): void {
           <div class="seg wide">${[1, 2, 3].map((n) => `<button data-routes="${n}" class="${n === o.routes ? 'on' : ''}">${n}</button>`).join('')}</div>
           <h3>Rocks</h3>
           <div class="seg wide">${['None', 'Few', 'Some', 'Many'].map((n, k) => `<button data-dens="${k}" class="${k === o.density ? 'on' : ''}">${n}</button>`).join('')}</div>
+          <h3>Terrain</h3>
+          <div class="seg wide">${['Flat', 'Hills', 'Rivers', 'Rugged'].map((n, k) => `<button data-terr="${k}" class="${k === o.terrain ? 'on' : ''}">${n}</button>`).join('')}</div>
           <h3>Map code</h3>
           <div class="row-mini"><input id="code" value="${mapCode(o)}" spellcheck="false"> <button data-reroll>New seed</button></div>
           <p class="d">Share the code: the same code always makes the same map.</p>
@@ -265,6 +267,7 @@ export function showRandom(code?: string): void {
   on('[data-size]', (el) => showRandom(mapCode({ ...o, size: el.dataset.size as MapSize })));
   on('[data-routes]', (el) => showRandom(mapCode({ ...o, routes: Number(el.dataset.routes) })));
   on('[data-dens]', (el) => showRandom(mapCode({ ...o, density: Number(el.dataset.dens) })));
+  on('[data-terr]', (el) => showRandom(mapCode({ ...o, terrain: Number(el.dataset.terr) })));
   on('[data-reroll]', () => showRandom(mapCode({ ...o, seed: Math.floor(Math.random() * 1e6) })));
   overlay.querySelector<HTMLInputElement>('#code')!.onchange = (e) => {
     const c = (e.target as HTMLInputElement).value;

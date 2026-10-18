@@ -405,6 +405,40 @@ for (const [name, size, h] of [['rock1', 9, 9], ['rock2', 19, 16]] as const) {
   }, true)));
 }
 
+// ================================================================ mountain peaks
+
+// Stand on the interior of mountain massifs (whose slopes are painted into the terrain): a main summit
+// with shoulders, tapering steeply, bare rock below a snow line.
+for (const [name, size, h] of [['peak1', 22, 22], ['peak2', 34, 36], ['peak3', 50, 54]] as const) {
+  const rng = new Rng(size * 7 + 3);
+  const chunks = Array.from({ length: 4 }, (_, i) => ({
+    x: i ? rng.range(-size, size) * 0.42 : 0,
+    y: i ? rng.range(-size, size) * 0.42 : 0,
+    r: i ? size * rng.range(0.45, 0.62) : size * 0.92,
+    h: i ? h * rng.range(0.45, 0.7) : h,
+    pts: Array.from({ length: 11 }, () => rng.range(0.7, 1)),
+  }));
+  model(name, size + 2, 1, chunks.map((c) => P(0, c.h, (g, z) => {
+    const f = Math.min(1, z / c.h);
+    const k = 1 - 0.86 * Math.pow(f, 0.9);
+    g.beginPath();
+    c.pts.forEach((p, i) => {
+      const a = (i / c.pts.length) * Math.PI * 2;
+      // ridges: alternate points stay wide higher up
+      const q = i % 2 ? p : p * (0.85 + 0.15 * k);
+      const px = c.x * (1 - f * 0.4) + Math.cos(a) * c.r * q * k;
+      const py = c.y * (1 - f * 0.4) + Math.sin(a) * c.r * q * k;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    });
+    g.closePath();
+    const snow = z > h * 0.62;
+    const fill = snow
+      ? grad(g, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r, [[0, '#f4f6f8'], [1, '#aab4bc']])
+      : grad(g, c.x - c.r, c.y - c.r, c.x + c.r, c.y + c.r, f < 0.25 ? [[0, '#7c705c'], [1, '#463e32']] : [[0, '#948d80'], [1, '#4f4b44']]);
+    finish(g, fill, z < c.h - 1 ? null : OUTLINE);
+  }, true)));
+}
+
 // ================================================================ towers
 
 const D = TOWER_DECK;

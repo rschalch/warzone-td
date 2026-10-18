@@ -4,7 +4,8 @@ import {
 } from '../game/defs';
 import { DIFFICULTIES } from '../game/config';
 import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, type Sim, type Tower, type TowerStats } from '../game/sim';
-import { ABILITY_HELP, ENEMY_HELP, HERO_HELP, ITEM_HELP, TOWER_HELP } from './codex';
+import { ABILITY_HELP, ENEMY_HELP, HERO_HELP, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, TOWER_HELP } from './codex';
+import { T_MOUNT, T_WATER, WATER_SLOW } from '../game/maps';
 
 /** Something to explain in the side panel (hovered button, or a target being aimed). */
 export type Inspect = { kind: 'tower' | 'item' | 'ability' | 'hero' | 'super'; index: number };
@@ -45,6 +46,8 @@ export interface UiState {
   aiming: Inspect | null;
   /** Enemy slot being inspected, or -1. */
   enemy: number;
+  /** Terrain type of the cell under the cursor (T_* in maps.ts), or -1. */
+  ground: number;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -354,6 +357,7 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       key = `t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
+    else if (ui.ground === T_WATER || ui.ground === T_MOUNT) key = `g${ui.ground}`;
     else key = 'none';
     if (key === this.infoKey) return;
     this.infoKey = key;
@@ -444,6 +448,10 @@ export class Hud {
         <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>
         ${partners}
         <div class="desc" style="margin-top:8px">${how}</div>`;
+    } else if (ui.ground === T_WATER) {
+      this.info.innerHTML = `<div class="title">River<span class="lvl">${Math.round(WATER_SLOW * 100)}% speed</span></div><div class="help">${RIVER_HELP}</div>`;
+    } else if (ui.ground === T_MOUNT) {
+      this.info.innerHTML = `<div class="title">Mountains<span class="lvl">impassable</span></div><div class="help">${MOUNTAIN_HELP}</div>`;
     } else {
       this.info.innerHTML = `<div class="desc">Pick a tower to build, or click anything on the battlefield — a tower, an enemy, your commander — to see what it does. Hover any button for a description. Shift-drag selects a group; hold <kbd>Tab</kbd> to see every aura.</div>`;
     }

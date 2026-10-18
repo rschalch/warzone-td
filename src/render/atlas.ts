@@ -1,6 +1,6 @@
 import { CanvasSource, Texture, Rectangle } from 'pixi.js';
 import { COLS, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
-import { T_GATE, type GameMap } from '../game/maps';
+import { T_GATE, T_MOUNT, T_WATER, type GameMap } from '../game/maps';
 import { Rng } from '../game/rng';
 import { DIRS, models } from './models';
 
@@ -387,6 +387,284 @@ export async function buildAtlas(): Promise<Atlas> {
 
 // ---------------------------------------------------------------- terrain
 
+/** For each cell of type `t`: steps (8-neighbour) to the nearest cell of another type, 1 on the edge; 0 elsewhere. */
+function depthOf(map: GameMap, t: number): Uint8Array {
+  const grid = map.grid;
+  const d = new Uint8Array(grid.length);
+  const queue: number[] = [];
+  for (let i = 0; i < grid.length; i++) {
+    if (grid[i] !== t) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    let edge = false;
+    for (let dy = -1; dy <= 1 && !edge; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = c + dx;
+        const y = r + dy;
+        if (x >= 0 && y >= 0 && x < COLS && y < ROWS && grid[y * COLS + x] !== t) edge = true;
+      }
+    }
+    if (edge) {
+      d[i] = 1;
+      queue.push(i);
+    }
+  }
+  for (let h = 0; h < queue.length; h++) {
+    const i = queue[h];
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = c + dx;
+        const y = r + dy;
+        if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
+        const j = y * COLS + x;
+        if (grid[j] === t && !d[j]) {
+          d[j] = d[i] + 1;
+          queue.push(j);
+        }
+      }
+    }
+  }
+  return d;
+}
+
+/** Where the 3D summits stand on mountain massifs: s = 1..3 (peak1..peak3), x/y in world px. */
+export function mountainPeaks(map: GameMap): { x: number; y: number; s: number }[] {
+  const depth = depthOf(map, T_MOUNT);
+  const rng = new Rng(map.def.seed * 13 + 5);
+  const cand: number[] = [];
+  for (let i = 0; i < depth.length; i++) if (depth[i] >= 2) cand.push(i);
+  // deepest first, ties in a seeded shuffle
+  const jitter = new Map(cand.map((i) => [i, rng.next()]));
+  cand.sort((a, b) => depth[b] - depth[a] || jitter.get(a)! - jitter.get(b)!);
+  const out: { x: number; y: number; s: number }[] = [];
+  const radius = [0, 22, 34, 50];
+  for (const i of cand) {
+    const s = Math.min(3, depth[i] - 1);
+    const x = ((i % COLS) + 0.5) * TILE + rng.range(-4, 4);
+    const y = (((i / COLS) | 0) + 0.5) * TILE + rng.range(-4, 4);
+    if (out.some((p) => Math.hypot(p.x - x, p.y - y) < (radius[p.s] + radius[s]) * 0.85)) continue;
+    out.push({ x, y, s });
+  }
+  return out;
+}
+
+/** Seeded smooth noise over continuous coordinates (hashed lattice, smoothstep-blended), in [0,1). */
+function lattice(rng: Rng): (x: number, y: number) => number {
+  const table = new Float32Array(4096);
+  for (let i = 0; i < table.length; i++) table[i] = rng.next();
+  const at = (ix: number, iy: number) => table[(Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663)) & 4095];
+  return (x, y) => {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    let fx = x - ix;
+    let fy = y - iy;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    const a = at(ix, iy) + (at(ix + 1, iy) - at(ix, iy)) * fx;
+    const b = at(ix, iy + 1) + (at(ix + 1, iy + 1) - at(ix, iy + 1)) * fx;
+    return a + (b - a) * fy;
+  };
+}
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Rivers and mountains, sampled `sub` times per cell side: a smooth height field for the mountains
+ * (from the distance to their edge, plus ridged noise) lit from the top left, with snow up high and
+ * shadows cast on the ground; water deepening away from muddy banks.
+ */
+function drawLandforms(g: CanvasRenderingContext2D, map: GameMap, rng: Rng, res: number): void {
+  const grid = map.grid;
+  let any = false;
+  for (let i = 0; i < grid.length && !any; i++) any = grid[i] === T_WATER || grid[i] === T_MOUNT;
+  if (!any) return;
+  const water = depthOf(map, T_WATER);
+  const mount = depthOf(map, T_MOUNT);
+  const sub = Math.max(2, Math.min(10, Math.round((TILE * res) / 4)));
+  const W = COLS * sub;
+  const H = ROWS * sub;
+  const noise = lattice(rng);
+  const fbm = (x: number, y: number) => noise(x, y) * 0.55 + noise(x * 2.1 + 17, y * 2.1) * 0.3 + noise(x * 4.3, y * 4.3 + 9) * 0.15;
+  // bilinear over cell centres
+  const bil = (f: (i: number) => number, u: number, v: number) => {
+    u -= 0.5;
+    v -= 0.5;
+    const x0 = Math.max(0, Math.min(COLS - 1, Math.floor(u)));
+    const y0 = Math.max(0, Math.min(ROWS - 1, Math.floor(v)));
+    const x1 = Math.min(COLS - 1, x0 + 1);
+    const y1 = Math.min(ROWS - 1, y0 + 1);
+    const fx = Math.max(0, Math.min(1, u - x0));
+    const fy = Math.max(0, Math.min(1, v - y0));
+    const a = f(y0 * COLS + x0) + (f(y0 * COLS + x1) - f(y0 * COLS + x0)) * fx;
+    const b = f(y1 * COLS + x0) + (f(y1 * COLS + x1) - f(y1 * COLS + x0)) * fx;
+    return a + (b - a) * fy;
+  };
+  const isM = (i: number) => (grid[i] === T_MOUNT ? 1 : 0);
+  const isW = (i: number) => (grid[i] === T_WATER ? 1 : 0);
+  const mD = (i: number) => mount[i];
+  const wD = (i: number) => water[i];
+
+  // cells worth sampling: terrain and a 2-cell margin (banks, shadows)
+  const near = new Uint8Array(grid.length);
+  for (let i = 0; i < grid.length; i++) {
+    if (!isM(i) && !isW(i)) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    for (let y = Math.max(0, r - 2); y <= Math.min(ROWS - 1, r + 2); y++) for (let x = Math.max(0, c - 2); x <= Math.min(COLS - 1, c + 2); x++) near[y * COLS + x] = 1;
+  }
+
+  // pass 1: mountain height (world px) and the inside/outside masks
+  const height = new Float32Array(W * H);
+  const mMask = new Float32Array(W * H);
+  const wMask = new Float32Array(W * H);
+  const wDepth = new Float32Array(W * H);
+  for (let i = 0; i < grid.length; i++) {
+    if (!near[i]) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    for (let sy = 0; sy < sub; sy++) {
+      for (let sx = 0; sx < sub; sx++) {
+        const u = c + (sx + 0.5) / sub;
+        const v = r + (sy + 0.5) / sub;
+        const k = (r * sub + sy) * W + c * sub + sx;
+        const m = bil(isM, u, v) + (fbm(u * 0.7, v * 0.7) - 0.5) * 0.3;
+        mMask[k] = m;
+        if (m > 0.4) {
+          const d = Math.max(0, bil(mD, u, v) - 0.5 + (m - 0.5));
+          const ridge = 1 - Math.abs(2 * noise(u * 0.45 + 40, v * 0.45) - 1);
+          height[k] = 13 * Math.pow(d, 0.9) + 9 * ridge * Math.min(1, d) + 3 * fbm(u * 1.7, v * 1.7);
+        }
+        const w = bil(isW, u, v) + (fbm(u * 0.9 + 70, v * 0.9) - 0.5) * 0.22;
+        wMask[k] = w;
+        wDepth[k] = Math.max(0, bil(wD, u, v) - 0.5 + (w - 0.5));
+      }
+    }
+  }
+
+  // pass 2: shade
+  const img = new ImageData(W, H);
+  const px = img.data;
+  const step = TILE / sub; // world px per sample
+  const [lx, ly, lz] = [-0.55, -0.62, 0.56];
+  const shadowReach = Math.round(sub * 0.9);
+  for (let i = 0; i < grid.length; i++) {
+    if (!near[i]) continue;
+    const c = i % COLS;
+    const r = (i / COLS) | 0;
+    for (let sy = 0; sy < sub; sy++) {
+      for (let sx = 0; sx < sub; sx++) {
+        const X = c * sub + sx;
+        const Y = r * sub + sy;
+        const k = Y * W + X;
+        const u = X / sub;
+        const v = Y / sub;
+        let R = 0;
+        let G = 0;
+        let B = 0;
+        let A = 0;
+        const m = mMask[k];
+        const w = wMask[k];
+        if (w > 0.36) {
+          // bank, then water deepening towards the middle
+          const bank = smooth(0.36, 0.46, w);
+          const wet = smooth(0.49, 0.53, w);
+          const f = Math.min(1, wDepth[k] / 2.2);
+          const ripple = (fbm(u * 3 + 5, v * 1.2) - 0.5) * 22;
+          const wr = 70 - 42 * f + ripple * 0.5;
+          const wg = 118 - 46 * f + ripple;
+          const wb = 112 - 14 * f + ripple;
+          const foam = smooth(0.58, 0.5, w) * 0.5;
+          R = 104 + (wr - 104) * wet + (180 - wr) * foam * wet;
+          G = 90 + (wg - 90) * wet + (200 - wg) * foam * wet;
+          B = 60 + (wb - 60) * wet + (190 - wb) * foam * wet;
+          A = 255 * bank;
+        }
+        if (m > 0.4) {
+          const h = height[k];
+          const hx = (height[k + (X < W - 1 ? 1 : 0)] - height[k - (X > 0 ? 1 : 0)]) / (2 * step);
+          const hy = (height[k + (Y < H - 1 ? W : 0)] - height[k - (Y > 0 ? W : 0)]) / (2 * step);
+          const n = 1 / Math.hypot(hx, hy, 1);
+          const lit = Math.max(0, (-hx * lx - hy * ly + lz) * n);
+          const strata = fbm(u * 0.8 + 30, v * 0.8 + h * 0.05);
+          const rocky = Math.min(1, h / 22);
+          let cr = 112 + (150 - 112) * rocky + (strata - 0.5) * 40;
+          let cg = 98 + (144 - 98) * rocky + (strata - 0.5) * 36;
+          let cb = 74 + (132 - 74) * rocky + (strata - 0.5) * 30;
+          // snow where it's high and not too steep
+          const snow = smooth(0, 6, h - 40 - 10 * noise(u * 1.3 + 3, v * 1.3)) * smooth(1.6, 0.6, Math.hypot(hx, hy));
+          cr += (238 - cr) * snow;
+          cg += (242 - cg) * snow;
+          cb += (246 - cb) * snow;
+          const shade = 0.3 + 0.95 * lit;
+          const a = smooth(0.44, 0.56, m);
+          R = R * (1 - a) + cr * shade * a;
+          G = G * (1 - a) + cg * shade * a;
+          B = B * (1 - a) + cb * shade * a;
+          A = Math.max(A, 255 * a);
+        }
+        // shadow cast by mountains towards the lower right, onto the ground, water or lower slopes
+        const sxk = X - shadowReach;
+        const syk = Y - shadowReach;
+        if (sxk >= 0 && syk >= 0) {
+          const up = height[syk * W + sxk];
+          if (up > height[k] + 4) {
+            const sh = Math.min(0.5, (up - height[k]) / 40);
+            if (A > 0) {
+              R *= 1 - sh;
+              G *= 1 - sh;
+              B *= 1 - sh;
+            } else A = 255 * sh;
+          }
+        }
+        px[k * 4] = R;
+        px[k * 4 + 1] = G;
+        px[k * 4 + 2] = B;
+        px[k * 4 + 3] = A;
+      }
+    }
+  }
+  const layer = document.createElement('canvas');
+  layer.width = W;
+  layer.height = H;
+  layer.getContext('2d')!.putImageData(img, 0, 0);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(layer, 0, 0, MAP_W, MAP_H);
+
+  // glints on the water and reeds along the banks
+  if (res < 0.5) return;
+  g.lineCap = 'round';
+  for (let i = 0; i < grid.length; i++) {
+    if (water[i] >= 2 && rng.next() < 0.5) {
+      const x = ((i % COLS) + rng.next()) * TILE;
+      const y = (((i / COLS) | 0) + rng.next()) * TILE;
+      const a = rng.range(-0.4, 0.4);
+      const l = rng.range(2, 5);
+      g.strokeStyle = `rgba(210,235,240,${rng.range(0.08, 0.2).toFixed(2)})`;
+      g.lineWidth = rng.range(0.6, 1.2);
+      g.beginPath();
+      g.moveTo(x - Math.cos(a) * l, y - Math.sin(a) * l);
+      g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      g.stroke();
+    } else if (water[i] === 1 && rng.next() < 0.2) {
+      const x = ((i % COLS) + rng.next()) * TILE;
+      const y = (((i / COLS) | 0) + rng.next()) * TILE;
+      g.strokeStyle = 'rgba(110,135,60,0.6)';
+      g.lineWidth = 0.8;
+      for (let k = 0; k < 3; k++) {
+        g.beginPath();
+        g.moveTo(x + k * 1.5, y);
+        g.lineTo(x + k * 1.5 + rng.range(-1.5, 1.5), y - rng.range(3, 6));
+        g.stroke();
+      }
+    }
+  }
+}
+
 /** Upper bound on terrain texture pixels (~48MB of RGBA) so the biggest maps stay GPU-friendly. */
 const TERRAIN_MAX_PX = 12e6;
 
@@ -461,6 +739,8 @@ export function drawTerrain(map: GameMap, res: number, solidRocks = false): HTML
     g.lineTo(MAP_W, r * TILE + 0.5);
     g.stroke();
   }
+
+  drawLandforms(g, map, rng, res);
 
   // entry / exit gates: trampled dirt + chevrons
   for (let i = 0; i < map.grid.length; i++) {

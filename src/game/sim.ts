@@ -6,7 +6,7 @@ import {
 import { DIFFICULTIES, perk, type GameConfig } from './config';
 import type { Command } from './commands';
 import { FlowField } from './flow';
-import { T_BUILD, T_ROCK, buildMap, type GameMap } from './maps';
+import { T_BUILD, T_MOUNT, T_ROCK, T_WATER, WATER_SLOW, buildMap, type GameMap } from './maps';
 import { Rng } from './rng';
 import { SpatialHash } from './spatial';
 
@@ -218,7 +218,10 @@ export class Sim {
   /** Per route: distance field towards its exit, over the current maze. */
   readonly fields: FlowField[];
   private readonly scratch: FlowField[];
-  /** Impassable cells: rocks and towers. */
+  /** Speed factor of the bare ground (water slows ground units) and the matching path cost. Static per map. */
+  private readonly groundSlow = new Float32Array(COLS * ROWS);
+  private readonly moveCost = new Float32Array(COLS * ROWS);
+  /** Impassable cells: rocks, mountains and towers. */
   readonly blocked = new Uint8Array(COLS * ROWS);
   private spawnCount = 0;
 
@@ -390,9 +393,15 @@ export class Sim {
     this.bountyMult = 1 + 0.1 * perk(config, 'bounty');
     this.itemMax = 1 + perk(config, 'airpower');
     this.items.fill(this.itemMax);
-    this.fields = map.routes.map((r) => new FlowField(r.exit));
-    this.scratch = map.routes.map((r) => new FlowField(r.exit));
-    for (let i = 0; i < map.grid.length; i++) this.blocked[i] = map.grid[i] === T_ROCK ? 1 : 0;
+    for (let i = 0; i < map.grid.length; i++) {
+      const t = map.grid[i];
+      this.blocked[i] = t === T_ROCK || t === T_MOUNT ? 1 : 0;
+      this.groundSlow[i] = t === T_WATER ? WATER_SLOW : 1;
+      this.moveCost[i] = 1 / this.groundSlow[i];
+    }
+    this.tarGrid.set(this.groundSlow);
+    this.fields = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
+    this.scratch = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
     for (const f of this.fields) f.compute(this.blocked);
     for (let i = 0; i < MAX_ENEMIES; i++) this.eFree[i] = MAX_ENEMIES - 1 - i;
     this.eFreeTop = MAX_ENEMIES;
@@ -443,7 +452,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -860,7 +869,7 @@ export class Sim {
     this.radarGrid.fill(0);
     this.jamGrid.fill(0);
     this.salvageGrid.fill(0);
-    this.tarGrid.fill(1);
+    this.tarGrid.set(this.groundSlow);
     this.spikeGrid.fill(0);
     this.spikeSrc.fill(null);
     const ballistics = 1 + 0.05 * perk(this.config, 'ballistics');

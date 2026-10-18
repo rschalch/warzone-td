@@ -20,10 +20,15 @@ current route is drawn in white and the route your new tower would create in gre
 Five maps, from 96×64 cells (Open Field) up to 160×104 cells with three routes (Badlands). The map is larger than
 the screen: pan and zoom the camera, and use the minimap in the corner to jump around.
 
+Terrain shapes the maze: **mountain ranges** are impassable (and never seal a route, so their passes become
+natural choke points), and **rivers** can be crossed but slow ground units to 55% speed. Ground units weigh
+that when picking a path: they go around a river when a dry way is about as quick. Nothing can be built on
+either; aircraft ignore both.
+
 ## Modes
-- **Campaign maps** and **random maps** (size, routes and rock density from a shareable code such as `M2-1-48213`).
+- **Campaign maps** and **random maps** (size, routes, rock density and terrain from a shareable code such as `M2-12-48213`).
 - **Daily challenge**: the same map, seed and twist for everyone that day.
-- **Map editor**: paint rocks, place entry/exit gates, save, play, or share the map as a link.
+- **Map editor**: paint rocks, rivers and mountains, place entry/exit gates, save, play, or share the map as a link.
 - **Co-op**: two players, one shared bank. The host gets a room code; the game runs in lockstep over a direct
   WebRTC connection (PeerJS only brokers the introduction).
 - **Co-op with AI**: play alongside an AI commander that shares your bank (Support / Equal / Lead: 30, 50 or 70%).
@@ -87,10 +92,12 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
 - `scripts/gauntlet.ts` and `scripts/bot.ts` — headless balance tools: damage per dollar for every tower against a
   standard wave, and a heuristic bot that plays whole games
   (`npx vite build --ssr scripts/bot.ts --outDir .bench && node .bench/bot.js`).
-- `src/game/maps.ts` — map definitions (size, gates, rock count). Map size is a live module binding in
-  `defs.ts` (`setMapSize`), so the hot loops read plain numbers. Rocks grow in outcrops and are rejected if
-  they would cut a route, checked with a cheap flood fill.
-- `src/game/flow.ts` — one Dijkstra distance field per route (8-way moves, no corner cutting), recomputed
+- `src/game/maps.ts` — map definitions (size, gates, rock count, rivers, mountain ranges). Map size is a live
+  module binding in `defs.ts` (`setMapSize`), so the hot loops read plain numbers. Rivers meander across the
+  first route's direction; mountain ranges are chains of noisy discs. Rocks and mountains are rejected if they
+  would cut a route: first a tiny local search (are the free cells around the obstacle still connected?), and a
+  flood fill per route only when that fails.
+- `src/game/flow.ts` — one Dijkstra distance field per route (8-way moves weighted by terrain, no corner cutting), recomputed
   when the maze changes. Each unit steps toward its cell's `next` cell, so pathing costs one lookup per unit.
 - `src/game/` — simulation with no rendering code. Fixed 60 Hz tick, struct-of-arrays typed-array storage
   for enemies, projectiles and effects (no per-frame allocations), and a counting-sort spatial grid for targeting.

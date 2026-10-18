@@ -60,7 +60,7 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/game/sim.ts` | The whole simulation: fixed 60 Hz `step()`, enemies/projectiles/fx as typed arrays, towers, zones, drones, hero, items, auras, `exec(cmd)`, `snapshot()/restore()`, `stateHash()`, events |
 | `src/game/commands.ts` | The `Command` union |
 | `src/game/config.ts` | `GameConfig` (map, difficulty, modifiers, perks, seed), difficulties, challenge modifiers, research perks |
-| `src/game/maps.ts`, `mapgen.ts` | Campaign maps, `buildMap()` (rocks never cut a route), seeded random maps, daily challenge |
+| `src/game/maps.ts`, `mapgen.ts` | Campaign maps, `buildMap()`: cell types `T_BUILD/T_ROCK/T_GATE/T_WATER/T_MOUNT`, rivers, mountain ranges, rocks (obstacles never cut a route), editor paint (RLE); seeded random maps, daily challenge |
 | `src/game/partner.ts` | The AI partner (Co-op with AI): reads the sim, returns `Command`s (`place` with `by: PARTNER`); run by `Session` every `PARTNER_EVERY` ticks in local games |
 | `src/game/flow.ts`, `spatial.ts`, `rng.ts` | Dijkstra flow fields per route, counting-sort spatial hash, mulberry32 RNG |
 | `src/app/session.ts` | A running game: sim + command log; local / replay / co-op lockstep (input delay 6 ticks, state-hash desync checks) |
@@ -114,6 +114,12 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 - The side panel **explains** whatever is clicked or hovered (towers, enemies, commander, items, abilities).
 - **10 upgrade levels** per tower; every level raises damage, range and fire rate and **looks different**.
 - Detailed models, performance, and polish (sound, effects) are all valued. Verify visual changes with screenshots.
+
+**Terrain:** `MapDef.rivers` / `mountains` (generated) or `paint` (editor). Water is walkable at `WATER_SLOW` speed
+(`Sim.groundSlow`, folded into `tarGrid`) and costs `1 / WATER_SLOW` in the flow fields; mountains are `blocked`.
+Neither is buildable (`footprint` needs `T_BUILD`). The look is per-pixel hillshading in `drawLandforms()`
+(`atlas.ts`) plus 3D `peak1-3` sprites on massifs in iso view only (`mountainPeaks()`). Adding fields to a campaign
+`MapDef` changes that map for new games only: saves and replays carry their own copy of the def.
 
 ## Balance notes
 

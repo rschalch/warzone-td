@@ -11,7 +11,7 @@ const MIX = (process.env.AIR ? [4] : [0, 0, 0, 1, 1, 2, 2, 3, 4, 7, 6, 8]);
 const SPACING = Number(process.env.SPACING ?? 24); // ticks between spawns // infantry-heavy, some armour, air, shields, stealth, medic
 
 function run(type: number, level: number): { dmg: number; cost: number } {
-  const sim = Sim.create({ map: { ...MAPS[0], rocks: 0 }, difficulty: 'normal', modifiers: [], perks: {}, seed: 5 });
+  const sim = Sim.create({ map: { ...MAPS[0], rocks: 0, rivers: 0, mountains: 0 }, difficulty: 'normal', modifiers: [], perks: {}, seed: 5 });
   sim.hero = null;
   const def = TOWERS[type];
   const row = def.walkable ? 31 : 27;
