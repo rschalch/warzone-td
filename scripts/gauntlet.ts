@@ -54,11 +54,11 @@ for (let i = 0; i < TOWERS.length; i++) {
   if (d.kind === 'hacker' || d.kind === 'emp') {
     // hacked units do the damage / EMP is mostly control: still report it
   }
-  const vals = d.levels.map((_, l) => run(i, l));
+  const vals = [0, 4, 9].filter((l) => l < d.levels.length).map((l) => run(i, l));
   const rel = vals.map((v) => (v.dmg / v.cost / base).toFixed(2));
   rows.push(`${d.short.padEnd(11)} ${String(d.levels[0].cost).padStart(4)}  ${rel.map((r) => r.padStart(5)).join(' ')}   dmg ${vals.map((v) => Math.round(v.dmg)).join('/')}`);
 }
 const hp = MIX.reduce((a, k) => a + ENEMIES[k].hp, 0) * 3;
 console.log(`wave ${WAVE}, ${MIX.length * 3} units, base hp ${hp}; value relative to Gun L1 (1.00 = ${base.toFixed(2)} dmg/$)`);
-console.log('tower        cost     L1    L2    L3');
+console.log("tower        cost     L1    L5   L10");
 console.log(rows.join('\n'));

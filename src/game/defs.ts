@@ -453,6 +453,51 @@ export const TOWERS: TowerDef[] = [
   }),
 ];
 
+// ---------------------------------------------------------------- upgrade levels
+//
+// Every tower is balanced at level 1 (above); its other levels are generated from it so that each
+// upgrade raises power, range and fire rate together, plus whatever else the tower does.
+
+export const MAX_LEVEL = 10;
+
+/** Rank names shown next to the level. */
+export const RANKS = ['Recruit', 'Private', 'Corporal', 'Sergeant', 'Lieutenant', 'Captain', 'Major', 'Colonel', 'General', 'Legend'];
+
+const r1 = (n: number) => Math.round(n * 10) / 10;
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Level n (0-based) of a tower, grown from its level-1 stats. */
+function grow(b: TowerLevel, n: number): TowerLevel {
+  const power = 1 + 0.35 * n + 0.03 * n * n; // ×6.6 at level 10
+  const lv: TowerLevel = {
+    cost: n === 0 ? b.cost : Math.round(b.cost * (0.5 + 0.28 * n)),
+    damage: r1(b.damage * power),
+    range: Math.round(b.range * (1 + 0.045 * n)), // ×1.4
+    rate: r2(b.rate * (1 + 0.06 * n)), // ×1.54
+  };
+  if (b.splash) lv.splash = Math.round(b.splash * (1 + 0.04 * n));
+  if (b.chain) lv.chain = b.chain + Math.floor(n / 2);
+  if (b.slow) lv.slow = r2(Math.max(0.2, b.slow - 0.035 * n));
+  if (b.slowTime) lv.slowTime = r1(b.slowTime * (1 + 0.05 * n));
+  if (b.burn) lv.burn = r1(b.burn * power);
+  if (b.shred) lv.shred = r1(b.shred * (1 + 0.25 * n));
+  if (b.chill) lv.chill = r2(Math.min(0.8, b.chill + 0.03 * n));
+  if (b.pull) lv.pull = Math.round(b.pull * (1 + 0.08 * n));
+  if (b.knock) lv.knock = Math.round(b.knock * (1 + 0.07 * n));
+  if (b.duration) lv.duration = r1(b.duration * (1 + 0.06 * n));
+  if (b.buff) lv.buff = r2(b.buff * (1 + 0.12 * n));
+  if (b.income) lv.income = Math.round(b.income * (1 + 0.3 * n));
+  if (b.interest) lv.interest = r2(b.interest + 0.004 * n);
+  if (b.cap) lv.cap = Math.round(b.cap * (1 + 0.3 * n));
+  if (b.charge) lv.charge = Math.round(b.charge * (1 - 0.045 * n));
+  if (b.drones) lv.drones = b.drones + Math.floor(n / 3);
+  return lv;
+}
+
+for (const t of TOWERS) {
+  if (t.levels.length > 1) t.levels = Array.from({ length: MAX_LEVEL }, (_, n) => grow(t.levels[0], n));
+}
+
 export const towerIndex = (kind: TowerKind) => TOWERS.findIndex((t) => t.kind === kind);
 export const TW_GUN = towerIndex('gun');
 export const TW_EMP = towerIndex('emp');

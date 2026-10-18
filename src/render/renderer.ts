@@ -223,7 +223,9 @@ export class GameRenderer {
   private readonly enemyTop: number[];
   private readonly turretFrames: Texture[][];
   private readonly turretTopTex: Texture[];
-  private readonly baseTex: (Texture | null)[];
+  /** Per tower type, per level (bases show the tower's rank). */
+  private readonly baseTex: (Texture | null)[][];
+  private readonly cornerTex: Texture;
   private readonly rockTex: Texture[];
   private readonly rotorTex: Texture[];
   private readonly projTex: Texture[];
@@ -268,9 +270,10 @@ export class GameRenderer {
     this.enemyTop = ENEMIES.map((e) => MODEL_TOP[e.tex]);
     this.turretFrames = TOWERS.map((t) => (t.turret ? frames(t.turret) : []));
     this.turretTopTex = TOWERS.map((t) => (t.turret ? atlas[`${t.turret}_t`] : atlas.px));
-    this.baseTex = TOWERS.map((t, i) => {
-      if (t.turret) return atlas[`base${i}_${view}`];
-      return t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null;
+    this.cornerTex = atlas[`basecorners_${view}`];
+    this.baseTex = TOWERS.map((t) => {
+      if (t.turret) return t.levels.map((_, lv) => atlas[`basel${lv}_${view}`]);
+      return [t.kind === 'barricade' || t.kind === 'gate' ? atlas[`${t.kind}_${view}`] : null];
     });
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
@@ -590,15 +593,21 @@ export class GameRenderer {
       const def = TOWERS[t.type];
       const sx = p.x(t.x, t.y);
       const sy = p.y(t.x, t.y);
-      const base = this.baseTex[t.type]!;
+      const bases = this.baseTex[t.type];
+      const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
+      if (def.turret) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);
+      if (t.level >= 9) {
+        // legendary towers glow in their own colour
+        this.glow.push(this.fxTex[FX_GLOW], sx, sy - 10 * p.lift, 0, 1.1, 1.1 * (this.iso ? 0.7 : 1), def.color, 0.22 + 0.08 * Math.sin(time * 3 + t.id), 0.5);
+      }
       if (!this.iso) this.shadows.push(base, t.x + 3, t.y + 4, 0, 1, 1, 0x000000, 0.35);
       if (def.turret) {
         const a = this.turretAngle(t, alpha, time);
         // recoil kicks the turret back along its barrel
         const tx = t.x - Math.cos(a) * t.recoil * 3;
         const ty = t.y - Math.sin(a) * t.recoil * 3;
-        const sc = 1 + t.level * 0.07;
+        const sc = 1 + t.level * 0.03;
         if (this.iso) {
           const fr = this.turretFrames[t.type];
           this.world.push(fr[dirIndex(a) % fr.length], p.x(tx, ty), p.y(tx, ty), 0, sc, sc, 0xffffff, 1);
@@ -608,7 +617,6 @@ export class GameRenderer {
           this.world.push(tex, tx, ty, a, sc, sc, 0xffffff, 1);
         }
       }
-      if (def.levels.length > 1) for (let n = 0; n < t.level; n++) this.world.push(this.atlas.pip, sx - 4 + n * 8, sy + (this.iso ? 9 : 15), 0, 1, 1, 0xffffff, 1, 0.5);
       if (def.manual) {
         // charge gauge; glows when ready to fire
         const c = s.chargeLevel(t);
@@ -735,8 +743,10 @@ export class GameRenderer {
         this.decals.push(a.d_gate_open, t.x, t.y, 0, 1, 1, 0xffffff, 1, 0.5);
         break;
     }
-    if (TOWERS[t.type].levels.length > 1) {
-      for (let n = 0; n < t.level; n++) this.decals.push(a.pip, t.x - 4 + n * 8, t.y + t.size * 6, 0, 1, 1, 0xffffff, 1, 0.5);
+    // traps have no base to plate: their level shows as a row of dots, gold from level 7
+    for (let n = 0; n < t.level; n++) {
+      const x = t.x + (n - (t.level - 1) / 2) * 3.4;
+      this.decals.push(a.px, x, t.y + t.size * 7, 0, 0.55, 0.55, n >= 6 ? 0xffd84a : 0xe8ecf0, 0.95);
     }
   }
 
@@ -956,9 +966,9 @@ export class GameRenderer {
       if (status === 'blocked') {
         g.moveTo(x - 10, y - 10).lineTo(x + 10, y + 10).moveTo(x + 10, y - 10).lineTo(x - 10, y + 10)
           .stroke({ width: 4, color: 0xff3a3a, alpha: 0.95 });
-      } else if (status !== 'invalid' && this.baseTex[ov.placing]) {
+      } else if (status !== 'invalid' && this.baseTex[ov.placing][0]) {
         this.ghost.visible = true;
-        const base = this.baseTex[ov.placing]!;
+        const base = this.baseTex[ov.placing][0]!;
         const turret = !def.turret ? this.atlas.px
           : this.iso ? this.atlas[dirFrame(def.turret, -Math.PI * 0.75, models[def.turret].dirs)] : this.turretTopTex[ov.placing];
         this.ghostBase.texture = base;

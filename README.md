@@ -36,7 +36,7 @@ Games are saved at every wave and when you leave the tab, and can be continued f
 as an app and works offline.
 
 ## Towers
-34 towers in seven groups, all shown at once in the build palette. Each has three levels except the barricade and the gate.
+34 towers in seven groups, all shown at once in the build palette. Each has ten upgrade levels (except the barricade and the gate): every level raises damage, range and fire rate, and the tower's base changes so you can see its rank — concrete, steel, dark armour with gold trim, then gold, with chevrons and stars on the front edge.
 - **Basic** — Gun, Cannon, Missile, Laser, Tesla, EMP.
 - **Fire & Chem** — Flamethrower (cone, fire spreads), Napalm Mortar (burning ground), Acid Sprayer (shreds armour),
   Gas Launcher (drifting clouds, strong vs infantry).

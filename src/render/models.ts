@@ -118,7 +118,6 @@ function wheel(g: Ctx, x: number, y: number, w: number, h: number) {
   for (let tx = x + 0.7; tx < x + w; tx += 1.2) line(g, [tx, y + 0.2, tx, y + h - 0.2], 'rgba(80,80,70,0.6)', 0.4);
 }
 
-const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
 
 // palettes
 const OLIVE = ['#7f8f4a', '#5b6b34', '#3b4622'];
@@ -410,26 +409,127 @@ for (const [name, size, h] of [['rock1', 9, 9], ['rock2', 19, 16]] as const) {
 
 const D = TOWER_DECK;
 
-TOWERS.forEach((t, i) => {
-  if (!t.turret) return; // walls and floor traps have their own models / decals
-  model(`base${i}`, 21, 1, [
-    P(0, 2, (g) => box(g, -19.5, -19.5, 39, 39, 3, '#4a4b44')),
-    P(2, D, (g) => {
+// Tower bases change with the tower's level so upgrades show at a glance: the plating goes from
+// concrete (1-3) to steel (4-6), dark armour with gold trim (7-9) and gold (10); rivets, armour skirts,
+// corner lamps, vents and antenna masts accumulate; a rank badge (chevrons, then silver, then gold
+// stars) sits on the front edge.
+
+const PLATING = [
+  { side: ['#a3a59a', '#5f6158'], top: ['#8a8c82', '#696b62'], ring: '#4c4e47', trim: null },
+  { side: ['#8e9aaa', '#4a5262'], top: ['#7c8898', '#5a6474'], ring: '#3e4652', trim: null },
+  { side: ['#5e6256', '#2c2e28'], top: ['#4e5248', '#383b33'], ring: '#2a2c26', trim: '#d8b450' },
+  { side: ['#f0d478', '#8a6a1c'], top: ['#d8b85a', '#8a6a24'], ring: '#5a4410', trim: '#fff0b0' },
+];
+
+function star(g: Ctx, x: number, y: number, r: number, fill: string) {
+  const pts: number[] = [];
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + (k * Math.PI) / 5;
+    const rr = k % 2 ? r * 0.45 : r;
+    pts.push(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  poly(g, pts, fill, 'rgba(0,0,0,0.6)');
+}
+
+/** Rank insignia for level lv (0-based) on the front edge of a base. */
+function rankBadge(g: Ctx, lv: number) {
+  if (lv === 0) return;
+  const y = 15.8;
+  if (lv <= 3) {
+    // 1-3 chevrons
+    for (let k = 0; k < lv; k++) {
+      const x = (k - (lv - 1) / 2) * 4.2;
+      line(g, [x - 1.7, y + 0.9, x, y - 0.8, x + 1.7, y + 0.9], '#ffd84a', 1.1);
+    }
+  } else if (lv <= 6) {
+    for (let k = 0; k < lv - 3; k++) star(g, (k - (lv - 4) / 2) * 4.4, y, 1.8, '#e8ecf0');
+  } else if (lv <= 8) {
+    for (let k = 0; k < lv - 5; k++) star(g, (k - (lv - 6) / 2) * 4.4, y, 1.9, '#ffd84a');
+  } else {
+    star(g, 0, y, 2.6, '#ffe070');
+  }
+}
+
+// One base per level, shared by every tower type: each tower's colour comes from a separate
+// corner-marking overlay ('basecorners') drawn on top with a tint.
+const LEVELS = Math.max(...TOWERS.map((t) => t.levels.length));
+{
+  const c = '#ffc84a'; // warm lamp / glow colour
+  for (let lv = 0; lv < LEVELS; lv++) {
+    const m = PLATING[lv >= 9 ? 3 : lv >= 6 ? 2 : lv >= 3 ? 1 : 0];
+    const parts: Part[] = [
+      P(0, 2, (g) => box(g, -19.5, -19.5, 39, 39, 3, lv >= 6 ? '#2e3028' : '#4a4b44')),
+    ];
+    if (lv >= 2) {
+      // armour skirt around the foot
+      parts.push(P(0, 4, (g) => {
+        box(g, -20.5, -20.5, 41, 41, 4, grad(g, -20, -20, 20, 20, [[0, m.side[0]], [1, m.side[1]]]));
+        for (let k = -16; k <= 16; k += 8) {
+          circ(g, k, -19.6, 0.6, 'rgba(0,0,0,0.45)', null);
+          circ(g, -19.6, k, 0.6, 'rgba(0,0,0,0.45)', null);
+        }
+      }));
+    }
+    parts.push(P(2, D, (g) => {
       const pts = [-18, -14, -14, -18, 14, -18, 18, -14, 18, 14, 14, 18, -14, 18, -18, 14];
-      poly(g, pts, grad(g, -18, -18, 18, 18, [[0, '#a3a59a'], [1, '#5f6158']]));
-      box(g, -13.5, -13.5, 27, 27, 2, grad(g, -13, -13, 13, 13, [[0, '#8a8c82'], [1, '#696b62']]), 'rgba(0,0,0,0.35)');
-      for (let k = -12; k <= 12; k += 6) line(g, [k, -13.5, k, 13.5], 'rgba(0,0,0,0.1)');
-      circ(g, 0, 0, 10.5, '#4c4e47', 'rgba(0,0,0,0.5)');
-      circ(g, 0, 0, 9, '#5a5c54', null);
-      for (const [x, y] of [[-11.5, -11.5], [11.5, -11.5], [-11.5, 11.5], [11.5, 11.5]]) circ(g, x, y, 0.8, '#3a3b36', null);
-      // coloured hazard corners identify the tower type
-      const c = hex(t.color);
-      for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        poly(g, [sx * 18, sy * 14, sx * 14, sy * 18, sx * 10.5, sy * 18, sx * 18, sy * 10.5], c, 'rgba(0,0,0,0.4)');
+      poly(g, pts, grad(g, -18, -18, 18, 18, [[0, m.side[0]], [1, m.side[1]]]));
+      if (m.trim) poly(g, pts, 'rgba(0,0,0,0)', m.trim);
+      box(g, -13.5, -13.5, 27, 27, 2, grad(g, -13, -13, 13, 13, [[0, m.top[0]], [1, m.top[1]]]), 'rgba(0,0,0,0.35)');
+      if (lv >= 3) {
+        // steel plate seams
+        line(g, [-13.5, 0, -10.5, 0], 'rgba(0,0,0,0.3)');
+        line(g, [10.5, 0, 13.5, 0], 'rgba(0,0,0,0.3)');
+        line(g, [0, -13.5, 0, -10.5], 'rgba(0,0,0,0.3)');
+      } else {
+        for (let k = -12; k <= 12; k += 6) line(g, [k, -13.5, k, 13.5], 'rgba(0,0,0,0.1)');
       }
-    }),
-  ]);
-});
+      if (lv >= 9) circ(g, 0, 0, 12.2, rgrad(g, 0, 0, 12.2, [[0.7, c], [1, 'rgba(0,0,0,0)']]), null); // glowing ring
+      circ(g, 0, 0, 10.5, m.ring, 'rgba(0,0,0,0.5)');
+      circ(g, 0, 0, 9, lv >= 6 ? '#3a3c34' : '#5a5c54', null);
+      if (lv >= 1) {
+        // rivets along the top edge
+        for (let k = -10; k <= 10; k += 5) {
+          circ(g, k, -16, 0.55, 'rgba(20,20,16,0.7)', null);
+          circ(g, -16, k, 0.55, 'rgba(20,20,16,0.7)', null);
+        }
+      }
+      for (const [x, y] of [[-11.5, -11.5], [11.5, -11.5], [-11.5, 11.5], [11.5, 11.5]]) circ(g, x, y, 0.8, '#3a3b36', null);
+      if (lv >= 5) {
+        // side vents
+        for (const y of [-6, -3, 0, 3, 6]) {
+          box(g, 14.3, y - 0.6, 3, 1.2, 0.4, '#1a1c18', null);
+          box(g, y - 0.6, 14.3, 1.2, 3, 0.4, '#1a1c18', null);
+        }
+      }
+      if (lv >= 4) {
+        // corner lamps in the tower's colour
+        for (const [x, y] of [[-15.2, -15.2], [15.2, -15.2], [-15.2, 15.2], [15.2, 15.2]]) circ(g, x, y, 1.3, rgrad(g, x, y, 1.3, [[0, '#ffffff'], [0.4, c], [1, c]]), 'rgba(0,0,0,0.6)');
+      }
+      rankBadge(g, lv);
+    }));
+    if (lv >= 7) {
+      // antenna masts at the back corners
+      parts.push(P(D, D + 14, (g) => {
+        circ(g, -15.5, -9, 0.6, '#2a2a28', null);
+        circ(g, -9, -15.5, 0.6, '#2a2a28', null);
+      }));
+      parts.push(P(D + 14, D + 15, (g) => {
+        circ(g, -15.5, -9, 1, '#ff4a3a', null);
+        circ(g, -9, -15.5, 1, '#ff4a3a', null);
+      }));
+    }
+    model(`basel${lv}`, 22, 1, parts);
+  }
+}
+
+// the hazard corners that identify the tower type: white, tinted per tower at draw time
+model('basecorners', 22, 1, [
+  P(D - 0.5, D, (g) => {
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      poly(g, [sx * 18, sy * 14, sx * 14, sy * 18, sx * 10.5, sy * 18, sx * 18, sy * 10.5], '#ffffff', 'rgba(0,0,0,0.4)');
+    }
+  }),
+], false, false);
 
 model('t_gun', 21, DIRS, [
   P(D, D + 2, (g) => circ(g, 0, 0, 8.5, '#45463f')),
