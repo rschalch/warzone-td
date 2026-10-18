@@ -8,6 +8,7 @@ A tower defense game inspired by the Flash classic *Warzone Tower Defense*, buil
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # production bundle in dist/
+npm run smoke    # end-to-end browser test (needs Google Chrome)
 ```
 
 ## How it plays
@@ -73,6 +74,8 @@ Camera: drag empty ground, right-drag or middle-drag, or the arrow keys to pan �
 `Home` to see the whole map · click or drag on the minimap to jump.
 
 ## Architecture
+Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands, ground rules and how-tos.
+
 - `src/game/commands.ts` + `src/app/session.ts` — every player action is a command applied between ticks. The
   simulation is deterministic (gameplay and particles use separate RNGs), so a config plus the command log
   reproduces a game exactly: that is what replays, co-op lockstep (with periodic state-hash checks) and saves use.
