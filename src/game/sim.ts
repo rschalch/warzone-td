@@ -6,7 +6,7 @@ import {
 import { DIFFICULTIES, perk, type GameConfig } from './config';
 import type { Command } from './commands';
 import { FlowField } from './flow';
-import { T_BUILD, T_MOUNT, T_ROCK, T_WATER, WATER_SLOW, buildMap, type GameMap } from './maps';
+import { T_BUILD, T_MOUNT, T_ROCK, T_TREE, T_WATER, WATER_SLOW, buildMap, type GameMap } from './maps';
 import { Rng } from './rng';
 import { SpatialHash } from './spatial';
 
@@ -221,7 +221,7 @@ export class Sim {
   /** Speed factor of the bare ground (water slows ground units) and the matching path cost. Static per map. */
   private readonly groundSlow = new Float32Array(COLS * ROWS);
   private readonly moveCost = new Float32Array(COLS * ROWS);
-  /** Impassable cells: rocks, mountains and towers. */
+  /** Impassable cells: rocks, mountains, forests and towers. */
   readonly blocked = new Uint8Array(COLS * ROWS);
   private spawnCount = 0;
 
@@ -395,7 +395,7 @@ export class Sim {
     this.items.fill(this.itemMax);
     for (let i = 0; i < map.grid.length; i++) {
       const t = map.grid[i];
-      this.blocked[i] = t === T_ROCK || t === T_MOUNT ? 1 : 0;
+      this.blocked[i] = t === T_ROCK || t === T_MOUNT || t === T_TREE ? 1 : 0;
       this.groundSlow[i] = t === T_WATER ? WATER_SLOW : 1;
       this.moveCost[i] = 1 / this.groundSlow[i];
     }

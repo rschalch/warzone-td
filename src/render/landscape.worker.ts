@@ -16,6 +16,6 @@ self.onmessage = (e: MessageEvent<Job>) => {
   const { cols, rows, grid, seed, sub } = e.data;
   setMapSize(cols, rows);
   const L = buildLandscape({ grid, def: { seed } } as unknown as GameMap, sub);
-  const arrays = [L.height, L.mount, L.water, L.depth, L.moist, L.sediment, L.sun, L.ao];
+  const arrays = [L.height, L.mount, L.water, L.depth, L.forest, L.moist, L.sediment, L.sun, L.ao];
   (self as unknown as Worker).postMessage(L, arrays.map((a) => a.buffer));
 };

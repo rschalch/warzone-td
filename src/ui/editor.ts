@@ -1,10 +1,10 @@
-// Map editor: paint rocks, rivers and mountains, put entry/exit gates on the edges (paired in order:
+// Map editor: paint rocks, rivers, mountains and forests, put entry/exit gates on the edges (paired in order:
 // entry 1 → exit 1), then save, share as a link, or play. Rocks and mountains that would cut a route are
 // dropped when the map is built, as in generated maps.
 
-import { T_MOUNT, T_WATER, decodePaint, encodePaint, type Gate, type MapDef, type Side } from '../game/maps';
+import { T_MOUNT, T_TREE, T_WATER, decodePaint, encodePaint, type Gate, type MapDef, type Side } from '../game/maps';
 
-type Tool = 'rock1' | 'rock2' | 'river' | 'mountain' | 'erase' | 'entry' | 'exit';
+type Tool = 'rock1' | 'rock2' | 'river' | 'mountain' | 'forest' | 'erase' | 'entry' | 'exit';
 const BRUSH = 1.6; // cells, radius of the river / mountain brush
 
 const GATE_W = 4;
@@ -51,6 +51,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
         <button data-tool="rock1">Small rock</button>
         <button data-tool="river">River</button>
         <button data-tool="mountain">Mountain</button>
+        <button data-tool="forest">Forest</button>
         <button data-tool="erase">Erase</button>
         <button data-tool="entry">Entry gate</button>
         <button data-tool="exit">Exit gate</button>
@@ -118,7 +119,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     }
     for (let i = 0; i < cells.length; i++) {
       if (!cells[i]) continue;
-      g.fillStyle = cells[i] === T_WATER ? '#2f6a86' : '#6e6454';
+      g.fillStyle = cells[i] === T_WATER ? '#2f6a86' : cells[i] === T_TREE ? '#2c5a1c' : '#6e6454';
       g.fillRect((i % def.cols) * scale, Math.floor(i / def.cols) * scale, scale, scale);
     }
     for (const k of def.rockList!) {
@@ -144,7 +145,7 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
     hint.textContent = unpaired
       ? `Every entry needs an exit (${entries.length} in, ${exits.length} out).`
       : tool === 'entry' || tool === 'exit' ? 'Click on an edge to add a gate; Erase removes one.'
-        : `${def.rockList!.length} rocks · ${cells.filter((t) => t === T_WATER).length} water · ${cells.filter((t) => t === T_MOUNT).length} mountain cells · ${def.routes.length} route${def.routes.length === 1 ? '' : 's'}. Drag to paint.`;
+        : `${def.rockList!.length} rocks · ${cells.filter((t) => t === T_WATER).length} water · ${cells.filter((t) => t === T_MOUNT).length} mountain · ${cells.filter((t) => t === T_TREE).length} forest cells · ${def.routes.length} route${def.routes.length === 1 ? '' : 's'}. Drag to paint.`;
   };
 
   const cellAt = (e: PointerEvent): [number, number] => {
@@ -170,8 +171,8 @@ export function openEditor(root: HTMLElement, start: MapDef, host: EditorHost): 
   };
 
   const paint = (c: number, r: number) => {
-    if (tool === 'river' || tool === 'mountain') {
-      brush(c, r, tool === 'river' ? T_WATER : T_MOUNT);
+    if (tool === 'river' || tool === 'mountain' || tool === 'forest') {
+      brush(c, r, tool === 'river' ? T_WATER : tool === 'forest' ? T_TREE : T_MOUNT);
     } else if (tool === 'rock1' || tool === 'rock2') {
       const s = tool === 'rock2' ? 2 : 1;
       if (c < 2 || r < 1 || c + s > def.cols - 2 || r + s > def.rows - 1) return;

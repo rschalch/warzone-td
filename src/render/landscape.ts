@@ -4,7 +4,7 @@
 // Purely cosmetic and DOM-free: the simulation never reads it. Deterministic per map.
 
 import { COLS, ROWS } from '../game/defs';
-import { T_MOUNT, T_WATER, type GameMap } from '../game/maps';
+import { T_MOUNT, T_TREE, T_WATER, type GameMap } from '../game/maps';
 import { Rng } from '../game/rng';
 
 export interface Landscape {
@@ -18,6 +18,8 @@ export interface Landscape {
   /** Soft mask of the water cells and depth in cells. */
   water: Float32Array;
   depth: Float32Array;
+  /** Soft mask of the forest cells (0-1). */
+  forest: Float32Array;
   /** 0 dry - 1 wet. */
   moist: Float32Array;
   /** Sediment laid down by the erosion (gravel fans, valley floors), 0-1. */
@@ -303,6 +305,7 @@ export function buildLandscape(map: GameMap, sub: number): Landscape {
   const water = blur(upsample(isW, sub), W, H, 1, Math.max(1, sub >> 1));
   const depth = upsample(wDepth, sub);
   const valley = blur(water, W, H, 3, sub * 2);
+  const forest = blur(upsample(Float32Array.from(grid, (t) => (t === T_TREE ? 1 : 0)), sub), W, H, 1, Math.max(1, sub >> 1));
   // what shapes the height must be smooth to its slope (single box passes leave creases that the
   // light turns into lines): three passes each
   const mountH = blur(upsample(isM, sub), W, H, 3, Math.max(1, sub >> 1));
@@ -402,5 +405,5 @@ export function buildLandscape(map: GameMap, sub: number): Landscape {
   const ao = new Float32Array(n);
   for (let k = 0; k < n; k++) ao[k] = 1 - smooth(0, 18, around[k] - height[k]) * 0.6;
 
-  return { sub, W, H, height, mount, water, depth, moist, sediment, sun, ao };
+  return { sub, W, H, height, mount, water, depth, forest, moist, sediment, sun, ao };
 }

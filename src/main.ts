@@ -17,7 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
-import { buildAtlas, buildBackground, drawTerrain, loadTerrainTextures, refineBackground, towerIcon, type Atlas } from './render/atlas';
+import { buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -558,7 +558,7 @@ const previews = new Map<string, HTMLCanvasElement>();
 
 /** Low-res terrain for map pickers; borrows the map size, then restores the current one. */
 function preview(def: MapDef, w: number, h: number): HTMLCanvasElement {
-  const key = JSON.stringify([def.name, def.seed, def.cols, def.rows, def.routes, def.rocks, def.rockList?.length, def.rivers, def.mountains, def.paint?.length]);
+  const key = JSON.stringify([def.name, def.seed, def.cols, def.rows, def.routes, def.rocks, def.rockList?.length, def.rivers, def.mountains, def.forests, def.paint?.length]);
   let src = previews.get(key);
   if (src) return src;
   src = drawTerrain(buildMap(def), Math.min(w / (def.cols * TILE), h / (def.rows * TILE)) * 2, true);
@@ -1054,7 +1054,7 @@ async function boot(): Promise<void> {
   });
   stage.appendChild(app.canvas);
   app.stage.addChild(cam);
-  [atlas] = await Promise.all([buildAtlas(), loadTerrainTextures()]);
+  atlas = await buildAtlas();
   hud.setIcons((type) => towerIcon(type));
   fit();
   new ResizeObserver(fit).observe(stage);

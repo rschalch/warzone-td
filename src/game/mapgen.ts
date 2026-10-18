@@ -18,15 +18,15 @@ export interface RandomMapOptions {
   size: MapSize;
   routes: number; // 1-3
   density: number; // 0-3: rocks per 1000 cells ≈ density * 6
-  terrain: number; // 0-3: none, hills, rivers and mountains, rugged
+  terrain: number; // 0-3: none (flat, no woods), hills, rivers and mountains, rugged
 }
 
-/** Rivers and mountain ranges for each terrain setting; ranges are per 7000 cells. */
+/** Rivers, mountain ranges and groves for each terrain setting; ranges and groves are per 7000 cells. */
 const TERRAIN = [
-  { rivers: 0, ranges: 0 },
-  { rivers: 0, ranges: 1.5 },
-  { rivers: 1, ranges: 2 },
-  { rivers: 2, ranges: 3.5 },
+  { rivers: 0, ranges: 0, groves: 0 },
+  { rivers: 0, ranges: 1.5, groves: 5 },
+  { rivers: 1, ranges: 2, groves: 6 },
+  { rivers: 2, ranges: 3.5, groves: 7 },
 ];
 
 const GATE_W = 4;
@@ -83,6 +83,7 @@ export function randomMap(o: RandomMapOptions): MapDef {
     rocks: Math.round(((cols * rows) / 1000) * o.density * 6),
     rivers: TERRAIN[o.terrain].rivers,
     mountains: Math.round(((cols * rows) / 7000) * TERRAIN[o.terrain].ranges),
+    forests: Math.round(((cols * rows) / 7000) * TERRAIN[o.terrain].groves),
   };
 }
 

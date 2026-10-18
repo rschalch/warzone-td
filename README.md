@@ -20,15 +20,15 @@ current route is drawn in white and the route your new tower would create in gre
 Five maps, from 96×64 cells (Open Field) up to 160×104 cells with three routes (Badlands). The map is larger than
 the screen: pan and zoom the camera, and use the minimap in the corner to jump around.
 
-Terrain shapes the maze: **mountain ranges** are impassable (and never seal a route, so their passes become
-natural choke points), and **rivers** can be crossed but slow ground units to 55% speed. Ground units weigh
+Terrain shapes the maze: **mountain ranges** and **forests** are impassable (and never seal a route, so the gaps
+between them become natural choke points), and **rivers** can be crossed but slow ground units to 55% speed. Ground units weigh
 that when picking a path: they go around a river when a dry way is about as quick. Nothing can be built on
 either; aircraft ignore both.
 
 ## Modes
 - **Campaign maps** and **random maps** (size, routes, rock density and terrain from a shareable code such as `M2-12-48213`).
 - **Daily challenge**: the same map, seed and twist for everyone that day.
-- **Map editor**: paint rocks, rivers and mountains, place entry/exit gates, save, play, or share the map as a link.
+- **Map editor**: paint rocks, rivers, mountains and forests, place entry/exit gates, save, play, or share the map as a link.
 - **Co-op**: two players, one shared bank. The host gets a room code; the game runs in lockstep over a direct
   WebRTC connection (PeerJS only brokers the introduction).
 - **Co-op with AI**: play alongside an AI commander that shares your bank (Support / Equal / Lead: 30, 50 or 70%).
@@ -117,11 +117,8 @@ Working on the code (human or AI)? Start with [`CLAUDE.md`](CLAUDE.md): commands
   decals (no image files for any of these), and the terrain markings (grid, gates).
 - `src/render/landscape.ts`, `terrainGL.ts` — the terrain: a heightfield shaped by the map (a ridged spine over
   every massif, valleys under the rivers) and carved by droplet hydraulic erosion in a worker, then painted in one
-  WebGL2 shader: photo textures sampled without visible tiling, chosen by moisture, slope, height and eroded
-  sediment, height-blended at their borders and lit with the terrain's normals, cast shadows and occlusion.
-- `public/terrain/` — the only images: eight ground textures, CC0 photo materials from
-  [ambientCG](https://ambientcg.com) (Grass001, Grass004, Ground037, Ground080, Ground079S, Ground109, Rock060,
-  Snow004), resized to 512 px.
+  WebGL2 shader in a cartoon style: painted greens, terraced cliffs with ink outlines, cel-banded light, bright
+  water with foam lines. Cartoon trees and bushes (baked models) stand on the forests and mountain slopes.
 - `src/ui/` — DOM HUD with diffed writes, and a 2D-canvas minimap redrawn at 10 Hz.
 
 The **Stress test** button in the footer builds a serpentine maze of maxed towers and spawns 3000 enemies. The footer also shows FPS and sim/render cost.

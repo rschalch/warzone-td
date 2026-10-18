@@ -75,3 +75,5 @@ export const HERO_HELP = 'Your commander: a unit you move around the battlefield
 export const RIVER_HELP = 'Ground units wade through water at 55% speed, so a river is a natural slow zone — and they would rather walk around it when a dry way is about as quick. Aircraft fly over. Nothing can be built in the water.';
 
 export const MOUNTAIN_HELP = 'Impassable high ground: ground units must find a way around it, and nothing can be built on it. Mountains never close a route completely; the passes between peaks are natural choke points. Aircraft fly over.';
+
+export const FOREST_HELP = 'Dense woods: ground units can\'t get through and must go around, and nothing can be built among the trees. Like mountains, woods never close a route completely. Aircraft fly over.';

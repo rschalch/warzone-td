@@ -1,17 +1,10 @@
-// Ground renderer: one WebGL2 fragment-shader pass that paints the whole landscape into a canvas.
-// Photo textures (CC0, public/terrain) are sampled without visible tiling (Quilez's offset trick),
-// mixed by rules on moisture, slope, height, sediment and the gameplay masks, blended by their own
-// relief (height blending) so borders follow cracks and clumps, then lit by the landscape's normals,
-// cast shadows and ambient occlusion, and colour-graded. Rendered once per map.
+// Ground renderer: one WebGL2 fragment-shader pass that paints the whole landscape into a canvas, in a
+// cartoon style (Kingdom Rush-like): painted greens and dry patches with brush grain, mountains as
+// terraced cliffs with ink at every tier edge, a dark forest floor under the woods, cel-banded light
+// from the landscape's normals and cast shadows, bright water with foam lines. Rendered once per map.
 
 import { MAP_H, MAP_W } from '../game/defs';
 import { SUN, type Landscape } from './landscape';
-
-export const GROUND = ['grass', 'drygrass', 'patchy', 'sand', 'gravel', 'mud', 'rock', 'snow'] as const;
-export type GroundName = (typeof GROUND)[number];
-
-/** World px covered by one texture tile (and a second, larger scale mixed in for variety). */
-const TEX_WORLD = 180;
 
 const VERT = `#version 300 es
 in vec2 aPos;
@@ -28,13 +21,10 @@ in vec2 vUv;
 out vec4 outColor;
 uniform sampler2D uA; // normal.xy, height (0-1 of range), mountain mask
 uniform sampler2D uB; // water mask, water depth/4, moisture, sediment
-uniform sampler2D uC; // sun (cast shadow), ambient occlusion
-uniform sampler2D uT[8];
+uniform sampler2D uC; // sun (cast shadow), ambient occlusion, forest mask
 uniform vec2 uWorld;   // map size in world px
 uniform vec2 uHeight;  // height range (world px)
 uniform vec3 uSun;
-uniform float uTile;   // world px per texture tile
-uniform float uDetail; // 1 at full size, 0 for small overviews (no high-frequency detail)
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -44,24 +34,6 @@ float vnoise(vec2 p) {
 }
 float fbm(vec2 p) { return vnoise(p) * 0.55 + vnoise(p * 2.07 + 13.1) * 0.3 + vnoise(p * 4.13 - 7.7) * 0.15; }
 
-// texture without visible repetition: blend two copies at offsets picked by a slow noise
-// (derivatives come from the caller: they're undefined inside non-uniform control flow)
-vec3 noTile(int i, vec2 uv, vec2 dx, vec2 dy) {
-  float k = vnoise(uv * 0.35 + float(i) * 3.7) * 7.0;
-  float ia = floor(k), f = fract(k);
-  vec2 oa = sin(vec2(3.0, 7.0) * ia), ob = sin(vec2(3.0, 7.0) * (ia + 1.0));
-  vec3 a, b;
-  // sampler arrays need constant indices
-  if (i == 0) { a = textureGrad(uT[0], uv + oa, dx, dy).rgb; b = textureGrad(uT[0], uv + ob, dx, dy).rgb; }
-  else if (i == 1) { a = textureGrad(uT[1], uv + oa, dx, dy).rgb; b = textureGrad(uT[1], uv + ob, dx, dy).rgb; }
-  else if (i == 2) { a = textureGrad(uT[2], uv + oa, dx, dy).rgb; b = textureGrad(uT[2], uv + ob, dx, dy).rgb; }
-  else if (i == 3) { a = textureGrad(uT[3], uv + oa, dx, dy).rgb; b = textureGrad(uT[3], uv + ob, dx, dy).rgb; }
-  else if (i == 4) { a = textureGrad(uT[4], uv + oa, dx, dy).rgb; b = textureGrad(uT[4], uv + ob, dx, dy).rgb; }
-  else if (i == 5) { a = textureGrad(uT[5], uv + oa, dx, dy).rgb; b = textureGrad(uT[5], uv + ob, dx, dy).rgb; }
-  else if (i == 6) { a = textureGrad(uT[6], uv + oa, dx, dy).rgb; b = textureGrad(uT[6], uv + ob, dx, dy).rgb; }
-  else { a = textureGrad(uT[7], uv + oa, dx, dy).rgb; b = textureGrad(uT[7], uv + ob, dx, dy).rgb; }
-  return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * dot(a - b, vec3(1.0))));
-}
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
 vec3 rgb(int r, int g, int b) { return vec3(r, g, b) / 255.0; }
@@ -115,6 +87,11 @@ void main() {
   float foot = band(m, 0.2, 0.08) * (1.0 - inM);
   col = mix(col, grassDark * 0.85, foot * 0.45);
 
+  // ---- forest floor: deep shaded green under the trees, a dark rim where the wood starts
+  float wood = band(C.z, 0.4, 0.06);
+  col = mix(col, mix(rgb(52, 88, 30), rgb(66, 104, 36), band(p2, 0.5, 0.1)), wood);
+  col = mix(col, grassDark * 0.8, band(C.z, 0.18, 0.06) * (1.0 - wood) * 0.5);
+
   // ---- light: flat-banded (cel) sun, soft cool shadows
   float diff = max(dot(n, uSun), 0.0) / uSun.z;
   float light = 0.84 + 0.14 * band(diff, 0.8, 0.06) + 0.1 * band(diff, 1.25, 0.06);
@@ -154,7 +131,6 @@ interface Shared {
   gl: WebGL2RenderingContext;
   prog: WebGLProgram;
   data: WebGLTexture[];
-  images: (ImageBitmap | null)[] | null; // the ground textures last uploaded
 }
 let shared: Shared | null | undefined;
 
@@ -190,8 +166,7 @@ function context(): Shared | null {
     gl.uniform1i(gl.getUniformLocation(prog, 'uA'), 0);
     gl.uniform1i(gl.getUniformLocation(prog, 'uB'), 1);
     gl.uniform1i(gl.getUniformLocation(prog, 'uC'), 2);
-    gl.uniform1iv(gl.getUniformLocation(prog, 'uT'), GROUND.map((_, i) => 3 + i));
-    return (shared = { canvas, gl, prog, data, images: null });
+    return (shared = { canvas, gl, prog, data });
   } catch (e) {
     console.warn(e);
     return (shared = null);
@@ -200,9 +175,9 @@ function context(): Shared | null {
 
 /**
  * Paints the landscape at `res` canvas px per world px into a new 2D canvas, or returns null when
- * WebGL2 isn't available. `images` are the ground textures in GROUND order (null ones render grey).
+ * WebGL2 isn't available.
  */
-export function renderGround(L: Landscape, images: (ImageBitmap | null)[], res: number): HTMLCanvasElement | null {
+export function renderGround(L: Landscape, res: number): HTMLCanvasElement | null {
   const ctx = context();
   if (!ctx) return null;
   const { gl, prog, canvas } = ctx;
@@ -240,6 +215,7 @@ export function renderGround(L: Landscape, images: (ImageBitmap | null)[], res: 
       b[k * 4 + 3] = L.sediment[k] * 255;
       c[k * 4] = L.sun[k] * 255;
       c[k * 4 + 1] = L.ao[k] * 255;
+      c[k * 4 + 2] = L.forest[k] * 255;
       c[k * 4 + 3] = 255;
     }
   }
@@ -250,28 +226,10 @@ export function renderGround(L: Landscape, images: (ImageBitmap | null)[], res: 
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, d);
   });
 
-  // ground textures: repeating, mipmapped; uploaded once
-  if (ctx.images !== images) {
-    ctx.images = images;
-    images.forEach((img, i) => {
-      gl.activeTexture(gl.TEXTURE3 + i);
-      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      if (img) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([110, 110, 100, 255]));
-      gl.generateMipmap(gl.TEXTURE_2D);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    });
-  }
   gl.useProgram(prog);
   gl.uniform2f(gl.getUniformLocation(prog, 'uWorld'), MAP_W, MAP_H);
   gl.uniform2f(gl.getUniformLocation(prog, 'uHeight'), hMin, hMax);
   gl.uniform3f(gl.getUniformLocation(prog, 'uSun'), ...SUN);
-  gl.uniform1f(gl.getUniformLocation(prog, 'uTile'), TEX_WORLD);
-  gl.uniform1f(gl.getUniformLocation(prog, 'uDetail'), res >= 0.5 ? 1 : 0);
   gl.viewport(0, 0, w, h);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 

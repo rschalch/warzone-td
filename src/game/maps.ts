@@ -24,6 +24,8 @@ export interface MapDef {
   rivers?: number;
   /** Mountain ranges to raise (impassable massifs; they never cut a route). */
   mountains?: number;
+  /** Groves of trees to plant (impassable, unbuildable; they never cut a route). */
+  forests?: number;
   /** Hand-painted water and mountain cells from the editor, run-length encoded (see encodePaint). */
   paint?: string;
 }
@@ -37,6 +39,7 @@ export const MAPS: MapDef[] = [
     rows: 64,
     routes: [{ entry: { side: 'L', from: 30, to: 33 }, exit: { side: 'R', from: 30, to: 33 } }],
     rocks: 28,
+    forests: 9,
     rivers: 1,
     mountains: 3,
   },
@@ -51,6 +54,7 @@ export const MAPS: MapDef[] = [
       { entry: { side: 'T', from: 50, to: 53 }, exit: { side: 'B', from: 50, to: 53 } },
     ],
     rocks: 40,
+    forests: 11,
     rivers: 1,
     mountains: 4,
   },
@@ -62,6 +66,7 @@ export const MAPS: MapDef[] = [
     rows: 80,
     routes: [{ entry: { side: 'L', from: 4, to: 7 }, exit: { side: 'R', from: 72, to: 75 } }],
     rocks: 150,
+    forests: 7,
     mountains: 7,
   },
   {
@@ -72,6 +77,7 @@ export const MAPS: MapDef[] = [
     rows: 48,
     routes: [{ entry: { side: 'L', from: 22, to: 25 }, exit: { side: 'R', from: 22, to: 25 } }],
     rocks: 60,
+    forests: 9,
     rivers: 2,
     mountains: 4,
   },
@@ -87,6 +93,7 @@ export const MAPS: MapDef[] = [
       { entry: { side: 'B', from: 128, to: 131 }, exit: { side: 'L', from: 80, to: 83 } },
     ],
     rocks: 180,
+    forests: 14,
     rivers: 1,
     mountains: 7,
   },
@@ -102,6 +109,7 @@ export const T_ROCK = 1;
 export const T_GATE = 2; // walkable, never buildable
 export const T_WATER = 3; // walkable but slow, never buildable
 export const T_MOUNT = 4; // impassable, never buildable
+export const T_TREE = 5; // forest: impassable, never buildable
 
 /** Ground units wade through water at this fraction of their speed. */
 export const WATER_SLOW = 0.55;
@@ -205,7 +213,7 @@ export function decodePaint(paint: string, n: number): Uint8Array {
   for (const run of paint.split('.')) {
     const t = Number(run[0]);
     const len = parseInt(run.slice(1), 36) || 0;
-    if (t === T_WATER || t === T_MOUNT) cells.fill(t, i, Math.min(n, i + len));
+    if (t === T_WATER || t === T_MOUNT || t === T_TREE) cells.fill(t, i, Math.min(n, i + len));
     i += len;
   }
   return cells;
@@ -360,7 +368,7 @@ export function buildMap(def: MapDef): GameMap {
     for (let i = 0; i < grid.length; i++) {
       if (grid[i] !== T_BUILD || !painted[i]) continue;
       grid[i] = painted[i];
-      if (painted[i] === T_MOUNT) {
+      if (painted[i] === T_MOUNT || painted[i] === T_TREE) {
         blocked[i] = 1;
         mount.push(i);
       }
@@ -454,6 +462,52 @@ export function buildMap(def: MapDef): GameMap {
         x += Math.cos(heading) * stride;
         y += Math.sin(heading) * stride;
         if (Math.abs(x - cx) > COLS * 0.4 || Math.abs(y - cy) > ROWS * 0.4) break;
+      }
+    }
+  }
+
+  // groves: noisy blobs of trees anywhere on open ground (big woods and small copses), clear of the
+  // gates; a grove that would cut a route is skipped
+  const groves = def.forests ?? 0;
+  if (groves) {
+    const fr = new Rng(def.seed * 53 + 11);
+    const edge = valueNoise(fr, 2);
+    const nearGate = gateDistance(grid, 10);
+    for (let g = 0; g < groves; g++) {
+      const big = fr.next() < 0.45;
+      const radius = big ? fr.range(2.5, 4.5) : fr.range(1.2, 2.4);
+      let x = 0;
+      let y = 0;
+      let ok = false;
+      for (let attempt = 0; attempt < 30 && !ok; attempt++) {
+        x = fr.range(3, COLS - 3);
+        y = fr.range(2, ROWS - 2);
+        const i = (y | 0) * COLS + (x | 0);
+        ok = grid[i] === T_BUILD && nearGate[i] >= 10;
+      }
+      if (!ok) continue;
+      // a big wood is a few overlapping blobs
+      const parts = big ? 2 + fr.int(3) : 1;
+      for (let p = 0; p < parts; p++) {
+        const px = x + (p ? fr.range(-radius, radius) * 1.2 : 0);
+        const py = y + (p ? fr.range(-radius, radius) * 1.2 : 0);
+        const pr = radius * (p ? fr.range(0.6, 0.9) : 1);
+        const cells: number[] = [];
+        for (let r = Math.floor(py - pr - 1); r <= py + pr + 1; r++) {
+          for (let c = Math.floor(px - pr - 1); c <= px + pr + 1; c++) {
+            if (c < 1 || r < 1 || c >= COLS - 1 || r >= ROWS - 1) continue;
+            const i = r * COLS + c;
+            if (grid[i] !== T_BUILD || nearGate[i] < 5) continue;
+            if (Math.hypot(c + 0.5 - px, r + 0.5 - py) > pr * (0.65 + 0.7 * edge(c, r))) continue;
+            cells.push(i);
+          }
+        }
+        if (cells.length && keepsOpen(cells)) {
+          for (const i of cells) {
+            grid[i] = T_TREE;
+            blocked[i] = 1;
+          }
+        }
       }
     }
   }

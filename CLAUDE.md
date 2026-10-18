@@ -71,14 +71,14 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/audio/dsp.ts`, `sfx.worker.ts` | Offline synthesis of every effect into sample banks (a few variations each), rendered in a worker ~1.5 s after boot. No audio files |
 | `src/render/models.ts` | Every 3D model as stacked top-down parts (sprite stacking) |
 | `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain markings, atlas packing, tower icons |
-| `src/render/landscape.ts`, `landscape.worker.ts`, `terrainGL.ts` | Terrain: eroded heightfield + fields, built in a worker; WebGL2 ground shader with CC0 photo textures |
+| `src/render/landscape.ts`, `landscape.worker.ts`, `terrainGL.ts` | Terrain: eroded heightfield + fields, built in a worker; WebGL2 cartoon ground shader |
 | `src/render/renderer.ts` | Draws a sim each frame: depth-sorted sprites, projectiles, effects, beams, overlays, wrecks, floating text |
 | `src/ui/hud.ts` | DOM HUD: build palette (all towers at once), side info panel, tactical bar, wave preview, reports |
 | `src/ui/codex.ts` | The long "how it works" texts for towers, enemies, items, abilities |
 | `src/ui/menus.ts`, `editor.ts`, `minimap.ts` | Menu screens, map editor, minimap |
 | `src/main.ts` | Boot, camera (pan/zoom/shake), input (mouse, keys, touch), event → sound/effects dispatch, game lifecycle, saves |
 | `scripts/` | `smoke.mjs` (browser test), `gauntlet.ts` + `bot.ts` (balance; built with `vite build --ssr`) |
-| `public/` | PWA manifest, icon, service worker (offline play; bump `CACHE` when cached files change), `terrain/` ground textures (CC0, ambientCG) |
+| `public/` | PWA manifest, icon, service worker (offline play; bump `CACHE` when cached files change) |
 
 Data flow per frame: `main.frame()` → `session.advance(dt)` (runs due commands, then `sim.step()` per tick) →
 `handleEvents()` (sound, shake, renderer marks) → `view.render(alpha, overlayState)` → `hud.update()`.
@@ -116,16 +116,16 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 - **10 upgrade levels** per tower; every level raises damage, range and fire rate and **looks different**.
 - Detailed models, performance, and polish (sound, effects) are all valued. Verify visual changes with screenshots.
 
-**Terrain:** `MapDef.rivers` / `mountains` (generated) or `paint` (editor). Water is walkable at `WATER_SLOW` speed
-(`Sim.groundSlow`, folded into `tarGrid`) and costs `1 / WATER_SLOW` in the flow fields; mountains are `blocked`.
-Neither is buildable (`footprint` needs `T_BUILD`). The look (all cosmetic, never read by the sim):
-`render/landscape.ts` builds a heightfield (hills, a ridged spine over every massif, river valleys) and carves it
-with droplet hydraulic erosion, plus moisture, sediment, cast shadows and AO; `render/terrainGL.ts` paints it in
-one WebGL2 fragment shader with the CC0 photo textures in `public/terrain/` (stochastic no-tile sampling, rules
-on moisture/slope/height/sediment, height blending, lighting, grading). The game starts with a coarse landscape
-(`buildBackground`, sub=1) and `refineBackground()` swaps in the detailed one built in `landscape.worker.ts`.
-Height inputs must be smooth to their slope (multi-pass blurs, no hard `max`), or the light draws crease lines.
-Without WebGL2, `landLayers()`/`paintLand()` (canvas) are the fallback. Adding fields to a campaign
+**Terrain:** `MapDef.rivers` / `mountains` / `forests` (generated) or `paint` (editor). Water is walkable at
+`WATER_SLOW` speed (`Sim.groundSlow`, folded into `tarGrid`) and costs `1 / WATER_SLOW` in the flow fields;
+mountains (`T_MOUNT`) and forests (`T_TREE`) are `blocked`. None is buildable (`footprint` needs `T_BUILD`). The look
+(all cosmetic, never read by the sim): `render/landscape.ts` builds a heightfield (hills, a ridged spine over every
+massif, river valleys) carved by droplet hydraulic erosion, plus moisture, forest mask, cast shadows and AO;
+`render/terrainGL.ts` paints it in one WebGL2 shader in a cartoon (Kingdom Rush-like) style; `scenery()` in
+`atlas.ts` puts cartoon trees/bushes (`tree*`, `pine*`, `bush*` models) only on blocked cells (forests, mountains),
+so they never hide a tower spot. The game starts with a coarse landscape (`buildBackground`, sub=1) and
+`refineBackground()` swaps in the detailed one built in `landscape.worker.ts`. Height inputs must be smooth to
+their slope (multi-pass blurs, no hard `max`), or the light draws crease lines. Without WebGL2: `flatGround()`. Adding fields to a campaign
 `MapDef` changes that map for new games only: saves and replays carry their own copy of the def.
 
 ## Balance notes

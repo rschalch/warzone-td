@@ -1,10 +1,9 @@
 // Offline support: cache-first for the hashed build assets, network-first for the page itself
 // (so a new deploy shows up on the next online visit).
-const CACHE = 'wztd-v2';
+const CACHE = 'wztd-v3';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './manifest.webmanifest', './icon.svg',
-    ...['grass', 'drygrass', 'patchy', 'sand', 'gravel', 'mud', 'rock', 'snow'].map((n) => `./terrain/${n}.jpg`)])));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './manifest.webmanifest', './icon.svg'])));
   self.skipWaiting();
 });
 
