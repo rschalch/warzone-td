@@ -8,13 +8,13 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
+import { ENEMIES, MAP_H, MAP_W, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import {
   Sim as SimClass,
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
-  EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
+  AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
 import { buildAtlas, buildBackground, drawTerrain, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
@@ -53,6 +53,8 @@ let placing = -1;
 let selected: Tower | null = null;
 let multi: Tower[] = [];
 let heroSelected = false;
+/** Enemy being inspected (slot + uid, so a recycled slot isn't mistaken for it). */
+let enemySel: { slot: number; uid: number } | null = null;
 /** A superweapon, item or hero ability waiting for its target click. */
 let targeting: { kind: 'super' | 'item' | 'ability'; index: number; r: number; color: number } | null = null;
 let aimX = 0;
@@ -152,6 +154,28 @@ function clearSelection(): void {
   multi = [];
   heroSelected = false;
   targeting = null;
+  enemySel = null;
+}
+
+/** The enemy under the pointer, if any (aircraft are drawn high up, so test where they appear). */
+function enemyUnder(e: { clientX: number; clientY: number }): number {
+  const s = sim();
+  if (!s) return -1;
+  const [sx, sy] = canvasToScreen(...pointerToCanvas(e));
+  let best = -1;
+  let bestD = Infinity;
+  for (let n = 0; n < s.liveCount; n++) {
+    const i = s.live[n];
+    if (!s.eAlive[i] || s.hidden(i)) continue;
+    const ex = projection.x(s.eX[i], s.eY[i]);
+    const ey = projection.y(s.eX[i], s.eY[i]) - (s.eAir[i] ? AIR_Z : 6) * projection.lift;
+    const d = Math.hypot(ex - sx, ey - sy);
+    if (d < ENEMIES[s.eKind[i]].radius + 8 && d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
 }
 
 function pick(t: number): void {
@@ -584,6 +608,12 @@ function clickAt(e: { clientX: number; clientY: number }): void {
     const hy = projection.y(s.hero.x, s.hero.y) - 8 * projection.lift;
     if (Math.hypot(hx - sx, hy - sy) < 14) return selectHero();
   }
+  const foe = enemyUnder(e);
+  if (foe >= 0) {
+    clearSelection();
+    enemySel = { slot: foe, uid: s.eUid[foe] };
+    return;
+  }
   const t = towerUnder(e);
   if (heroSelected && !t && session!.mode !== 'replay') {
     issue({ t: 'heroMove', x: aimX, y: aimY });
@@ -901,13 +931,18 @@ function frame(): void {
     if (selected && !s.towers.includes(selected)) selected = null;
     if (multi.length) multi = multi.filter((t) => s.towers.includes(t));
     if (targeting?.kind === 'super' && !s.tower(targeting.index)) targeting = null;
+    if (enemySel && (!s.eAlive[enemySel.slot] || s.eUid[enemySel.slot] !== enemySel.uid)) enemySel = null;
+    const enemy = enemySel ? enemySel.slot : -1;
     view.tick(realDt);
     view.render(session.speed > 0 ? session.acc / (1 / 60) : 1, {
       hoverCol, hoverRow, cellCol, cellRow, placing, selected, aiming: null, aimX, aimY,
       targeting: targeting ? { r: targeting.r, color: targeting.color } : null,
-      heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'),
+      heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'), enemy,
     });
-    hud.update(s, { placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner() });
+    hud.update(s, {
+      placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy,
+      aiming: targeting ? { kind: targeting.kind, index: targeting.index } : null,
+    });
     minimap?.update(viewQuad());
     renderTimeAcc += performance.now() - t1;
     sound.intensity = Math.min(1, s.spawning ? 0.55 + s.liveCount / 150 : s.liveCount / 60);

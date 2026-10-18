@@ -159,6 +159,7 @@ export interface OverlayState {
   multi: Tower[]; // box selection
   box: [number, number, number, number] | null; // selection rect being dragged, in projected screen space
   showAuras: boolean;
+  enemy: number; // enemy slot being inspected, or -1
 }
 
 /** Turret spin speeds (rad/s) for towers that rotate on their own. */
@@ -898,6 +899,11 @@ export class GameRenderer {
       g.moveTo(ov.aimX - 10, ov.aimY).lineTo(ov.aimX + 10, ov.aimY).moveTo(ov.aimX, ov.aimY - 10).lineTo(ov.aimX, ov.aimY + 10)
         .stroke({ width: 2, color, alpha: 0.95 });
       return;
+    }
+    if (ov.enemy >= 0 && s.eAlive[ov.enemy]) {
+      const i = ov.enemy;
+      const r = ENEMIES[s.eKind[i]].radius + 5;
+      g.circle(s.eX[i], s.eY[i], r).stroke({ width: 2, color: 0xff6a5a, alpha: 0.6 + 0.3 * Math.sin(s.time * 8) });
     }
     const sel = ov.selected;
     if (sel) {

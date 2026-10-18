@@ -65,6 +65,8 @@ gate · `R` aim the selected superweapon (then click a target).
 `H` select the commander (click ground to move it) · `[` `]` `\` its abilities · `Z` `X` `C` tactical items ·
 `Shift`-drag select a group (bulk upgrade/sell) · `Ctrl+Z` undo the last build · hold `Tab` to see every aura.
 
+Click anything on the battlefield (a tower, an enemy, your commander) or hover any button to see what it does in the side panel.
+
 Touch: tap to build or select, drag to pan, pinch to zoom.
 
 Camera: drag empty ground, right-drag or middle-drag, or the arrow keys to pan · mouse wheel/pinch or `+`/`-` to zoom ·

@@ -4,6 +4,10 @@ import {
 } from '../game/defs';
 import { DIFFICULTIES } from '../game/config';
 import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { ABILITY_HELP, ENEMY_HELP, HERO_HELP, ITEM_HELP, TOWER_HELP } from './codex';
+
+/** Something to explain in the side panel (hovered button, or a target being aimed). */
+export type Inspect = { kind: 'tower' | 'item' | 'ability' | 'hero' | 'super'; index: number };
 
 export interface HudActions {
   pick(type: number): void;
@@ -37,6 +41,10 @@ export interface UiState {
   speed: number;
   mode: 'local' | 'replay' | 'coop';
   banner: string;
+  /** Item, ability or superweapon waiting for its target click. */
+  aiming: Inspect | null;
+  /** Enemy slot being inspected, or -1. */
+  enemy: number;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -111,6 +119,8 @@ export class Hud {
   /** Recent damage totals per tower, sampled once a second, for live DPS. */
   private dmgSamples = new Map<number, number[]>();
   private lastSample = 0;
+  /** Button under the mouse: its description replaces the panel while hovered. */
+  private hover: Inspect | null = null;
   constructor(act: HudActions) {
     // every tower at once, grouped by category; the first ten have number keys
     const build = $('build');
@@ -127,6 +137,7 @@ export class Hud {
         b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span>${key}`;
         b.title = `${t.name} — ${t.desc}`;
         b.onclick = () => act.pick(i);
+        this.hoverable(b, { kind: 'tower', index: i });
         build.appendChild(b);
         this.buttons[i] = b;
       });
@@ -144,12 +155,14 @@ export class Hud {
     this.heroBtn.className = 'hero';
     this.heroBtn.title = 'Select your commander (H). Then click the ground to move.';
     this.heroBtn.onclick = () => act.hero();
+    this.hoverable(this.heroBtn, { kind: 'hero', index: 0 });
     this.tactical.appendChild(this.heroBtn);
     HERO_ABILITIES.forEach((a, k) => {
       const b = document.createElement('button');
       b.className = 'ab';
       b.title = `${a.name} (${a.key}) — ${a.desc} Cooldown ${a.cd}s.`;
       b.onclick = () => act.ability(k);
+      this.hoverable(b, { kind: 'ability', index: k });
       this.tactical.appendChild(b);
       this.abilityBtns.push(b);
     });
@@ -161,6 +174,7 @@ export class Hud {
       b.className = 'it';
       b.title = `${it.name} (${it.key}) — ${it.desc} Recharges one per wave.`;
       b.onclick = () => act.item(k);
+      this.hoverable(b, { kind: 'item', index: k });
       this.tactical.appendChild(b);
       this.itemBtns.push(b);
     });
@@ -203,6 +217,13 @@ export class Hud {
     this.infoKey = '';
     this.cache.clear();
     this.report.classList.remove('show');
+  }
+
+  private hoverable(el: HTMLElement, what: Inspect): void {
+    el.addEventListener('mouseenter', () => (this.hover = what));
+    el.addEventListener('mouseleave', () => {
+      if (this.hover === what) this.hover = null;
+    });
   }
 
   /** Keeps the picked tower's button in view (the palette can scroll on small screens). */
@@ -317,8 +338,11 @@ export class Hud {
 
   private updateInfo(sim: Sim, ui: UiState): void {
     const t = ui.selected;
+    const what = this.hover ?? ui.aiming;
     let key: string;
-    if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
+    if (what) key = `i${what.kind}:${what.index}:${what === ui.aiming}:${sim.money >= (what.kind === 'tower' ? sim.cost(what.index) : 0)}:${sim.items.join()}:${sim.hero?.cd.map(Math.ceil).join()}`;
+    else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}`;
+    else if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
     else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}`;
     else if (t) {
       const up = sim.upgradeCost(t);
@@ -330,7 +354,11 @@ export class Hud {
     this.infoKey = key;
     const ro = ui.mode === 'replay' ? 'disabled' : '';
 
-    if (ui.multi.length) {
+    if (what) {
+      this.info.innerHTML = this.explain(sim, what, what === ui.aiming);
+    } else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) {
+      this.info.innerHTML = this.enemyPanel(sim, ui.enemy);
+    } else if (ui.multi.length) {
       const cost = this.multiCost(sim, ui.multi);
       const value = ui.multi.reduce((a, m) => a + sim.sellValue(m), 0);
       const kinds = new Map<string, number>();
@@ -348,7 +376,7 @@ export class Hud {
       const abil = HERO_ABILITIES.map((a, k) => `<button data-ab="${k}" ${h.cd[k] > 0 || ro ? 'disabled' : ''}>${a.name}${h.cd[k] > 0 ? ` ${Math.ceil(h.cd[k])}s` : ''}</button>`).join('');
       this.info.innerHTML = `
         <div class="title">Commander<span class="lvl">Lv ${h.level}/${HERO_MAX_LEVEL}</span></div>
-        <div class="desc">Click the ground to move. Earns XP from kills; each level adds damage and range.</div>
+        <div class="help">${HERO_HELP}</div>
         <table>
           <tr><td>Damage</td><td>${num(sim.heroDamage())}</td></tr>
           <tr><td>Range</td><td>${num(sim.heroRange())}</td></tr>
@@ -382,10 +410,11 @@ export class Hud {
           <tr><td>Kills</td><td>${t.kills}</td><td></td></tr>
           <tr><td>Damage dealt</td><td>${Math.floor(t.damage)}</td><td></td></tr>` : '';
       const sameType = sim.towers.filter((o) => o.type === t.type && sim.upgradeCost(o) > 0).length;
+      const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">Lv ${t.level + 1}/${def.levels.length}</span></div>
-        <div class="desc">${def.desc}</div>
-        <table>${rows}${record}</table>
+        <div class="help">${TOWER_HELP[def.kind]}</div>
+        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${combos}
         ${special}
         ${modes}
@@ -405,13 +434,80 @@ export class Hud {
           : 'Click or drag on the field to build. Enemies path around your towers, but you can\'t fully block them.';
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">$${sim.cost(ui.placing)}</span></div>
-        <div class="desc">${def.desc}</div>
+        <div class="help">${TOWER_HELP[def.kind]}</div>
         <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>
         ${partners}
         <div class="desc" style="margin-top:8px">${how}</div>`;
     } else {
-      this.info.innerHTML = `<div class="desc">Pick a tower to build, or click one of your towers to upgrade it. Shift-drag selects a group. Hold <kbd>Tab</kbd> to see every aura.</div>`;
+      this.info.innerHTML = `<div class="desc">Pick a tower to build, or click anything on the battlefield — a tower, an enemy, your commander — to see what it does. Hover any button for a description. Shift-drag selects a group; hold <kbd>Tab</kbd> to see every aura.</div>`;
     }
+  }
+
+  /** Description of a hovered button or of the thing being aimed. */
+  private explain(sim: Sim, w: Inspect, aiming: boolean): string {
+    const aimNote = aiming ? '<div class="aim">Click on the battlefield to aim · <kbd>Esc</kbd> or right-click to cancel</div>' : '';
+    if (w.kind === 'tower' || w.kind === 'super') {
+      const tower = w.kind === 'super' ? sim.tower(w.index) : null;
+      const type = tower ? tower.type : w.index;
+      const def = TOWERS[type];
+      const lv = def.levels[tower ? tower.level : 0];
+      const rows = stats(def, lv).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+      const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
+      const partners = COMBOS.filter((c) => c.a === def.kind || c.b === def.kind)
+        .map((c) => `<div class="combo"><b>${c.name}</b> next to ${TOWERS.find((o) => o.kind === (c.a === def.kind ? c.b : c.a))!.short}: ${c.desc}</div>`).join('');
+      const price = tower ? `Lv ${tower.level + 1}` : `$${sim.cost(type)}`;
+      const locked = !tower && !sim.allowed(type) ? '<div class="desc bad">Not available in this game.</div>' : '';
+      return `<div class="title">${def.name}<span class="lvl">${price}</span></div>${aimNote}${locked}
+        <div class="help">${TOWER_HELP[def.kind]}</div>
+        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>${partners}`;
+    }
+    if (w.kind === 'item') {
+      const it = ITEMS[w.index];
+      return `<div class="title">${it.name}<span class="lvl">×${sim.items[w.index]} · key ${it.key}</span></div>${aimNote}
+        <div class="help">${ITEM_HELP[w.index]}</div>
+        <div class="desc">Tactical item: one charge comes back at every new wave (up to ${sim.itemMax}).</div>`;
+    }
+    if (w.kind === 'ability') {
+      const a = HERO_ABILITIES[w.index];
+      const cd = sim.hero?.cd[w.index] ?? 0;
+      return `<div class="title">${a.name}<span class="lvl">${cd > 0 ? `ready in ${Math.ceil(cd)}s` : 'ready'} · key ${a.key}</span></div>${aimNote}
+        <div class="help">${ABILITY_HELP[w.index]}</div>
+        <div class="desc">Commander ability · cooldown ${a.cd}s.</div>`;
+    }
+    const h = sim.hero;
+    return `<div class="title">Commander<span class="lvl">${h ? `Lv ${h.level}` : ''} · key H</span></div><div class="help">${HERO_HELP}</div>`;
+  }
+
+  private enemyStatus(sim: Sim, i: number): string {
+    const tags: string[] = [];
+    if (sim.hidden(i)) tags.push('stealthed');
+    if (sim.eFrozenT[i] > 0) tags.push('frozen');
+    else if (sim.eChill[i] > 0.05) tags.push(`chilled ${Math.round(sim.eChill[i] * 100)}%`);
+    if (sim.eStunT[i] > 0) tags.push('stunned');
+    if (sim.eHackT[i] > 0) tags.push('hacked');
+    if (sim.eBurnT[i] > 0) tags.push('burning');
+    if (sim.eSlowT[i] > 0) tags.push('slowed');
+    if (sim.eJam[i] > 0) tags.push('jammed');
+    return tags.join(', ');
+  }
+
+  private enemyPanel(sim: Sim, i: number): string {
+    const kind = sim.eKind[i];
+    const def = ENEMIES[kind];
+    const help = ENEMY_HELP[kind];
+    const status = this.enemyStatus(sim, i);
+    return `<div class="title">${def.name}<span class="lvl">${def.air ? 'air' : 'ground'}</span></div>
+      <div class="help">${help.text}</div>
+      <table>
+        <tr><td>HP</td><td>${Math.ceil(sim.eHp[i])} / ${Math.ceil(sim.eMaxHp[i])}</td></tr>
+        ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
+        <tr><td>Armour</td><td>${def.armor}</td></tr>
+        <tr><td>Speed</td><td>${def.speed}</td></tr>
+        <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
+        <tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>
+        ${status ? `<tr><td>Status</td><td>${status}</td></tr>` : ''}
+      </table>
+      <div class="combo"><b>Counter</b> ${help.counter}</div>`;
   }
 
   /** Cost of upgrading every tower in the selection by one level. */
