@@ -1,5 +1,5 @@
 import { CanvasSource, Texture, Rectangle } from 'pixi.js';
-import { COLS, MAP_H, MAP_W, ROWS, TILE } from '../game/defs';
+import { COLS, MAP_H, MAP_W, ROWS, TILE, TOWERS } from '../game/defs';
 import { T_GATE, type GameMap } from '../game/maps';
 import { Rng } from '../game/rng';
 import { DIRS, models } from './models';
@@ -215,6 +215,75 @@ def('pip', 8, 5, (g) => {
   g.fill();
   g.stroke();
 });
+
+// ---------------------------------------------------------------- icons
+
+/**
+ * Draws one atlas entry scaled to fill a size×size box, centred. The frame is first trimmed to its
+ * visible pixels, since baked frames carry room for the longest barrel at every heading.
+ */
+function fitEntry(g: CanvasRenderingContext2D, name: string, size: number, zoom = 1): void {
+  const e = entries.find((en) => en.name === name);
+  if (!e) return;
+  const res = 3;
+  const tmp = document.createElement('canvas');
+  tmp.width = Math.ceil(e.w * res);
+  tmp.height = Math.ceil(e.h * res);
+  const tg = tmp.getContext('2d', { willReadFrequently: true })!;
+  tg.scale(res, res);
+  tg.translate(e.w / 2, e.h / 2);
+  e.draw(tg, e.w, e.h);
+  // visible bounds
+  const { data, width, height } = tg.getImageData(0, 0, tmp.width, tmp.height);
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3] < 150) continue; // skip the soft contact shadow
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return;
+  const bw = x1 - x0 + 1;
+  const bh = y1 - y0 + 1;
+  const k = (Math.min(size / bw, size / bh) * zoom);
+  g.drawImage(tmp, x0, y0, bw, bh, (size - bw * k) / 2, (size - bh * k) / 2, bw * k, bh * k);
+}
+
+const ICON_DECALS: Record<string, string> = { mine: 'd_mine', tar: 'd_tar', spikes: 'd_spikes' };
+
+/**
+ * A small picture of a tower for the build buttons: its turret as seen by the iso camera (the
+ * concrete base is the same for every tower, so it's left out), or the trap/wall itself.
+ * Call after buildAtlas().
+ */
+export function towerIcon(type: number, size = 28): HTMLCanvasElement {
+  const t = TOWERS[type];
+  const c = document.createElement('canvas');
+  const dpr = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+  c.width = c.height = size * dpr;
+  c.style.width = c.style.height = `${size}px`;
+  const g = c.getContext('2d')!;
+  g.scale(dpr, dpr);
+  if (ICON_DECALS[t.kind]) {
+    // lay the trap flat in the same 2:1 projection as the iso camera
+    g.translate(size / 2, size / 2);
+    g.scale(1, 0.55);
+    g.rotate(Math.PI / 4);
+    g.translate(-size / 2, -size / 2);
+    fitEntry(g, ICON_DECALS[t.kind], size, t.size === 1 ? 0.8 : 1);
+  } else if (t.turret) {
+    fitEntry(g, dirFrame(t.turret, -Math.PI * 0.75, models[t.turret].dirs), size, 0.95);
+  } else {
+    fitEntry(g, `${t.kind}_0`, size, t.size === 1 ? 0.75 : 0.95);
+  }
+  return c;
+}
 
 /** Iso frame name for a model at a world heading. */
 export function dirFrame(name: string, heading: number, dirs = DIRS): string {

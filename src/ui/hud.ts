@@ -134,7 +134,7 @@ export class Hud {
         const b = document.createElement('button');
         b.className = 'tb';
         const key = i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : '';
-        b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span>${key}`;
+        b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="ic"></span><span class="tx"><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span></span>${key}`;
         b.title = `${t.name} — ${t.desc}`;
         b.onclick = () => act.pick(i);
         this.hoverable(b, { kind: 'tower', index: i });
@@ -224,6 +224,11 @@ export class Hud {
     el.addEventListener('mouseleave', () => {
       if (this.hover === what) this.hover = null;
     });
+  }
+
+  /** Puts a picture of each tower on its button (needs the baked atlas). */
+  setIcons(icon: (type: number) => HTMLCanvasElement): void {
+    this.buttons.forEach((b, i) => b.querySelector('.ic')!.replaceChildren(icon(i)));
   }
 
   /** Keeps the picked tower's button in view (the palette can scroll on small screens). */

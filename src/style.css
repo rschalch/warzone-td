@@ -43,14 +43,18 @@ main { flex: 1; display: flex; min-height: 0; }
 #side { width: 340px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 #side > * { flex-shrink: 0; }
 #side h3 { margin: 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
-#build { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+#build { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
 #build .cat { grid-column: 1 / -1; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
 #build .cat:first-child { margin-top: 0; }
 #info .combo { font-size: 11px; color: var(--dim); margin-top: 4px; }
 #info .help { font-size: 12px; color: var(--text); opacity: 0.85; margin: 3px 0 8px; line-height: 1.4; }
 #info .aim { font-size: 11px; color: var(--accent); margin: 3px 0 6px; }
 #info .combo b { color: var(--good); }
-.tb { display: flex; flex-direction: column; align-items: flex-start; padding: 2px 4px 2px 10px; text-align: left; position: relative; min-width: 0; border-radius: 5px; line-height: 1.25; }
+.tb { display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; text-align: left; position: relative; min-width: 0; border-radius: 5px; line-height: 1.2; }
+.tb .ic { flex: none; width: 28px; height: 28px; }
+.tb .ic canvas { display: block; }
+.tb .tx { display: flex; flex-direction: column; min-width: 0; }
+.tb.locked .ic { filter: grayscale(1); }
 .tb .n { font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .tb .c { color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
 .tb .k { position: absolute; top: 3px; right: 5px; font-size: 9px; color: var(--dim); }
@@ -90,7 +94,7 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 .card .actions { display: flex; gap: 10px; margin-top: 18px; }
 @media (max-width: 900px) {
   #side { width: 300px; }
-  #build { grid-template-columns: repeat(3, 1fr); }
+  #build { grid-template-columns: repeat(2, 1fr); }
   .maps { grid-template-columns: 1fr; }
   #topbar { gap: 10px; flex-wrap: wrap; }
 }
@@ -178,7 +182,7 @@ b.code { font-size: 22px; letter-spacing: 3px; color: var(--accent); }
   #topbar { gap: 8px; padding: 6px 8px; flex-wrap: wrap; }
   .brand { display: none; }
   .stat { min-width: 44px; }
-  #build { grid-template-columns: repeat(4, 1fr); }
+  #build { grid-template-columns: repeat(3, 1fr); }
   #tactical { right: 8px; left: 8px; bottom: 8px; overflow-x: auto; }
   #tactical button { min-width: 0; padding: 3px 7px; font-size: 10px; flex: none; }
   #tactical button b { font-size: 11px; }
