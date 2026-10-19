@@ -1490,8 +1490,11 @@ export class Sim {
           seen.add(id);
           const o = this.towerById.get(id)!;
           if (t.wreck || o.wreck) continue;
+          // combos name tower types by kind (in the classic rules the kind is the role)
+          const tk = TOWERS[t.type].kind;
+          const ok = TOWERS[o.type].kind;
           for (const c of COMBOS) {
-            if (!((c.a === t.kind && c.b === o.kind) || (c.b === t.kind && c.a === o.kind))) continue;
+            if (!((c.a === tk && c.b === ok) || (c.b === tk && c.a === ok))) continue;
             if (t.combos.includes(c.name)) continue;
             t.combos.push(c.name);
             t.dmgMult *= c.dmg ?? 1;

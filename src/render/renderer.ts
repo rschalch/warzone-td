@@ -1,6 +1,6 @@
 import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
 import { palette, settings } from '../app/settings';
-import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from '../game/defs';
+import { COLS, DT, ENEMIES, LOOK, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from '../game/defs';
 import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
@@ -288,7 +288,7 @@ export class GameRenderer {
     this.turretTopTex = TOWERS.map((t) => (t.turret ? atlas[`${t.turret}_t`] : atlas.px));
     this.cornerTex = atlas[`basecorners_${view}`];
     // WW2 emplacements sit in sandbags and earthworks instead of steel plating
-    const base = WW2 ? 'wbase' : 'basel';
+    const base = LOOK.base;
     this.baseTex = TOWERS.map((t) => {
       if (t.turret) return t.levels.map((_, lv) => atlas[`${base}${lv}_${view}`]);
       return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.kind}_${view}`] : null];
@@ -298,14 +298,14 @@ export class GameRenderer {
     this.scenery = scenery(sim.map);
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
-    const hero = WW2 ? 'w_officer' : 'hero';
+    const hero = LOOK.hero;
     this.heroFrames = this.iso ? frames(hero) : [atlas[`${hero}_t`]];
     this.rubbleTex = WW2 ? atlas[`w_rubble_${view}`] : null;
     this.unitFrames = UNITS.map((u) => frames(u.tex));
     this.unitTopTex = UNITS.map((u) => atlas[`${u.tex}_t`]);
     this.unitTop = UNITS.map((u) => MODEL_TOP[u.tex] ?? 10);
     // indexed by projectile kind
-    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, WW2 ? atlas.v2shell : atlas.nukeshell, atlas.bullet];
+    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas[LOOK.nuke] ?? atlas.nukeshell, atlas.bullet];
     this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff, 0xffd060];
     this.projScale = [1, 1.1, 1, 1.1, 0.9, 1, 0.7, 1.6, 0.9, 1, 1.7];
     this.fxTex = [atlas.glow, atlas.smoke, atlas.spark, atlas.ring, atlas.px];

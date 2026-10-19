@@ -1,7 +1,8 @@
 // Longer explanations for the side panel: what each tower, unit, item and ability actually does,
 // and how to use or counter it.
 
-import { WW2, type TowerDef, type TowerKind } from '../game/defs';
+import { ENEMIES, WW2, WW2_FOE, WW2_SIDE, type TowerDef, type TowerKind } from '../game/defs';
+import { ARMIES, ARSENALS, type Faction } from '../game/ww2';
 
 export const TOWER_HELP: Record<TowerKind, string> = {
   gun: 'Fires a fast stream of bullets at one unit. Cheap enough to double as maze walls, but armour soaks most of each small bullet, so it struggles against tanks and the Mammoth. Hits air.',
@@ -82,56 +83,9 @@ export const FOREST_HELP = 'Dense woods: ground units can\'t get through and mus
 
 // ---------------------------------------------------------------- WW2
 
-export const WW2_TOWER_HELP: Record<string, string> = {
-  mg42: 'The MG-42 fires so fast it sounds like tearing cloth. It cuts down infantry and pins them: suppressed soldiers crawl and keep their heads down. Its 8 mm of penetration is nothing against armour, so it ignores tanks and only bothers armoured cars from the side. Wire in front of it makes a kill zone.',
-  flak38: 'A 20 mm autocannon on a light mount. Against aircraft it is the best value you can buy, and its rounds go through armoured cars and the side of a T-70. Medium tanks shrug it off.',
-  schreck: 'Two men with an 8.8 cm rocket launcher. The shaped charge goes through any tank from any side, but the range is tiny and reloading is slow. Hide teams where the maze makes tanks pass close.',
-  sniper: 'A marksman with a scoped Kar98k: one shot, one dead soldier, from very far away. Bullets can\'t get through armour, so the sniper only picks targets it can kill. Next to an observation post he gets +40% damage.',
-  flamer: 'Burns infantry and open vehicles at point-blank range; burning soldiers set the ones behind them alight. Closed-down tanks are sealed against it. Best at a tight bend of the maze.',
-  pak40: 'The standard German anti-tank gun. Each shot is slow but decisive: 115 mm of penetration kills a T-34 from the side and a KV-1 from behind. Tanks show their sides at every turn of your maze — that is where a PaK belongs. Two PaKs side by side form a Pakfront.',
-  flak88: 'The famous Eighty-Eight: long range, heavy shells and 135 mm of penetration. Against aircraft its time-fused shells burst at altitude. Expensive, but it answers both tanks and bombers.',
-  tiger: 'A Tiger I dug in hull-down: only the turret shows. Its 8.8 cm KwK 36 outranges every Soviet tank and goes through a T-34 from the front. The most powerful single gun you can field.',
-  bunker: 'A concrete pillbox with two MGs, each firing at its own target. Short range: build it into the maze wall where infantry squeeze past.',
-  mortar: 'Lobs high-explosive bombs that burst among infantry and pin them down. Blasts hit the thin top armour, but a mortar bomb is too small for any tank.',
-  lefh18: 'The 10.5 cm field howitzer: huge range and a big blast, but it can only see 140px by itself — build observation posts and it fires at everything they see. Its shells can break a tank\'s track, and go through light armour from above.',
-  nebel: 'Six rockets per salvo, howling as they come down, scattered over the target area. Devastating against infantry columns; slow to reload.',
-  depot: 'Produces no damage. At every new wave it pays a fixed income plus interest on the money you are holding (up to a cap).',
-  observer: 'An observation post with a scissors periscope. Artillery fires at anything it sees, Soviet snipers inside it are revealed, and guns nearby get extra range.',
-  hq: 'A field headquarters with officers and radios: every emplacement in range fires faster.',
-  teeth: 'Concrete dragon\'s teeth: a cheap 1×1 obstacle that blocks the way. Shape the maze with it so tanks have to turn in front of your guns.',
-  wire: 'Barbed wire on the path. It never blocks the route; infantry get tangled and crawl through, while vehicles drive straight over it.',
-  teller: 'Anti-tank mines buried in the path. Only a vehicle sets them off; the blast tears through the thin belly armour. They re-arm after a while.',
-  smine: 'Bounding mines that leap up and burst at waist height. Only infantry set them off. They pin down whoever survives.',
-  roadblock: 'A barrier you can open and close (G) to switch the route mid-wave. Closing is refused if units stand in it or if it would seal every route.',
-  workshop: 'Pioneers with a crane truck and spare parts. They go round every emplacement in range and patch up the damage, even in the middle of a fight. They can\'t raise rubble: rebuilding a destroyed emplacement (B) costs money.',
-  v2: 'The V-2 ballistic missile. When it is ready, press R and click anywhere on the map: a minute later... in this game a few seconds later, a tonne of explosive falls at three times the speed of sound. There is no warning, then the roar. It hits from straight above, so even the IS-2 is thin there.',
-  barracks: 'Trains infantry that fight outside the maze: grenadiers, MG-42 teams, Panzerschreck teams, snipers, pioneers (who repair emplacements and raise rubble for free) and medics. Select a unit and click the ground to send it; give it a stance — Hold, Guard (default: fights near its post), Hunt or Ambush. Units never block the path. Manpower limits how many you field: each HQ adds 4, each depot 2.',
-  motorpool: 'Builds tanks: the Panzer IV, the Panther and the Tiger. Tanks stop to fire and turn their thick front towards the target, so put them where the enemy comes at their front. Shift-drag to select several and send them together.',
-  airfield: 'A fighter strip. Press R and click a point: two Fw 190s take off and patrol there for 25 s, shooting down aircraft first and then strafing soft targets. Yaks will try to shoot them down.',
-  stuka: 'An airfield of Ju 87 dive bombers. When it is ready, press R and click: three Stukas dive one after another and drop their bombs on the target. The bombs hit the top armour, where even a KV-1 is thin.',
-};
-
-/** Indexed like the Soviet ENEMIES in ww2.ts. */
-export const SOVIET_HELP: UnitHelp[] = [
-  { text: 'Riflemen with Mosin-Nagants, coming in great numbers. Their fire pins your crews, who then shoot slower; it only chips away at sandbags.', counter: 'MG-42s, mortars, S-mines; wire slows them under your guns. Pinned infantry fire less.' },
-  { text: 'Assault troops with PPSh submachine guns: faster and tougher than riflemen, deadly up close.', counter: 'MG-42s and flamethrowers; suppression slows them down.' },
-  { text: 'A sniper in camouflage: invisible to your guns unless spotted. Picks off your commander from far away.', counter: 'Observation posts reveal snipers; any emplacement spots one point-blank.' },
-  { text: 'A field medic who patches up everyone around.', counter: 'Kill medics first (Strong targeting), with snipers or MGs.' },
-  { text: 'A fast, unarmoured jeep carrying scouts: they spot camouflaged guns from far away and give them away to the whole column.', counter: 'Anything hits it: MGs, flak, mortars. Keep the maze long.' },
-  { text: 'A light armoured car on reconnaissance: rifle bullets bounce off its front, and its crew spots hidden guns from afar.', counter: 'Flak 38 and anything heavier; MGs only from the side and rear.' },
-  { text: 'A light tank with 45 mm of front armour and a 45 mm gun. Tanks halt to fire: hitting them while they aim is your chance.', counter: 'Flak 38 through the sides, any anti-tank gun from any side.' },
-  { text: 'The T-34: sloped 90 mm front, much thinner sides. Leaking one costs 2 lives.', counter: 'PaK 40 into the sides at the turns of your maze; Panzerschreck, Tiger and 88 from any side.' },
-  { text: 'The up-gunned T-34 of 1944, with a tougher turret and sides.', counter: 'Tiger, 88 and Panzerschreck; PaK 40 into the sides.' },
-  { text: 'The KV-1 heavy tank: slow, with armour that defeats most guns from the front. Costs 3 lives.', counter: 'Tiger, Panzerschreck, 88 from the side; Teller mines and Stukas hit it from below and above.' },
-  { text: 'A boss: the IS-2 heavy tank with 160 mm of front armour and a 122 mm gun. Costs 4 lives.', counter: 'Only the Panzerschreck goes through the front. Flank it with Tigers and 88s; mines and Stukas.' },
-  { text: 'The Il-2 Sturmovik ground-attack plane, armoured underneath: MG bullets bounce off.', counter: 'Flak 38 and the 88.' },
-  { text: 'A fast, unarmoured fighter.', counter: 'Flak 38, the 88, and MG-42s.' },
-  { text: 'The Katyusha — "Stalin\'s organ": sixteen rockets rippled off a truck, howling down on your positions from long range. The blasts hit sandbagged positions from above.', counter: 'It is a soft truck: anything kills it if it reaches it. Long-range guns (88, Flak 38) or artillery spotted by an observation post; concrete bunkers shrug off the rockets.' },
-  { text: 'Assault engineers with satchel charges. When your maze makes the way round long, they go straight for the weakest wall and blow it up; on the way they lift mines and cut wire.', counter: 'MG-42s and S-mines before they reach the wall; deep mazes of strong, covered emplacements are not worth breaching.' },
-];
-
 const CAMO_HELP = ' <i>Camouflaged:</i> the enemy only finds it close up (recon jeeps and armoured cars from further off), or for a few seconds after it fires. Its first shot from hiding hits harder; in <b>Ambush</b> mode it waits for a flank or point-blank shot.';
 
 export const towerHelp = (def: TowerDef): string =>
-  (WW2 ? (WW2_TOWER_HELP[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
-export const enemyHelp = (kind: number): UnitHelp => (WW2 ? SOVIET_HELP : ENEMY_HELP)[kind];
+  (WW2 ? (ARSENALS[WW2_SIDE as Faction]?.help[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
+export const enemyHelp = (kind: number): UnitHelp =>
+  (WW2 ? ARMIES[WW2_FOE as Faction]?.help[kind] : ENEMY_HELP[kind]) ?? { text: ENEMIES[kind]?.name ?? '', counter: '' };

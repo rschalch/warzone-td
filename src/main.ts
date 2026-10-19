@@ -17,7 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, HERO_ABILITIES, MAX_UNITS, type Sim, type Tower,
 } from './game/sim';
-import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
+import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, setsFor, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -367,11 +367,12 @@ interface StartOpts {
 }
 
 function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
-  if (cfg.ww2 && !atlasHas('ww2')) {
-    // the WW2 models are baked the first time they are needed, keeping the boot fast
-    flash('Loading WW2 models…');
+  const sets = setsFor(cfg.ww2);
+  if (!atlasHas(sets)) {
+    // each era's and faction's models are baked the first time they are needed, keeping the boot fast
+    flash(cfg.ww2 ? 'Loading WW2 models…' : 'Loading models…');
     const old = atlas;
-    void buildAtlas(['classic', 'ww2']).then((a) => {
+    void buildAtlas(sets).then((a) => {
       atlas = a;
       startGame(cfg, opts);
       old.px.source.destroy();
@@ -1214,6 +1215,9 @@ async function boot(): Promise<void> {
     Sim: SimClass,
     /** Tower type and unit kind by name, for scripted checks. */
     towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),
+    towerDef: (type: number) => TOWERS[type],
+    enemyDef: (kind: number) => ENEMIES[kind],
+    MAPS,
     unitIndex: (kind: string) => UNITS.findIndex((u) => u.kind === kind),
     quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal', ww2 = false) =>
       startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234, ww2: ww2 ? { side: 'de', foe: 'su' } : undefined }),

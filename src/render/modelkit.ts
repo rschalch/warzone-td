@@ -25,7 +25,12 @@ export interface Model {
   set: ModelSet; // which models get baked together (WW2 ones only once a WW2 game starts)
 }
 
-export type ModelSet = 'classic' | 'ww2';
+/**
+ * Which models get baked together. 'scenery' (rocks, trees) goes in every atlas; 'classic' is the
+ * modern arsenal; 'ww2' is shared by every WW2 game, plus one set per faction (its emplacements,
+ * units, and the models of its army as the attacker). A game bakes only the sets it shows.
+ */
+export type ModelSet = 'scenery' | 'classic' | 'ww2' | 'de' | 'su' | 'us' | 'jp';
 let currentSet: ModelSet = 'classic';
 /** Models defined from now on belong to this set. */
 export const setModelSet = (s: ModelSet) => (currentSet = s);

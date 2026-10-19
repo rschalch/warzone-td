@@ -18,6 +18,7 @@ interface Entry {
   h: number;
   draw: Draw;
   anchor?: [number, number];
+  set?: ModelSet; // baked model frames: the set of their model
 }
 
 const entries: Entry[] = [];
@@ -423,18 +424,27 @@ async function bakeAll(sets: ModelSet[]): Promise<BakedFrame[]> {
   }
 }
 
-/** Has the atlas the models of this set? */
-export const atlasHas = (set: ModelSet) => bakedSets.has(set);
+/** The model sets packed into the current atlas. */
+let packed: ModelSet[] = [];
+/** Does the current atlas hold all these model sets? */
+export const atlasHas = (sets: ModelSet[]) => sets.every((s) => packed.includes(s));
 
-/** Bakes the model sets not baked yet and packs everything into a fresh atlas texture. */
-export async function buildAtlas(sets: ModelSet[] = ['classic']): Promise<Atlas> {
+/** The model sets a game shows: the scenery plus the modern arsenal, or the shared WW2 models and both sides. */
+export function setsFor(ww2?: { side: ModelSet; foe: ModelSet }): ModelSet[] {
+  return ww2 ? [...new Set<ModelSet>(['scenery', 'ww2', ww2.side, ww2.foe])] : ['scenery', 'classic'];
+}
+
+/** Bakes the model sets not baked yet and packs just these sets into a fresh atlas texture. */
+export async function buildAtlas(sets: ModelSet[] = setsFor()): Promise<Atlas> {
   const todo = sets.filter((s) => !bakedSets.has(s));
   for (const f of await bakeAll(todo)) {
     const { w, h, image } = f;
-    baked.set(f.name, { name: f.name, w, h, draw: (g) => g.drawImage(image, -w / 2, -h / 2, w, h), anchor: f.anchor });
+    const model = f.name.slice(0, f.name.lastIndexOf('_'));
+    baked.set(f.name, { name: f.name, w, h, draw: (g) => g.drawImage(image, -w / 2, -h / 2, w, h), anchor: f.anchor, set: models[model]?.set });
   }
   for (const s of todo) bakedSets.add(s);
-  const all = [...entries, ...baked.values()];
+  packed = [...sets];
+  const all = [...entries, ...[...baked.values()].filter((e) => !e.set || sets.includes(e.set))];
   const pad = 2;
   const size = 1024;
   // shelf-pack first to know the height we need

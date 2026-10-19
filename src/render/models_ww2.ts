@@ -5,9 +5,7 @@
 import { Rng } from '../game/rng';
 import { DIRS, P, box, camo, circ, finish, grad, line, model, poly, rgrad, setModelSet, star, tread, wheel, type Ctx, type Part } from './modelkit';
 
-setModelSet('ww2');
-
-// ---------------------------------------------------------------- palettes
+// ---------------------------------------------------------------- palettes and faction styles
 
 const SU = ['#7a8248', '#5a6132', '#3a3f1e']; // Soviet 4BO green
 const KHAKI = ['#a89d6a', '#857a4d', '#5a5233']; // gymnastyorka
@@ -17,21 +15,43 @@ const DG_CAMO = ['rgba(80,95,45,0.55)', 'rgba(120,70,40,0.45)'];
 const SKIN = '#d6a37a';
 const RED = '#c42a1e';
 const BLACK = '#1a1a18';
+export { SU, KHAKI, FG, DG, DG_CAMO, SKIN, RED, BLACK };
+
+export type Helmet = 'stahl' | 'm1' | 'ssh' | 'jp';
+
+/**
+ * How a faction's emplacements look: crew uniform and helmet, paint of guns and vehicles,
+ * camouflage blotches, the national marking and the flag. Emplacement models are functions of it.
+ */
+export interface Style {
+  uni: string[];
+  helm: string;
+  hk: Helmet;
+  paint: string[];
+  camo: string[];
+  /** National marking centred on (x, y), r across. */
+  mark: (g: Ctx, x: number, y: number, r: number) => void;
+  /** Flag with its top-left corner at (x, y), 9×6. */
+  flag: (g: Ctx, x: number, y: number) => void;
+  /** Fighter on the airfield: body colours. */
+  plane: string[];
+}
 
 
 // ---------------------------------------------------------------- soldiers
 
 type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'none';
-interface Soldier {
+export interface Soldier {
   tunic: string[];
   helmet: string;
-  cap?: 'helmet' | 'pilotka' | 'hood';
+  cap?: 'helmet' | 'pilotka' | 'hood' | 'fieldcap';
+  hk?: Helmet;
   gear: Gear;
   pack?: 'roll' | 'medic' | 'satchel' | 'none';
 }
 
 /** A standing soldier walking towards +x, the same stack as the modern infantry. */
-function soldier(o: Soldier): Part[] {
+export function soldier(o: Soldier): Part[] {
   const parts: Part[] = [
     P(0, 3, (g) => {
       box(g, -1.6, -2.6, 3.4, 1.7, 0.8, '#2a261c');
@@ -91,8 +111,18 @@ function soldier(o: Soldier): Part[] {
       g.ellipse(-0.2, 0, 2.2, 1.5, 0, 0, Math.PI * 2);
       finish(g, o.helmet);
       star(g, 1.6, 0, 0.6, RED, null);
+    } else if (o.cap === 'fieldcap') {
+      // Japanese field cap with its neck flaps
+      circ(g, 0.3, 0, 2.2, SKIN);
+      box(g, -2.4, -1.8, 2.6, 3.6, 0.8, o.helmet);
+      g.beginPath();
+      g.ellipse(0, 0, 2.1, 1.7, 0, 0, Math.PI * 2);
+      finish(g, o.helmet);
+      star(g, 1.5, 0, 0.55, '#e8c840', null);
     } else if (o.cap === 'hood') {
       circ(g, 0.3, 0, 2.6, rgrad(g, 0.3, 0, 2.6, [[0, '#7a8a50'], [1, '#3e4a26']]));
+    } else if (o.hk) {
+      helmetTop(g, 0.3, 0, o.helmet, o.hk);
     } else {
       circ(g, 0.3, 0, 2.5, rgrad(g, 0.3, 0, 2.5, [[0, '#8d9a5c'], [1, o.helmet]]));
       line(g, [-1.5, -1.6, 1.8, -1.9], 'rgba(255,255,255,0.15)', 0.5);
@@ -101,14 +131,19 @@ function soldier(o: Soldier): Part[] {
   return parts;
 }
 
+// ---------------------------------------------------------------- Soviet attackers (set 'su')
+
+setModelSet('su');
 model('su_rifle', 8, DIRS, soldier({ tunic: KHAKI, helmet: '#4e5a2e', gear: 'rifle', pack: 'roll' }));
 model('su_smg', 8, DIRS, soldier({ tunic: ['#9c9568', '#7a7448', '#4f4a2e'], helmet: '#4e5a2e', gear: 'smg', pack: 'roll' }));
 model('su_sniper', 8, DIRS, soldier({ tunic: ['#7d8a4e', '#5c6a34', '#3a4520'], helmet: '#4a5a2a', cap: 'hood', gear: 'scoped', pack: 'none' }));
 model('su_sapper', 8, DIRS, soldier({ tunic: ['#8a8a6a', '#6a6a4c', '#46462f'], helmet: '#4e5a2e', gear: 'smg', pack: 'satchel' }));
 model('su_medic', 8, DIRS, soldier({ tunic: KHAKI, helmet: '#6a6a40', cap: 'pilotka', gear: 'none', pack: 'medic' }));
 
+setModelSet('ww2');
+
 /** A crewman seen from above at (x,y) facing angle a: shoulders then helmet. */
-function crew(x: number, y: number, a: number, z0: number, tunic: string[], helmet = '#5e6452'): Part[] {
+export function crew(x: number, y: number, a: number, z0: number, tunic: string[], helmet = '#5e6452', hk: Helmet = 'stahl'): Part[] {
   const at = (g: Ctx, fn: () => void) => {
     g.save();
     g.translate(x, y);
@@ -124,15 +159,29 @@ function crew(x: number, y: number, a: number, z0: number, tunic: string[], helm
       circ(g, 1.6, -2.2, 1, tunic[1]);
       circ(g, 1.6, 2.2, 1, tunic[1]);
     })),
-    P(z0 + 4, z0 + 6, (g) => at(g, () => {
-      // Stahlhelm: wide skirt with a flare
-      circ(g, 0.2, 0, 2.4, rgrad(g, 0.2, 0, 2.4, [[0, '#8a9080'], [0.7, helmet], [1, '#2e3128']]));
-    })),
+    P(z0 + 4, z0 + 6, (g) => at(g, () => helmetTop(g, 0.2, 0, helmet, hk))),
   ];
 }
 
+/** A helmet seen from above: the Stahlhelm's flared skirt, the round M1 with its net, the SSh-40 dome, the Japanese Type 90 with its star. */
+export function helmetTop(g: Ctx, x: number, y: number, helmet: string, hk: Helmet): void {
+  if (hk === 'm1') {
+    circ(g, x, y, 2.5, rgrad(g, x, y, 2.5, [[0, '#9aa070'], [0.7, helmet], [1, '#33361f']]));
+    line(g, [x - 1.6, y - 1.2, x + 1.6, y + 1.2], 'rgba(30,30,20,0.45)', 0.4); // net
+    line(g, [x - 1.6, y + 1.2, x + 1.6, y - 1.2], 'rgba(30,30,20,0.45)', 0.4);
+  } else if (hk === 'ssh') {
+    circ(g, x, y, 2.3, rgrad(g, x - 0.5, y - 0.5, 2.6, [[0, '#9aa266'], [0.6, helmet], [1, '#2e3418']]));
+  } else if (hk === 'jp') {
+    circ(g, x, y, 2.3, rgrad(g, x, y, 2.3, [[0, '#a8a070'], [0.7, helmet], [1, '#3a3820']]));
+    star(g, x + 1.3, y, 0.6, '#e8c840', null);
+  } else {
+    // Stahlhelm: wide skirt with a flare
+    circ(g, x, y, 2.4, rgrad(g, x, y, 2.4, [[0, '#8a9080'], [0.7, helmet], [1, '#2e3128']]));
+  }
+}
+
 /** A soldier lying prone towards +x (snipers, MG gunners). */
-function prone(x: number, y: number, z0: number, tunic: string[], helmet: string): Part[] {
+export function prone(x: number, y: number, z0: number, tunic: string[], helmet: string, hk: Helmet = 'stahl'): Part[] {
   return [
     P(z0, z0 + 2, (g) => {
       box(g, x - 9, y - 2.4, 4.5, 1.6, 0.8, '#2a261c'); // legs, spread
@@ -145,12 +194,13 @@ function prone(x: number, y: number, z0: number, tunic: string[], helmet: string
       circ(g, x + 1.8, y - 2.4, 1, tunic[1]);
       circ(g, x + 1.8, y + 2.4, 1, tunic[1]);
     }),
-    P(z0 + 2, z0 + 4, (g) => circ(g, x + 2.6, y, 2.2, rgrad(g, x + 2.6, y, 2.2, [[0, '#8a9080'], [0.7, helmet], [1, '#2e3128']]))),
+    P(z0 + 2, z0 + 4, (g) => helmetTop(g, x + 2.6, y, helmet, hk)),
   ];
 }
 
 // ---------------------------------------------------------------- Soviet vehicles
 
+setModelSet('su');
 model('su_gaz', 13, DIRS, [
   P(0, 4, (g) => {
     for (const [x, y] of [[-8.5, -7.4], [3.8, -7.4], [-8.5, 4.6], [3.8, 4.6]]) wheel(g, x, y, 4.8, 2.8);
@@ -218,7 +268,7 @@ model('su_ba64', 13, DIRS, [
 ]);
 
 /** A track pair along x: belts, plus road-wheel hubs showing on the outer edge. */
-function tracks(len: number, wid: number, tw: number, wheels: number) {
+export function tracks(len: number, wid: number, tw: number, wheels: number) {
   return (g: Ctx) => {
     tread(g, -len / 2, -wid / 2, len, tw, 1.6);
     tread(g, -len / 2, wid / 2 - tw, len, tw, 1.6);
@@ -231,7 +281,7 @@ function tracks(len: number, wid: number, tw: number, wheels: number) {
 }
 
 /** Painted tactical markings: a white number on the turret side. */
-function tacNumber(g: Ctx, x: number, y: number, w: number) {
+export function tacNumber(g: Ctx, x: number, y: number, w: number) {
   for (let k = 0; k < 3; k++) box(g, x + k * w * 0.4, y, w * 0.28, w * 0.5, 0.2, 'rgba(235,235,225,0.85)', null);
 }
 
@@ -253,7 +303,7 @@ model('su_t70', 15, DIRS, [
 ]);
 
 /** T-34: sloped hull, wide tracks, turret set forward. */
-function t34(big: boolean): Part[] {
+export function t34(big: boolean): Part[] {
   return [
     P(0, 5, tracks(30, 22, 5.5, 5)),
     P(4.5, 9, (g) => {
@@ -357,7 +407,7 @@ model('su_is2', 25, DIRS, [
 ]);
 
 /** Low-wing monoplane seen from above: wings across y, nose at +x, red stars on the wings. */
-function plane(o: { span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number; german?: boolean }): Part[] {
+export function plane(o: { span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number; german?: boolean }): Part[] {
   const half = o.span / 2;
   return [
     P(2, 4, (g) => {
@@ -422,159 +472,173 @@ model('su_il2', 21, DIRS, plane({ span: 30, len: 20, body: ['#7f8a52', '#5c6634'
 model('su_yak', 18, DIRS, plane({ span: 25, len: 18, body: ['#9aa2a6', '#6e787c', '#454c50'], seats: 1 }), false);
 
 // ---------------------------------------------------------------- German emplacements
+
+setModelSet('de');
 //
 // Emplacements stand in a 2×2 gun pit (the wbase models below). Their models start a little
 // above the pit floor and aim along +x.
 
 const WD = 3;
 
-/** Two-plate gun shield, dunkelgelb with a light top edge. */
-function shield(g: Ctx, x: number, w: number, d: number) {
-  poly(g, [x, -w, x + d, -w * 0.4, x + d, w * 0.4, x, w], grad(g, x, -w, x + d, w, [[0, DG[0]], [1, DG[2]]]));
+/** Two-plate gun shield in the faction's paint, with a light top edge. */
+export function shield(g: Ctx, x: number, w: number, d: number, paint = DG) {
+  poly(g, [x, -w, x + d, -w * 0.4, x + d, w * 0.4, x, w], grad(g, x, -w, x + d, w, [[0, paint[0]], [1, paint[2]]]));
   line(g, [x + d, -w * 0.4, x + d, w * 0.4], 'rgba(0,0,0,0.4)');
 }
 
-model('w_mg42', 18, DIRS, [
-  P(WD, WD + 1.5, (g) => {
-    // ammo boxes and spent belt
-    box(g, -7, 4.5, 3.2, 2, 0.4, '#4a4c36');
-    box(g, -3.6, 5, 3.2, 2, 0.4, '#4a4c36');
-  }),
-  ...prone(-1, -0.2, WD, FG, '#5a6050'),
-  P(WD + 2, WD + 3.2, (g) => {
-    // MG-42 on its tripod: perforated barrel jacket, butt, belt
-    line(g, [3, 0, 0.5, -3.5], '#2a2a26', 0.7);
-    line(g, [3, 0, 0.5, 3.5], '#2a2a26', 0.7);
-    box(g, 1.2, -0.9, 3.5, 1.8, 0.5, '#2e2e2a');
-    box(g, 4.5, -0.75, 7, 1.5, 0.5, '#3a3a36');
-    for (let x = 5.2; x < 11; x += 1.1) circ(g, x, 0, 0.3, '#121210', null);
-    box(g, 11.3, -0.45, 3.2, 0.9, 0.3, '#1c1c1a', null);
-    line(g, [2.6, 0.9, 1, 3.6, -1.5, 4.6], '#b08a40', 0.8); // brass belt
-  }),
-  ...crew(-4.5, -5.5, 0.4, WD, FG),
-]);
+/** mg42 emplacement (any faction's style). */
+export function mgNest(S: Style): Part[] {
+  return [
+    P(WD, WD + 1.5, (g) => {
+      // ammo boxes and spent belt
+      box(g, -7, 4.5, 3.2, 2, 0.4, '#4a4c36');
+      box(g, -3.6, 5, 3.2, 2, 0.4, '#4a4c36');
+    }),
+    ...prone(-1, -0.2, WD, S.uni, S.helm, S.hk),
+    P(WD + 2, WD + 3.2, (g) => {
+      // MG-42 on its tripod: perforated barrel jacket, butt, belt
+      line(g, [3, 0, 0.5, -3.5], '#2a2a26', 0.7);
+      line(g, [3, 0, 0.5, 3.5], '#2a2a26', 0.7);
+      box(g, 1.2, -0.9, 3.5, 1.8, 0.5, '#2e2e2a');
+      box(g, 4.5, -0.75, 7, 1.5, 0.5, '#3a3a36');
+      for (let x = 5.2; x < 11; x += 1.1) circ(g, x, 0, 0.3, '#121210', null);
+      box(g, 11.3, -0.45, 3.2, 0.9, 0.3, '#1c1c1a', null);
+      line(g, [2.6, 0.9, 1, 3.6, -1.5, 4.6], '#b08a40', 0.8); // brass belt
+    }),
+    ...crew(-4.5, -5.5, 0.4, WD, S.uni, S.helm, S.hk),];
+}
 
-model('w_flak38', 20, DIRS, [
-  P(WD, WD + 1.5, (g) => {
-    // cruciform platform
-    box(g, -13, -1.4, 26, 2.8, 0.6, '#4a4c40');
-    box(g, -1.4, -13, 2.8, 26, 0.6, '#4a4c40');
-    circ(g, 0, 0, 6.5, grad(g, -6, -6, 6, 6, [[0, '#6a6c5c'], [1, '#3e4036']]));
-  }),
-  P(WD + 1.5, WD + 6, (g) => {
-    circ(g, 0, 0, 4, grad(g, -4, -4, 4, 4, [[0, FG[0]], [1, FG[2]]]));
-    box(g, -6, -3, 4, 6, 1, '#55584c'); // gunner's seat
-    shield(g, 3.5, 6.5, 1.6);
-  }),
-  P(WD + 5, WD + 6.5, (g) => {
-    box(g, 1, -1.1, 5, 2.2, 0.5, '#2e302a');
-    box(g, 5.5, -0.6, 12, 1.2, 0.4, '#1e1e1c');
-    box(g, 16.5, -0.9, 2, 1.8, 0.3, '#121210', null); // flash hider
-    box(g, 2, 1.1, 2, 2.6, 0.3, '#3a3a34'); // magazine
-  }),
-  ...crew(-5, 0, 0, WD + 1.5, FG),
-]);
+/** flak38 emplacement (any faction's style). */
+export function lightAA(S: Style): Part[] {
+  return [
+    P(WD, WD + 1.5, (g) => {
+      // cruciform platform
+      box(g, -13, -1.4, 26, 2.8, 0.6, '#4a4c40');
+      box(g, -1.4, -13, 2.8, 26, 0.6, '#4a4c40');
+      circ(g, 0, 0, 6.5, grad(g, -6, -6, 6, 6, [[0, '#6a6c5c'], [1, '#3e4036']]));
+    }),
+    P(WD + 1.5, WD + 6, (g) => {
+      circ(g, 0, 0, 4, grad(g, -4, -4, 4, 4, [[0, S.uni[0]], [1, S.uni[2]]]));
+      box(g, -6, -3, 4, 6, 1, '#55584c'); // gunner's seat
+      shield(g, 3.5, 6.5, 1.6, S.paint);
+    }),
+    P(WD + 5, WD + 6.5, (g) => {
+      box(g, 1, -1.1, 5, 2.2, 0.5, '#2e302a');
+      box(g, 5.5, -0.6, 12, 1.2, 0.4, '#1e1e1c');
+      box(g, 16.5, -0.9, 2, 1.8, 0.3, '#121210', null); // flash hider
+      box(g, 2, 1.1, 2, 2.6, 0.3, '#3a3a34'); // magazine
+    }),
+    ...crew(-5, 0, 0, WD + 1.5, S.uni, S.helm, S.hk),];
+}
 
-model('w_schreck', 17, DIRS, [
-  ...crew(-1, -2.5, 0, WD, FG),
-  ...crew(-3.5, 4, 0.5, WD - 1, FG), // loader, crouched
-  P(WD + 5, WD + 6.5, (g) => {
-    // the 8.8 cm tube over the gunner's shoulder, with its blast shield
-    box(g, -9, -3.6, 21, 2.2, 1, grad(g, 0, -3.6, 0, -1.4, [[0, '#7a7a5a'], [1, '#3e3e2c']]));
-    box(g, 2, -5.2, 3.2, 5.4, 0.5, '#5a5c48');
-    circ(g, -9, -2.5, 1.1, '#1a1a18', null);
-  }),
-  P(WD, WD + 2, (g) => {
-    box(g, -8, 3, 4, 2, 0.5, '#4a4630'); // rocket case
-    box(g, -6, 6, 6, 1.2, 0.5, '#6a5a3a'); // spare rocket
-  }),
-]);
+/** schreck emplacement (any faction's style). */
+export function atTeam(S: Style): Part[] {
+  return [
+    ...crew(-1, -2.5, 0, WD, S.uni, S.helm, S.hk),
+    ...crew(-3.5, 4, 0.5, WD - 1, S.uni, S.helm, S.hk), // loader, crouched
+    P(WD + 5, WD + 6.5, (g) => {
+      // the 8.8 cm tube over the gunner's shoulder, with its blast shield
+      box(g, -9, -3.6, 21, 2.2, 1, grad(g, 0, -3.6, 0, -1.4, [[0, '#7a7a5a'], [1, '#3e3e2c']]));
+      box(g, 2, -5.2, 3.2, 5.4, 0.5, '#5a5c48');
+      circ(g, -9, -2.5, 1.1, '#1a1a18', null);
+    }),
+    P(WD, WD + 2, (g) => {
+      box(g, -8, 3, 4, 2, 0.5, '#4a4630'); // rocket case
+      box(g, -6, 6, 6, 1.2, 0.5, '#6a5a3a'); // spare rocket
+    }),];
+}
 
-model('w_sniper', 14, DIRS, [
-  P(WD, WD + 1.2, (g) => {
-    // ghillie: ragged foliage over the prone shape
-    const rng = new Rng(7);
-    for (let k = 0; k < 9; k++) circ(g, rng.range(-9, 2), rng.range(-3.5, 3.5), rng.range(1.2, 2.2), k % 2 ? '#5a6a34' : '#6e7a40', null);
-  }),
-  ...prone(0, 0, WD, ['#7a8a50', '#5c6a36', '#3e4a24'], '#4e5a32'),
-  P(WD + 2.2, WD + 3, (g) => {
-    box(g, -1, 1.2, 13, 0.9, 0.4, '#5a3c22', null);
-    box(g, 7, 1.3, 6.5, 0.7, 0.3, BLACK, null);
-    box(g, 2.5, 0.6, 4, 0.9, 0.4, '#101010', null); // scope
-  }),
-]);
+/** sniper emplacement (any faction's style). */
+export function sniperPit(_S: Style): Part[] {
+  return [
+    P(WD, WD + 1.2, (g) => {
+      // ghillie: ragged foliage over the prone shape
+      const rng = new Rng(7);
+      for (let k = 0; k < 9; k++) circ(g, rng.range(-9, 2), rng.range(-3.5, 3.5), rng.range(1.2, 2.2), k % 2 ? '#5a6a34' : '#6e7a40', null);
+    }),
+    ...prone(0, 0, WD, ['#7a8a50', '#5c6a36', '#3e4a24'], '#4e5a32'),
+    P(WD + 2.2, WD + 3, (g) => {
+      box(g, -1, 1.2, 13, 0.9, 0.4, '#5a3c22', null);
+      box(g, 7, 1.3, 6.5, 0.7, 0.3, BLACK, null);
+      box(g, 2.5, 0.6, 4, 0.9, 0.4, '#101010', null); // scope
+    }),];
+}
 
-model('w_flamer', 14, DIRS, [
-  ...crew(0, 0, 0, WD, FG),
-  P(WD + 2, WD + 6.5, (g) => {
-    // fuel and pressure tanks on the back
-    circ(g, -4.2, -1.6, 1.7, grad(g, -6, -3, -2, 0, [[0, '#7a7a5a'], [1, '#3a3a2a']]));
-    circ(g, -4.2, 1.6, 1.7, grad(g, -6, 0, -2, 3, [[0, '#7a7a5a'], [1, '#3a3a2a']]));
-    circ(g, -5.8, 0, 1, '#5a5a44');
-  }),
-  P(WD + 3.5, WD + 4.5, (g) => {
-    box(g, 1, 1, 8, 1.1, 0.4, '#2e2e2a');
-    circ(g, 9.2, 1.55, 0.7, '#ff9a3a', null); // pilot flame
-    line(g, [-3.5, 2.2, 0, 2.6, 1.5, 1.6], '#1a1a18', 0.6);
-  }),
-]);
+/** flamer emplacement (any faction's style). */
+export function flamerTeam(S: Style): Part[] {
+  return [
+    ...crew(0, 0, 0, WD, S.uni, S.helm, S.hk),
+    P(WD + 2, WD + 6.5, (g) => {
+      // fuel and pressure tanks on the back
+      circ(g, -4.2, -1.6, 1.7, grad(g, -6, -3, -2, 0, [[0, '#7a7a5a'], [1, '#3a3a2a']]));
+      circ(g, -4.2, 1.6, 1.7, grad(g, -6, 0, -2, 3, [[0, '#7a7a5a'], [1, '#3a3a2a']]));
+      circ(g, -5.8, 0, 1, '#5a5a44');
+    }),
+    P(WD + 3.5, WD + 4.5, (g) => {
+      box(g, 1, 1, 8, 1.1, 0.4, '#2e2e2a');
+      circ(g, 9.2, 1.55, 0.7, '#ff9a3a', null); // pilot flame
+      line(g, [-3.5, 2.2, 0, 2.6, 1.5, 1.6], '#1a1a18', 0.6);
+    }),];
+}
 
 /** Split-trail anti-tank gun: trails, wheels, double shield, long barrel with a muzzle brake. */
-function atGun(o: { barrel: number; shieldW: number; brake: boolean; wheelY: number }): Part[] {
+export function atGun(S: Style, o: { barrel: number; shieldW: number; brake: boolean; wheelY: number }): Part[] {
   return [
     P(WD, WD + 1.5, (g) => {
       // split trails spread behind the gun
-      poly(g, [-1, -1.5, -15, -9, -16, -7.5, -2, 0], grad(g, -16, -9, 0, 0, [[0, DG[1]], [1, DG[2]]]));
-      poly(g, [-1, 1.5, -15, 9, -16, 7.5, -2, 0], grad(g, -16, 0, 0, 9, [[0, DG[1]], [1, DG[2]]]));
+      poly(g, [-1, -1.5, -15, -9, -16, -7.5, -2, 0], grad(g, -16, -9, 0, 0, [[0, S.paint[1]], [1, S.paint[2]]]));
+      poly(g, [-1, 1.5, -15, 9, -16, 7.5, -2, 0], grad(g, -16, 0, 0, 9, [[0, S.paint[1]], [1, S.paint[2]]]));
       box(g, -17, -9.5, 2.5, 2.5, 0.5, '#3a3628'); // spades
       box(g, -17, 7, 2.5, 2.5, 0.5, '#3a3628');
     }),
     P(WD, WD + 5, (g) => {
       for (const s of [-1, 1]) {
         box(g, -3, s * o.wheelY - 1.5, 6, 3, 1.2, '#1b1b19');
-        circ(g, 0, s * o.wheelY, 1.1, DG[2], null);
+        circ(g, 0, s * o.wheelY, 1.1, S.paint[2], null);
       }
     }),
     P(WD + 2, WD + 7.5, (g) => {
-      shield(g, 1, o.shieldW, 2);
-      camo(g, () => poly(g, [1, -o.shieldW, 3, -o.shieldW * 0.4, 3, o.shieldW * 0.4, 1, o.shieldW], 'rgba(0,0,0,0)', null), DG_CAMO, 33, 4, 2.5, o.shieldW);
+      shield(g, 1, o.shieldW, 2, S.paint);
+      camo(g, () => poly(g, [1, -o.shieldW, 3, -o.shieldW * 0.4, 3, o.shieldW * 0.4, 1, o.shieldW], 'rgba(0,0,0,0)', null), S.camo, 33, 4, 2.5, o.shieldW);
       box(g, -4, -2, 5, 4, 0.8, '#6a5c3a'); // cradle
     }),
     P(WD + 4.5, WD + 6, (g) => {
-      box(g, 1, -1, o.barrel, 2, 0.6, grad(g, 0, -1, 0, 1, [[0, DG[1]], [1, '#5a4c30']]));
+      box(g, 1, -1, o.barrel, 2, 0.6, grad(g, 0, -1, 0, 1, [[0, S.paint[1]], [1, '#5a4c30']]));
       if (o.brake) box(g, 1 + o.barrel - 2, -1.6, 3, 3.2, 0.5, '#4a4030');
     }),
-    ...crew(-6, -4.5, 0.2, WD, FG),
-    ...crew(-7, 4.5, -0.3, WD, FG),
+    ...crew(-6, -4.5, 0.2, WD, S.uni, S.helm, S.hk),
+    ...crew(-7, 4.5, -0.3, WD, S.uni, S.helm, S.hk),
   ];
 }
-model('w_pak40', 24, DIRS, atGun({ barrel: 20, shieldW: 8, brake: true, wheelY: 8.5 }));
 
-model('w_flak88', 27, DIRS, [
-  P(WD, WD + 1.5, (g) => {
-    // cruciform carriage with four outriggers and levelling jacks
-    box(g, -18, -2, 36, 4, 0.8, grad(g, -18, -2, 18, 2, [[0, DG[1]], [1, DG[2]]]));
-    box(g, -2, -18, 4, 36, 0.8, grad(g, -2, -18, 2, 18, [[0, DG[1]], [1, DG[2]]]));
-    for (const [x, y] of [[-17, 0], [17, 0], [0, -17], [0, 17]]) circ(g, x, y, 1.8, '#3a3628');
-  }),
-  P(WD + 1.5, WD + 6, (g) => {
-    circ(g, 0, 0, 5.5, grad(g, -5, -5, 5, 5, [[0, DG[0]], [1, DG[2]]]));
-    shield(g, 3, 9, 2.2);
-    camo(g, () => circ(g, 0, 0, 5.5, 'rgba(0,0,0,0)', null), DG_CAMO, 88, 3, 2.5, 5);
-  }),
-  P(WD + 5, WD + 8, (g) => {
-    box(g, -9, -2, 14, 4, 1, grad(g, 0, -2, 0, 2, [[0, '#a89464'], [1, '#6a5a38']])); // recoil housing
-    box(g, -11, -3, 4, 6, 0.8, '#6a5c3a'); // equilibrators
-    box(g, 5, -1.1, 22, 2.2, 0.6, grad(g, 0, -1, 0, 1, [[0, DG[1]], [1, '#5a4c30']]));
-    for (let k = 0; k < 4; k++) line(g, [-6 + k * 2.5, -2, -6 + k * 2.5, 2], 'rgba(0,0,0,0.25)');
-  }),
-  P(WD + 8, WD + 8.8, (g) => {
-    // kill rings painted on the barrel
-    for (let k = 0; k < 5; k++) line(g, [9 + k * 1.1, -1.1, 9 + k * 1.1, 1.1], 'rgba(245,245,240,0.85)', 0.5);
-  }),
-  ...crew(-8, -8, 0.6, WD + 1, FG),
-  ...crew(-8, 8, -0.6, WD + 1, FG),
-]);
+
+/** flak88 emplacement (any faction's style). */
+export function heavyAA(S: Style): Part[] {
+  return [
+    P(WD, WD + 1.5, (g) => {
+      // cruciform carriage with four outriggers and levelling jacks
+      box(g, -18, -2, 36, 4, 0.8, grad(g, -18, -2, 18, 2, [[0, S.paint[1]], [1, S.paint[2]]]));
+      box(g, -2, -18, 4, 36, 0.8, grad(g, -2, -18, 2, 18, [[0, S.paint[1]], [1, S.paint[2]]]));
+      for (const [x, y] of [[-17, 0], [17, 0], [0, -17], [0, 17]]) circ(g, x, y, 1.8, '#3a3628');
+    }),
+    P(WD + 1.5, WD + 6, (g) => {
+      circ(g, 0, 0, 5.5, grad(g, -5, -5, 5, 5, [[0, S.paint[0]], [1, S.paint[2]]]));
+      shield(g, 3, 9, 2.2, S.paint);
+      camo(g, () => circ(g, 0, 0, 5.5, 'rgba(0,0,0,0)', null), S.camo, 88, 3, 2.5, 5);
+    }),
+    P(WD + 5, WD + 8, (g) => {
+      box(g, -9, -2, 14, 4, 1, grad(g, 0, -2, 0, 2, [[0, '#a89464'], [1, '#6a5a38']])); // recoil housing
+      box(g, -11, -3, 4, 6, 0.8, '#6a5c3a'); // equilibrators
+      box(g, 5, -1.1, 22, 2.2, 0.6, grad(g, 0, -1, 0, 1, [[0, S.paint[1]], [1, '#5a4c30']]));
+      for (let k = 0; k < 4; k++) line(g, [-6 + k * 2.5, -2, -6 + k * 2.5, 2], 'rgba(0,0,0,0.25)');
+    }),
+    P(WD + 8, WD + 8.8, (g) => {
+      // kill rings painted on the barrel
+      for (let k = 0; k < 5; k++) line(g, [9 + k * 1.1, -1.1, 9 + k * 1.1, 1.1], 'rgba(245,245,240,0.85)', 0.5);
+    }),
+    ...crew(-8, -8, 0.6, WD + 1, S.uni, S.helm, S.hk),
+    ...crew(-8, 8, -0.6, WD + 1, S.uni, S.helm, S.hk),];
+}
 
 model('w_tiger', 25, DIRS, [
   P(WD, WD + 2.5, (g) => {
@@ -610,140 +674,152 @@ model('w_tiger', 25, DIRS, [
   }),
 ]);
 
-model('w_bunker', 21, DIRS, [
-  P(WD, WD + 7, (g) => {
-    // a Tobruk-style concrete pillbox: rounded block with two embrasures facing +x
-    const pts = [-13, -11, 6, -11, 13, -5, 13, 5, 6, 11, -13, 11];
-    poly(g, pts, grad(g, -13, -11, 13, 11, [[0, '#a8a69a'], [1, '#5e5c54']]));
-    const rng = new Rng(3);
-    for (let k = 0; k < 12; k++) circ(g, rng.range(-12, 11), rng.range(-10, 10), rng.range(0.4, 1.2), 'rgba(60,58,50,0.25)', null);
-  }),
-  P(WD + 3.5, WD + 5, (g) => {
-    for (const y of [-4.5, 4.5]) {
-      box(g, 9.5, y - 1.3, 3.8, 2.6, 0.5, '#151512');
-      box(g, 11, y - 0.4, 6, 0.8, 0.3, '#2a2a26', null);
-    }
-  }),
-  P(WD + 7, WD + 8.5, (g) => {
-    // earth and turf thrown over the roof
-    g.beginPath();
-    g.ellipse(-2, 0, 9.5, 8.5, 0, 0, Math.PI * 2);
-    finish(g, rgrad(g, -2, 0, 9.5, [[0, '#7c8a48'], [0.7, '#5c6a34'], [1, '#4a5228']]), 'rgba(0,0,0,0.3)');
-    circ(g, -6, 0, 2.6, '#2a2a24'); // rear hatch
-  }),
-]);
+/** bunker emplacement (any faction's style). */
+export function pillbox(_S: Style): Part[] {
+  return [
+    P(WD, WD + 7, (g) => {
+      // a Tobruk-style concrete pillbox: rounded block with two embrasures facing +x
+      const pts = [-13, -11, 6, -11, 13, -5, 13, 5, 6, 11, -13, 11];
+      poly(g, pts, grad(g, -13, -11, 13, 11, [[0, '#a8a69a'], [1, '#5e5c54']]));
+      const rng = new Rng(3);
+      for (let k = 0; k < 12; k++) circ(g, rng.range(-12, 11), rng.range(-10, 10), rng.range(0.4, 1.2), 'rgba(60,58,50,0.25)', null);
+    }),
+    P(WD + 3.5, WD + 5, (g) => {
+      for (const y of [-4.5, 4.5]) {
+        box(g, 9.5, y - 1.3, 3.8, 2.6, 0.5, '#151512');
+        box(g, 11, y - 0.4, 6, 0.8, 0.3, '#2a2a26', null);
+      }
+    }),
+    P(WD + 7, WD + 8.5, (g) => {
+      // earth and turf thrown over the roof
+      g.beginPath();
+      g.ellipse(-2, 0, 9.5, 8.5, 0, 0, Math.PI * 2);
+      finish(g, rgrad(g, -2, 0, 9.5, [[0, '#7c8a48'], [0.7, '#5c6a34'], [1, '#4a5228']]), 'rgba(0,0,0,0.3)');
+      circ(g, -6, 0, 2.6, '#2a2a24'); // rear hatch
+    }),];
+}
 
-model('w_mortar', 15, DIRS, [
-  P(WD, WD + 1, (g) => {
-    box(g, -3, -3, 6, 6, 1, '#3a3c34'); // base plate
-    box(g, -8, 4, 4, 3, 0.5, '#4a4630'); // bomb crates
-    box(g, -8, -7, 4, 3, 0.5, '#4a4630');
-  }),
-  P(WD + 1, WD + 7, (g) => {
-    // the tube leaning forward on its bipod
-    line(g, [5, -3, 4, 0], '#2a2a26', 0.7);
-    line(g, [5, 3, 4, 0], '#2a2a26', 0.7);
-  }),
-  P(WD + 1, WD + 9, (g, z) => {
-    const k = (z - WD - 1) / 8;
-    circ(g, k * 4.5, 0, 1.2, '#3a3c36');
-  }, true),
-  ...crew(-4, -4, 0.3, WD, FG),
-  ...crew(-4.5, 5, -0.6, WD - 1, FG),
-]);
+/** mortar emplacement (any faction's style). */
+export function mortarPit(S: Style): Part[] {
+  return [
+    P(WD, WD + 1, (g) => {
+      box(g, -3, -3, 6, 6, 1, '#3a3c34'); // base plate
+      box(g, -8, 4, 4, 3, 0.5, '#4a4630'); // bomb crates
+      box(g, -8, -7, 4, 3, 0.5, '#4a4630');
+    }),
+    P(WD + 1, WD + 7, (g) => {
+      // the tube leaning forward on its bipod
+      line(g, [5, -3, 4, 0], '#2a2a26', 0.7);
+      line(g, [5, 3, 4, 0], '#2a2a26', 0.7);
+    }),
+    P(WD + 1, WD + 9, (g, z) => {
+      const k = (z - WD - 1) / 8;
+      circ(g, k * 4.5, 0, 1.2, '#3a3c36');
+    }, true),
+    ...crew(-4, -4, 0.3, WD, S.uni, S.helm, S.hk),
+    ...crew(-4.5, 5, -0.6, WD - 1, S.uni, S.helm, S.hk),];
+}
 
-model('w_lefh18', 26, DIRS, [
-  ...atGun({ barrel: 15, shieldW: 9.5, brake: true, wheelY: 9.5 }).slice(0, 3),
-  P(WD + 4, WD + 7, (g) => {
-    // short, thick howitzer barrel over a long recuperator
-    box(g, -6, -1.8, 10, 3.6, 0.8, '#7a6a44');
-    box(g, 2, -1.6, 15, 3.2, 1, grad(g, 0, -1.6, 0, 1.6, [[0, DG[1]], [1, '#5a4c30']]));
-    box(g, 16, -2.1, 2.8, 4.2, 0.6, '#4a4030');
-  }),
-  ...crew(-7, -5, 0.2, WD, FG),
-  ...crew(-8, 5, -0.4, WD, FG),
-  ...crew(-12, 0, 0, WD, FG),
-]);
+/** lefh18 emplacement (any faction's style). */
+export function howitzer(S: Style): Part[] {
+  return [
+    ...atGun(S, { barrel: 15, shieldW: 9.5, brake: true, wheelY: 9.5 }).slice(0, 3),
+    P(WD + 4, WD + 7, (g) => {
+      // short, thick howitzer barrel over a long recuperator
+      box(g, -6, -1.8, 10, 3.6, 0.8, '#7a6a44');
+      box(g, 2, -1.6, 15, 3.2, 1, grad(g, 0, -1.6, 0, 1.6, [[0, S.paint[1]], [1, '#5a4c30']]));
+      box(g, 16, -2.1, 2.8, 4.2, 0.6, '#4a4030');
+    }),
+    ...crew(-7, -5, 0.2, WD, S.uni, S.helm, S.hk),
+    ...crew(-8, 5, -0.4, WD, S.uni, S.helm, S.hk),
+    ...crew(-12, 0, 0, WD, S.uni, S.helm, S.hk),];
+}
 
-model('w_nebel', 21, DIRS, [
-  P(WD, WD + 4, (g) => {
-    poly(g, [-2, -1.2, -15, -1, -15, 1, -2, 1.2], DG[2]); // single trail
-    for (const s of [-1, 1]) box(g, -3, s * 8.5 - 1.5, 6, 3, 1.2, '#1b1b19');
-    box(g, -2, -8, 4, 16, 0.6, '#5a4c30'); // axle
-  }),
-  P(WD + 3, WD + 8, (g) => {
-    // six barrels in a hexagonal cluster
-    for (let k = 0; k < 6; k++) {
-      const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
-      const y = Math.sin(a) * 4;
-      const zz = Math.cos(a) * 1.5;
-      box(g, -6 + zz, y - 1.5, 17, 3, 1.4, grad(g, 0, y - 1.5, 0, y + 1.5, [[0, '#8a7a50'], [1, '#4a4030']]));
-      circ(g, 11 + zz, y, 1.2, '#141410', null);
-    }
-    box(g, 2, -6, 1.2, 12, 0.4, '#3a3428'); // retaining band
-  }),
-  ...crew(-9, -6, 0.5, WD, FG),
-]);
+/** nebel emplacement (any faction's style). */
+export function rocketBattery(S: Style): Part[] {
+  return [
+    P(WD, WD + 4, (g) => {
+      poly(g, [-2, -1.2, -15, -1, -15, 1, -2, 1.2], S.paint[2]); // single trail
+      for (const s of [-1, 1]) box(g, -3, s * 8.5 - 1.5, 6, 3, 1.2, '#1b1b19');
+      box(g, -2, -8, 4, 16, 0.6, '#5a4c30'); // axle
+    }),
+    P(WD + 3, WD + 8, (g) => {
+      // six barrels in a hexagonal cluster
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
+        const y = Math.sin(a) * 4;
+        const zz = Math.cos(a) * 1.5;
+        box(g, -6 + zz, y - 1.5, 17, 3, 1.4, grad(g, 0, y - 1.5, 0, y + 1.5, [[0, '#8a7a50'], [1, '#4a4030']]));
+        circ(g, 11 + zz, y, 1.2, '#141410', null);
+      }
+      box(g, 2, -6, 1.2, 12, 0.4, '#3a3428'); // retaining band
+    }),
+    ...crew(-9, -6, 0.5, WD, S.uni, S.helm, S.hk),];
+}
 
-model('w_depot', 21, 1, [
-  P(WD - 1, WD + 3, (g) => {
-    // fuel drums and crates under a tarpaulin
-    for (const [x, y] of [[-10, -9], [-6, -9], [-10, -5], [-6, -5]]) circ(g, x, y, 1.9, grad(g, x - 2, y - 2, x + 2, y + 2, [[0, '#6a7052'], [1, '#383c2a']]));
-    for (const [x, y, w, h] of [[2, -11, 8, 5], [2, -5, 8, 5], [-12, 2, 7, 6]]) {
-      box(g, x, y, w, h, 0.6, grad(g, x, y, x + w, y + h, [[0, '#a08a5a'], [1, '#5c4c30']]));
-      line(g, [x, y + h / 2, x + w, y + h / 2], 'rgba(0,0,0,0.3)');
-    }
-  }),
-  P(WD, WD + 6, (g) => {
-    g.beginPath();
-    g.moveTo(-3, 0);
-    g.lineTo(12, -1);
-    g.lineTo(13, 12);
-    g.lineTo(-2, 12);
-    g.closePath();
-    finish(g, grad(g, -3, 0, 13, 12, [[0, '#7a7e5a'], [1, '#4a4c34']]));
-    line(g, [5, -0.5, 5.5, 12], 'rgba(0,0,0,0.3)');
-  }),
-  P(WD + 3, WD + 4.5, (g) => {
-    for (const x of [-6, -3, 0]) box(g, x, 13, 2.2, 3.5, 0.5, '#5a5e3c'); // jerrycans
-  }),
-]);
+/** depot emplacement (any faction's style). */
+export function depot(_S: Style): Part[] {
+  return [
+    P(WD - 1, WD + 3, (g) => {
+      // fuel drums and crates under a tarpaulin
+      for (const [x, y] of [[-10, -9], [-6, -9], [-10, -5], [-6, -5]]) circ(g, x, y, 1.9, grad(g, x - 2, y - 2, x + 2, y + 2, [[0, '#6a7052'], [1, '#383c2a']]));
+      for (const [x, y, w, h] of [[2, -11, 8, 5], [2, -5, 8, 5], [-12, 2, 7, 6]]) {
+        box(g, x, y, w, h, 0.6, grad(g, x, y, x + w, y + h, [[0, '#a08a5a'], [1, '#5c4c30']]));
+        line(g, [x, y + h / 2, x + w, y + h / 2], 'rgba(0,0,0,0.3)');
+      }
+    }),
+    P(WD, WD + 6, (g) => {
+      g.beginPath();
+      g.moveTo(-3, 0);
+      g.lineTo(12, -1);
+      g.lineTo(13, 12);
+      g.lineTo(-2, 12);
+      g.closePath();
+      finish(g, grad(g, -3, 0, 13, 12, [[0, '#7a7e5a'], [1, '#4a4c34']]));
+      line(g, [5, -0.5, 5.5, 12], 'rgba(0,0,0,0.3)');
+    }),
+    P(WD + 3, WD + 4.5, (g) => {
+      for (const x of [-6, -3, 0]) box(g, x, 13, 2.2, 3.5, 0.5, '#5a5e3c'); // jerrycans
+    }),];
+}
 
-model('w_observer', 16, DIRS, [
-  P(WD, WD + 1, (g) => box(g, -6, -5, 12, 10, 1, '#4a4630')), // log-lined dugout floor
-  ...crew(-3, 0, 0, WD, FG),
-  P(WD + 5, WD + 10, (g) => {
-    // scissors periscope on its tripod: two tubes spread in a V
-    line(g, [0, 0, 6, -4.5], '#3a3c34', 1.2);
-    line(g, [0, 0, 6, 4.5], '#3a3c34', 1.2);
-  }),
-  P(WD + 10, WD + 11, (g) => {
-    circ(g, 6, -4.5, 1, '#9ac0d0', null);
-    circ(g, 6, 4.5, 1, '#9ac0d0', null);
-  }),
-]);
+/** observer emplacement (any faction's style). */
+export function observer(S: Style): Part[] {
+  return [
+    P(WD, WD + 1, (g) => box(g, -6, -5, 12, 10, 1, '#4a4630')), // log-lined dugout floor
+    ...crew(-3, 0, 0, WD, S.uni, S.helm, S.hk),
+    P(WD + 5, WD + 10, (g) => {
+      // scissors periscope on its tripod: two tubes spread in a V
+      line(g, [0, 0, 6, -4.5], '#3a3c34', 1.2);
+      line(g, [0, 0, 6, 4.5], '#3a3c34', 1.2);
+    }),
+    P(WD + 10, WD + 11, (g) => {
+      circ(g, 6, -4.5, 1, '#9ac0d0', null);
+      circ(g, 6, 4.5, 1, '#9ac0d0', null);
+    }),];
+}
 
-model('w_hq', 21, 1, [
-  P(WD - 1, WD + 5, (g) => {
-    // a dug-in command tent
-    poly(g, [-12, -9, 6, -9, 9, 0, 6, 9, -12, 9], grad(g, -12, -9, 9, 9, [[0, '#8a8a68'], [1, '#4a4a36']]));
-    line(g, [-12, 0, 9, 0], 'rgba(0,0,0,0.35)', 0.8);
-  }),
-  P(WD, WD + 4, (g) => {
-    box(g, 9, 5, 7, 5, 0.6, '#6a4c2c'); // map table
-    box(g, 9.8, 5.8, 5.4, 3.4, 0.3, '#e8e0c8', null);
-    box(g, 9, -11, 6, 4, 0.6, '#4a4c40'); // field radio
-  }),
-  ...crew(14, -1, Math.PI, WD, FG),
-  P(WD, WD + 22, (g) => circ(g, 12, -9, 0.4, '#1a1a18', null)), // radio mast
-  P(WD, WD + 16, (g) => circ(g, -14, 12, 0.5, '#3a3020', null)), // flag pole
-  P(WD + 16, WD + 17, (g) => {
-    // war flag
-    box(g, -14, 12, 9, 6, 0.2, RED, 'rgba(0,0,0,0.5)');
-    circ(g, -9.5, 15, 2.1, '#f2f0e8', null);
-    swastika(g, -9.5, 15, 1.4);
-  }),
-]);
+/** hq emplacement (any faction's style). */
+export function hq(S: Style): Part[] {
+  return [
+    P(WD - 1, WD + 5, (g) => {
+      // a dug-in command tent
+      poly(g, [-12, -9, 6, -9, 9, 0, 6, 9, -12, 9], grad(g, -12, -9, 9, 9, [[0, '#8a8a68'], [1, '#4a4a36']]));
+      line(g, [-12, 0, 9, 0], 'rgba(0,0,0,0.35)', 0.8);
+    }),
+    P(WD, WD + 4, (g) => {
+      box(g, 9, 5, 7, 5, 0.6, '#6a4c2c'); // map table
+      box(g, 9.8, 5.8, 5.4, 3.4, 0.3, '#e8e0c8', null);
+      box(g, 9, -11, 6, 4, 0.6, '#4a4c40'); // field radio
+    }),
+    ...crew(14, -1, Math.PI, WD, S.uni, S.helm, S.hk),
+    P(WD, WD + 22, (g) => circ(g, 12, -9, 0.4, '#1a1a18', null)), // radio mast
+    P(WD, WD + 16, (g) => circ(g, -14, 12, 0.5, '#3a3020', null)), // flag pole
+    P(WD + 16, WD + 17, (g) => {
+      // war flag
+      S.flag(g, -14, 12);
+    }),];
+}
 
 function swastika(g: Ctx, x: number, y: number, r: number) {
   // a cross whose arms each bend a quarter turn clockwise, stood on its corner
@@ -833,34 +909,37 @@ model('w_stuka', 23, 1, [
   }),
 ]);
 
-model('w_workshop', 21, 1, [
-  P(WD - 1, WD + 1, (g) => {
-    box(g, -13, -12, 26, 24, 1.5, '#5a5440'); // packed-earth yard
-    for (const [x, y] of [[-10, 8], [-6.5, 9]]) circ(g, x, y, 1.8, grad(g, x - 2, y - 2, x + 2, y + 2, [[0, '#6a7052'], [1, '#383c2a']]));
-  }),
-  P(WD + 1, WD + 7, (g) => {
-    // an Opel Blitz with its bonnet open
-    box(g, -11, -9, 15, 9, 1, grad(g, -11, -9, 4, 0, [[0, FG[0]], [1, FG[2]]]));
-    box(g, 4, -8.5, 6, 8, 1, grad(g, 4, -8.5, 10, -0.5, [[0, '#757b6b'], [1, '#4a4e40']]));
-    line(g, [-4, -9, -4, 0], 'rgba(0,0,0,0.35)');
-  }),
-  P(WD + 1, WD + 13, (g) => {
-    // gantry crane lifting an engine
-    line(g, [-2, 3, -2, 11], '#4a4030', 1.4);
-    line(g, [10, 3, 10, 11], '#4a4030', 1.4);
-  }),
-  P(WD + 13, WD + 14, (g) => {
-    line(g, [-2, 7, 10, 7], '#5a4c34', 1.6);
-    line(g, [4, 7, 4, 9], '#222', 0.4);
-  }),
-  P(WD + 5, WD + 8, (g) => box(g, 1.5, 7.5, 5, 4, 0.8, '#3a3a36')), // engine block
-  ...crew(-7, 4, 1.2, WD, FG),
-  P(WD, WD + 1, (g) => {
-    // tool chest
-    box(g, 6, -12, 6, 2.6, 0.4, '#8a2a1e');
-  }),
-]);
+/** workshop emplacement (any faction's style). */
+export function workshop(S: Style): Part[] {
+  return [
+    P(WD - 1, WD + 1, (g) => {
+      box(g, -13, -12, 26, 24, 1.5, '#5a5440'); // packed-earth yard
+      for (const [x, y] of [[-10, 8], [-6.5, 9]]) circ(g, x, y, 1.8, grad(g, x - 2, y - 2, x + 2, y + 2, [[0, '#6a7052'], [1, '#383c2a']]));
+    }),
+    P(WD + 1, WD + 7, (g) => {
+      // an Opel Blitz with its bonnet open
+      box(g, -11, -9, 15, 9, 1, grad(g, -11, -9, 4, 0, [[0, S.uni[0]], [1, S.uni[2]]]));
+      box(g, 4, -8.5, 6, 8, 1, grad(g, 4, -8.5, 10, -0.5, [[0, '#757b6b'], [1, '#4a4e40']]));
+      line(g, [-4, -9, -4, 0], 'rgba(0,0,0,0.35)');
+    }),
+    P(WD + 1, WD + 13, (g) => {
+      // gantry crane lifting an engine
+      line(g, [-2, 3, -2, 11], '#4a4030', 1.4);
+      line(g, [10, 3, 10, 11], '#4a4030', 1.4);
+    }),
+    P(WD + 13, WD + 14, (g) => {
+      line(g, [-2, 7, 10, 7], '#5a4c34', 1.6);
+      line(g, [4, 7, 4, 9], '#222', 0.4);
+    }),
+    P(WD + 5, WD + 8, (g) => box(g, 1.5, 7.5, 5, 4, 0.8, '#3a3a36')), // engine block
+    ...crew(-7, 4, 1.2, WD, S.uni, S.helm, S.hk),
+    P(WD, WD + 1, (g) => {
+      // tool chest
+      box(g, 6, -12, 6, 2.6, 0.4, '#8a2a1e');
+    }),];
+}
 
+setModelSet('ww2');
 /** Rubble of a knocked-out emplacement: burst sandbags, splintered timber, a twisted barrel. */
 model('w_rubble', 20, 1, (() => {
   const rng = new Rng(17);
@@ -891,6 +970,7 @@ model('w_rubble', 20, 1, (() => {
     }),
   ];
 })());
+setModelSet('de');
 
 /** V-2 on its firing table, the Meillerwagen trailer lowered beside it, a fuel bowser behind. */
 model('w_v2', 23, 1, [
@@ -930,70 +1010,109 @@ model('w_v2', 23, 1, [
   ...crew(-9, 2, 0.4, WD, FG),
 ]);
 
-model('w_barracks', 21, 1, [
-  P(WD - 1, WD + 1, (g) => box(g, -15, -15, 30, 30, 1.5, '#5e5844')), // trodden earth
-  P(WD + 1, WD + 9, (g) => {
-    // a timber hut with a pitched felt roof
-    box(g, -13, -10, 22, 14, 0.6, grad(g, -13, -10, 9, 4, [[0, '#4a4438'], [1, '#2a2620']]));
-    line(g, [-13, -3, 9, -3], 'rgba(255,255,255,0.12)', 0.8);
-    for (let x = -11; x < 9; x += 3) line(g, [x, -10, x, 4], 'rgba(0,0,0,0.25)', 0.4);
-  }),
-  P(WD + 1, WD + 3, (g) => {
-    for (let k = 0; k < 4; k++) box(g, -12 + k * 5, 8, 4, 5, 1.2, grad(g, 0, 8, 0, 13, [[0, '#b8a47a'], [1, '#7a6a48']])); // sandbags
-    line(g, [11, -12, 11, 12], '#3a2c1c', 1); // flagpole shadow
-  }),
-  P(WD + 3, WD + 16, (g) => line(g, [11, 6, 11, 6.2], '#4a3a24', 1.2), true),
-  P(WD + 15, WD + 16, (g) => box(g, 11, 4, 6, 4, 0.2, '#c42a1e', null)), // pennant
-  ...crew(-2, 9, 0, WD, FG),
-  ...crew(4, 10, -0.6, WD, FG),
-]);
+/** barracks emplacement (any faction's style). */
+export function barracks(S: Style): Part[] {
+  return [
+    P(WD - 1, WD + 1, (g) => box(g, -15, -15, 30, 30, 1.5, '#5e5844')), // trodden earth
+    P(WD + 1, WD + 9, (g) => {
+      // a timber hut with a pitched felt roof
+      box(g, -13, -10, 22, 14, 0.6, grad(g, -13, -10, 9, 4, [[0, '#4a4438'], [1, '#2a2620']]));
+      line(g, [-13, -3, 9, -3], 'rgba(255,255,255,0.12)', 0.8);
+      for (let x = -11; x < 9; x += 3) line(g, [x, -10, x, 4], 'rgba(0,0,0,0.25)', 0.4);
+    }),
+    P(WD + 1, WD + 3, (g) => {
+      for (let k = 0; k < 4; k++) box(g, -12 + k * 5, 8, 4, 5, 1.2, grad(g, 0, 8, 0, 13, [[0, '#b8a47a'], [1, '#7a6a48']])); // sandbags
+      line(g, [11, -12, 11, 12], '#3a2c1c', 1); // flagpole shadow
+    }),
+    P(WD + 3, WD + 16, (g) => line(g, [11, 6, 11, 6.2], '#4a3a24', 1.2), true),
+    P(WD + 15, WD + 16, (g) => box(g, 11, 4, 6, 4, 0.2, '#c42a1e', null)), // pennant
+    ...crew(-2, 9, 0, WD, S.uni, S.helm, S.hk),
+    ...crew(4, 10, -0.6, WD, S.uni, S.helm, S.hk),];
+}
 
-model('w_motorpool', 22, 1, [
-  P(WD - 1, WD + 1, (g) => {
-    box(g, -17, -17, 34, 34, 2, '#6a665a'); // concrete apron
-    for (let k = -17; k < 17; k += 6) line(g, [-17, k, 17, k], 'rgba(0,0,0,0.15)');
-  }),
-  P(WD + 1, WD + 12, (g) => {
-    // open-fronted hangar with a camouflage net roof
-    box(g, -16, -15, 32, 3, 0.4, '#3a3a32');
-    box(g, -16, -15, 3, 22, 0.4, '#3a3a32');
-    box(g, 13, -15, 3, 22, 0.4, '#3a3a32');
-  }),
-  P(WD + 12, WD + 13, (g) => {
-    box(g, -16, -15, 32, 22, 1, 'rgba(90,100,60,0.85)');
-    camo(g, () => box(g, -16, -15, 32, 22, 1, 'rgba(0,0,0,0)', null), ['rgba(60,70,40,0.6)', 'rgba(130,120,70,0.5)'], 77, 10, 4, 16);
-  }),
-  P(WD + 1, WD + 4, (g) => {
-    // a spare Maybach engine and a stack of road wheels
-    box(g, -10, 10, 7, 5, 0.6, '#3a3a36');
-    for (let k = 0; k < 3; k++) circ(g, 6 + k * 3.5, 12.5, 1.6, '#2a2a26');
-  }),
-]);
+/** motorpool emplacement (any faction's style). */
+export function motorpool(_S: Style): Part[] {
+  return [
+    P(WD - 1, WD + 1, (g) => {
+      box(g, -17, -17, 34, 34, 2, '#6a665a'); // concrete apron
+      for (let k = -17; k < 17; k += 6) line(g, [-17, k, 17, k], 'rgba(0,0,0,0.15)');
+    }),
+    P(WD + 1, WD + 12, (g) => {
+      // open-fronted hangar with a camouflage net roof
+      box(g, -16, -15, 32, 3, 0.4, '#3a3a32');
+      box(g, -16, -15, 3, 22, 0.4, '#3a3a32');
+      box(g, 13, -15, 3, 22, 0.4, '#3a3a32');
+    }),
+    P(WD + 12, WD + 13, (g) => {
+      box(g, -16, -15, 32, 22, 1, 'rgba(90,100,60,0.85)');
+      camo(g, () => box(g, -16, -15, 32, 22, 1, 'rgba(0,0,0,0)', null), ['rgba(60,70,40,0.6)', 'rgba(130,120,70,0.5)'], 77, 10, 4, 16);
+    }),
+    P(WD + 1, WD + 4, (g) => {
+      // a spare Maybach engine and a stack of road wheels
+      box(g, -10, 10, 7, 5, 0.6, '#3a3a36');
+      for (let k = 0; k < 3; k++) circ(g, 6 + k * 3.5, 12.5, 1.6, '#2a2a26');
+    }),];
+}
 
-model('w_airfield', 23, 1, [
-  P(WD - 1, WD, (g) => {
-    box(g, -19, -19, 38, 38, 2, '#7a7460'); // grass strip
-    for (let k = -16; k < 16; k += 6) box(g, k, -1, 3, 2, 0.3, 'rgba(240,240,230,0.6)', null);
-  }),
-  P(WD, WD + 4, (g) => {
-    // Fw 190 parked, wings spread, nose up
-    g.save();
-    g.rotate(-Math.PI / 2);
-    box(g, -3, -11, 6, 22, 1.5, grad(g, -3, -11, 3, 11, [[0, '#9aa0a0'], [1, '#4e5656']]));
-    box(g, -10, -1.5, 14, 3, 1.4, grad(g, -10, -1.5, 4, 1.5, [[0, '#8a9090'], [1, '#4e5656']]));
-    circ(g, 4.4, 0, 1.6, '#e8d040', null);
-    g.restore();
-    balkenkreuz(g, -6, -2, 1.6);
-    balkenkreuz(g, 6, -2, 1.6);
-  }),
-  P(WD, WD + 3, (g) => {
-    box(g, 9, 10, 8, 6, 1, '#4a4c3a'); // fuel bowser
-    for (const [x, y] of [[-14, 12], [-11, 14]]) circ(g, x, y, 1.6, '#3a3c2c');
-  }),
-  ...crew(-8, 8, 0.4, WD, FG),
-]);
+/** airfield emplacement (any faction's style). */
+export function airfield(S: Style): Part[] {
+  return [
+    P(WD - 1, WD, (g) => {
+      box(g, -19, -19, 38, 38, 2, '#7a7460'); // grass strip
+      for (let k = -16; k < 16; k += 6) box(g, k, -1, 3, 2, 0.3, 'rgba(240,240,230,0.6)', null);
+    }),
+    P(WD, WD + 4, (g) => {
+      // Fw 190 parked, wings spread, nose up
+      g.save();
+      g.rotate(-Math.PI / 2);
+      box(g, -3, -11, 6, 22, 1.5, grad(g, -3, -11, 3, 11, [[0, S.plane[0]], [1, S.plane[2]]]));
+      box(g, -10, -1.5, 14, 3, 1.4, grad(g, -10, -1.5, 4, 1.5, [[0, S.plane[1]], [1, S.plane[2]]]));
+      circ(g, 4.4, 0, 1.6, '#e8d040', null);
+      g.restore();
+      S.mark(g, -6, -2, 1.6);
+      S.mark(g, 6, -2, 1.6);
+    }),
+    P(WD, WD + 3, (g) => {
+      box(g, 9, 10, 8, 6, 1, '#4a4c3a'); // fuel bowser
+      for (const [x, y] of [[-14, 12], [-11, 14]]) circ(g, x, y, 1.6, '#3a3c2c');
+    }),
+    ...crew(-8, 8, 0.4, WD, S.uni, S.helm, S.hk),];
+}
 
-// ---------------------------------------------------------------- obstacles
+
+// ---------------------------------------------------------------- the German emplacements (set 'de')
+
+setModelSet('de');
+export const DE: Style = {
+  uni: FG, helm: '#5e6452', hk: 'stahl', paint: DG, camo: DG_CAMO, mark: balkenkreuz, plane: ['#9aa0a0', '#6a7272', '#3e4646'],
+  flag: (g, x, y) => {
+    box(g, x, y, 9, 6, 0.2, RED, 'rgba(0,0,0,0.5)');
+    circ(g, x + 4.5, y + 3, 2.1, '#f2f0e8', null);
+    swastika(g, x + 4.5, y + 3, 1.4);
+  },
+};
+model('w_mg42', 18, DIRS, mgNest(DE));
+model('w_flak38', 20, DIRS, lightAA(DE));
+model('w_schreck', 17, DIRS, atTeam(DE));
+model('w_sniper', 14, DIRS, sniperPit(DE));
+model('w_flamer', 14, DIRS, flamerTeam(DE));
+model('w_flak88', 27, DIRS, heavyAA(DE));
+model('w_bunker', 21, DIRS, pillbox(DE));
+model('w_mortar', 15, DIRS, mortarPit(DE));
+model('w_lefh18', 26, DIRS, howitzer(DE));
+model('w_nebel', 21, DIRS, rocketBattery(DE));
+model('w_depot', 21, 1, depot(DE));
+model('w_observer', 16, DIRS, observer(DE));
+model('w_hq', 21, 1, hq(DE));
+model('w_workshop', 21, 1, workshop(DE));
+model('w_barracks', 21, 1, barracks(DE));
+model('w_motorpool', 22, 1, motorpool(DE));
+model('w_airfield', 23, 1, airfield(DE));
+model('w_pak40', 24, DIRS, atGun(DE, { barrel: 20, shieldW: 8, brake: true, wheelY: 8.5 }));
+
+// ---------------------------------------------------------------- obstacles (shared)
+
+setModelSet('ww2');
 
 model('teeth', 11, 1, [0, 1, 2, 3].map((k) => {
   const x = k % 2 ? 4 : -4;
@@ -1021,6 +1140,8 @@ model('roadblock', 22, 1, [
 ]);
 
 // ---------------------------------------------------------------- the commander (WW2)
+
+setModelSet('de');
 
 model('w_officer', 12, DIRS, [
   P(0, 4, (g) => {

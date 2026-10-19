@@ -160,6 +160,8 @@ const CLASSIC_CATEGORIES: { id: TowerCat; name: string }[] = [
 export interface TowerDef {
   /** Unique id of the tower type (classic: same as the role). */
   kind: string;
+  /** WW2: the standard arsenal slot it fills (see ww2_kit.ts SLOTS). */
+  slot?: string;
   role: Role;
   cat: TowerCat;
   name: string;
@@ -571,6 +573,10 @@ export interface UnitDef {
 
 export interface Ruleset {
   id: RulesetId;
+  /** WW2: the defending side and the attacking one, and how the defender looks on the map. */
+  side?: string;
+  foe?: string;
+  look?: { base: string; hero: string; nuke: string };
   /** WW2: the defender's units (none in the classic rules). */
   units?: UnitDef[];
   towers: TowerDef[];
@@ -597,6 +603,9 @@ export let buildWave: (wave: number) => SpawnGroup[] = classicWave;
 /** True while WW2 rules are in play (armour penetration, suppression…). */
 export let WW2 = false;
 export let UNITS: UnitDef[] = [];
+export let WW2_SIDE = '';
+export let WW2_FOE = '';
+export let LOOK = { base: 'basel', hero: 'hero', nuke: 'nukeshell' };
 
 export function installRuleset(r: Ruleset): void {
   RULESET = r.id;
@@ -608,6 +617,9 @@ export function installRuleset(r: Ruleset): void {
   buildWave = r.wave;
   WW2 = r.id === 'ww2';
   UNITS = r.units ?? [];
+  WW2_SIDE = r.side ?? '';
+  WW2_FOE = r.foe ?? '';
+  LOOK = r.look ?? { base: 'basel', hero: 'hero', nuke: 'nukeshell' };
 }
 
 /** Index of the first tower of this kind, or else of this role (-1 if none). */

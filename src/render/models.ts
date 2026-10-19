@@ -8,7 +8,7 @@
 import { TOWERS } from '../game/defs';
 import { Rng } from '../game/rng';
 import {
-  DIRS, OUTLINE, P, TOWER_DECK, box, camo, circ, finish, grad, line, model, models, poly, rgrad, star, tread, wheel, type Ctx, type Part,
+  DIRS, OUTLINE, P, TOWER_DECK, box, camo, circ, finish, grad, line, model, models, poly, rgrad, setModelSet, star, tread, wheel, type Ctx, type Part,
 } from './modelkit';
 import './models_ww2';
 
@@ -272,6 +272,8 @@ model('boss', 29, DIRS, [
 
 // ================================================================ rocks
 
+// rocks and trees are in every atlas, whatever the era
+setModelSet('scenery');
 for (const [name, size, h] of [['rock1', 9, 9], ['rock2', 19, 16]] as const) {
   const rng = new Rng(size * 13);
   const chunks = Array.from({ length: size > 10 ? 4 : 2 }, (_, i) => ({
@@ -350,6 +352,7 @@ for (let v = 0; v < 2; v++) {
   const lumps = Array.from({ length: 4 }, (_, i) => ({ x: Math.cos(i * 1.7) * 2.6, y: Math.sin(i * 1.7) * 2, r: rng.range(2.2, 3.2) }));
   model(`bush${v}`, 7, 1, [P(0, 3.5, (g) => leafy(g, lumps, '#2e5c1e', v ? '#5c9a34' : '#4f8c30', v ? '#a6d45e' : '#8cc650', true))]);
 }
+setModelSet('classic');
 
 // ================================================================ towers
 
