@@ -291,7 +291,7 @@ export class GameRenderer {
     const base = LOOK.base;
     this.baseTex = TOWERS.map((t) => {
       if (t.turret) return t.levels.map((_, lv) => atlas[`${base}${lv}_${view}`]);
-      return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.kind}_${view}`] : null];
+      return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.block ?? t.kind}_${view}`] : null];
     });
     this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
     this.sceneryTex = SCENERY.map((n) => atlas[`${n}_${view}`]);

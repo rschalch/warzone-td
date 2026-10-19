@@ -6,22 +6,24 @@
 // the shared slots and the wave builder.
 
 import type { Ruleset } from './defs';
-import { GERMANY } from './ww2_de';
-import { RED_ARMY } from './ww2_su';
+import { GERMANY, WEHRMACHT_ARMY } from './ww2_de';
+import { RED_ARMY, SOVIET_DEFENCE } from './ww2_su';
+import { ALLIED_DEFENCE, US_ARMY } from './ww2_us';
+import { JAPANESE_DEFENCE, JP_ARMY } from './ww2_jp';
 import { SLOTS, assault, type Arsenal, type Army, type Faction } from './ww2_kit';
 
 export type { Faction } from './ww2_kit';
 
 export const FACTIONS: Record<Faction, { name: string; adj: string; foes: Faction[] }> = {
-  de: { name: 'Germany', adj: 'German', foes: ['su'] },
-  su: { name: 'Soviet Union', adj: 'Soviet', foes: [] },
-  us: { name: 'Western Allies', adj: 'Allied', foes: [] },
-  jp: { name: 'Japan', adj: 'Japanese', foes: [] },
+  de: { name: 'Germany', adj: 'German', foes: ['su', 'us'] },
+  su: { name: 'Soviet Union', adj: 'Soviet', foes: ['de'] },
+  us: { name: 'Western Allies', adj: 'Allied', foes: ['de', 'jp'] },
+  jp: { name: 'Japan', adj: 'Japanese', foes: ['us'] },
 };
 
 /** Each side as the defender, and as the attacker (undefined until it is ready). */
-export const ARSENALS: Partial<Record<Faction, Arsenal>> = { de: GERMANY };
-export const ARMIES: Partial<Record<Faction, Army>> = { su: RED_ARMY };
+export const ARSENALS: Partial<Record<Faction, Arsenal>> = { de: GERMANY, su: SOVIET_DEFENCE, us: ALLIED_DEFENCE, jp: JAPANESE_DEFENCE };
+export const ARMIES: Partial<Record<Faction, Army>> = { su: RED_ARMY, de: WEHRMACHT_ARMY, us: US_ARMY, jp: JP_ARMY };
 
 export function ww2Ruleset(side: Faction, foe: Faction): Ruleset {
   const a = ARSENALS[side];

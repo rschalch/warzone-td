@@ -109,7 +109,7 @@ function fortName(mm: number): string {
 function weaponLine(e: EnemyDef): string {
   const g = e.gun;
   if (!g) return 'unarmed';
-  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo`, satchel: 'satchel charges' }[g.fx];
+  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo`, satchel: 'satchel charges', kamikaze: 'dives in with its bomb' }[g.fx];
   return `${what} · ${g.pen} mm · range ${g.range}${g.halt ? ' · halts to fire' : ''}`;
 }
 
@@ -117,6 +117,8 @@ function weaponLine(e: EnemyDef): string {
 function threatTip(e: EnemyDef): string {
   if (e.boss) return 'boss';
   if (e.stealth) return WW2 ? 'hidden — observation posts reveal' : 'stealth — radar, or towers point-blank';
+  if (e.gun?.fx === 'kamikaze') return 'kamikaze — dives on your best emplacement';
+  if (e.banzai) return 'banzai — ignores suppression';
   if (e.shield) return 'shields — jam them';
   if (e.heal) return 'heals — focus it';
   if (e.air) return WW2 ? (e.arm ? 'armoured aircraft — flak' : 'aircraft — flies over the maze') : 'air — flies over the maze';

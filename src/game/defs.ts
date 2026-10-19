@@ -58,6 +58,8 @@ export interface EnemyDef {
   gun?: EnemyGun;
   /** WW2: how far it spots camouflaged positions (px); recon units see far. */
   spot?: number;
+  /** WW2: a banzai charge — suppression doesn't slow it down. */
+  banzai?: boolean;
 }
 
 /** A WW2 attacker's weapon. Same ballistics as the defence: `pen` against fortification / armour. */
@@ -75,7 +77,7 @@ export interface EnemyGun {
   /** Fighters: shoots only at the defender's aircraft. */
   air?: boolean;
   /** Sound and tracer: small arms, automatic fire, tank gun, aircraft rockets, rocket artillery. */
-  fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha' | 'satchel';
+  fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha' | 'satchel' | 'kamikaze';
 }
 
 export const EN_INFANTRY = 0;
@@ -183,6 +185,8 @@ export interface TowerDef {
   decal?: string; // atlas decal for floor traps (default by role)
   /** Mines: what sets it off. */
   trigger?: 'vehicle' | 'infantry';
+  /** Model of a turretless obstacle (barricades, gates) when it isn't named after the kind. */
+  block?: string;
   /** WW2: camouflage 0..1 — the enemy must come this much closer to spot it. */
   camo?: number;
 }

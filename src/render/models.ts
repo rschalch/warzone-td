@@ -11,6 +11,10 @@ import {
   DIRS, OUTLINE, P, TOWER_DECK, box, camo, circ, finish, grad, line, model, models, poly, rgrad, setModelSet, star, tread, wheel, type Ctx, type Part,
 } from './modelkit';
 import './models_ww2';
+import './models_su';
+import './models_de';
+import './models_us';
+import './models_jp';
 
 export { DIRS, TOWER_DECK, models, type Ctx, type Model, type ModelSet, type Part } from './modelkit';
 
@@ -18,6 +22,9 @@ export { DIRS, TOWER_DECK, models, type Ctx, type Model, type ModelSet, type Par
 const OLIVE = ['#7f8f4a', '#5b6b34', '#3b4622'];
 const SAND = ['#c9ad72', '#a8894e', '#6e5730'];
 const RUST = ['#8a5a3c', '#6b4430', '#40281b'];
+
+// the WW2 model files above leave their own set current
+setModelSet('classic');
 
 // ================================================================ enemies (facing +x)
 

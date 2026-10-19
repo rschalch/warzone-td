@@ -7,7 +7,7 @@ import type { Replay } from '../app/share';
 import { DIFFICULTIES, MODIFIERS, PERKS, type Difficulty, type GameConfig, type Modifier } from '../game/config';
 import { TOTAL_WAVES } from '../game/defs';
 import { rulesetFor } from '../game/rules';
-import { FACTIONS, type Faction } from '../game/ww2';
+import { ARMIES, ARSENALS, FACTIONS, type Faction } from '../game/ww2';
 import { MAP_SIZES, dailySetup, mapCode, parseMapCode, randomMap, today, type MapSize, type RandomMapOptions } from '../game/mapgen';
 import { MAPS, type MapDef } from '../game/maps';
 import { PARTNER_ROLES } from '../game/partner';
@@ -159,6 +159,20 @@ function showCustom(): void {
 // ---------------------------------------------------------------- game setup
 
 let lastDifficulty: Difficulty = 'normal';
+
+/** One line on where and when a WW2 matchup is fought. */
+function matchup(side: Faction, foe: Faction): string {
+  const key = `${side}-${foe}`;
+  const where: Record<string, string> = {
+    'de-su': '1941–45 on the Eastern Front: you hold the line as Germany against the Soviet offensive.',
+    'su-de': '1941–43, Moscow to Kursk: you hold the line as the Soviet Union against the German assault.',
+    'de-us': '1944 in Normandy: you hold the Atlantic Wall and the bocage against the Allied landings.',
+    'us-de': '1944–45, the Bulge: you hold the line as the Western Allies against the German offensive.',
+    'us-jp': '1942 on Guadalcanal: you hold the perimeter as the Allies against the Japanese night attacks.',
+    'jp-us': '1945 on Iwo Jima: you hold the caves and bunkers as Japan against the American landings.',
+  };
+  return where[key] ?? `You hold the line as ${FACTIONS[side].name} against the ${FACTIONS[foe].adj} attack.`;
+}
 let lastEra: GameConfig['ww2'] = undefined;
 
 /** Eight tower types for the Limited Arsenal modifier, always including a cheap wall. */
@@ -185,7 +199,11 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
   const render = () => {
     const canPartner = canPartnerAt();
     if (!canPartner) partner = 0;
-    const sides: { id: Faction | 'modern'; ready: boolean }[] = [{ id: 'modern', ready: true }, { id: 'de', ready: true }, { id: 'su', ready: false }];
+    const sides: { id: Faction | 'modern'; ready: boolean }[] = [
+      { id: 'modern', ready: true },
+      ...(Object.keys(FACTIONS) as Faction[]).map((f) => ({ id: f, ready: !!ARSENALS[f] && FACTIONS[f].foes.some((o) => ARMIES[o]) })),
+    ];
+    const foes = era ? FACTIONS[era.side].foes.filter((o) => ARMIES[o]) : [];
     show(`
       <div class="card setup">
         <h2>${esc(map.name)}${opts.daily ? ` <span class="tag">Daily ${opts.daily}</span>` : ''}${coopLink ? ' <span class="tag">Co-op</span>' : ''}${partner ? ' <span class="tag">Co-op with AI</span>' : ''}</h2>
@@ -197,7 +215,8 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
               const label = f.id === 'modern' ? 'Modern' : `WW2 · ${FACTIONS[f.id].name}`;
               return `<button data-era="${f.id}" class="${on ? 'on' : ''}" ${opts.daily || !f.ready ? 'disabled' : ''} title="${f.ready ? '' : 'Coming later'}">${label}</button>`;
             }).join('')}</div>
-            <p class="d">${era ? `1941–45 on the Eastern Front: you hold the line as ${FACTIONS[era.side].name} against the ${FACTIONS[era.foe].adj} attack. Realistic armour: small arms bounce off tanks, anti-tank guns kill from the side.` : 'The original game: lasers, railguns and superweapons.'}</p>
+            ${foes.length > 1 ? `<h3>Against</h3><div class="seg wide">${foes.map((o) => `<button data-foe="${o}" class="${era?.foe === o ? 'on' : ''}">${FACTIONS[o].name}</button>`).join('')}</div>` : ''}
+            <p class="d">${era ? `${matchup(era.side, era.foe)} Realistic armour: small arms bounce off tanks, anti-tank guns kill from the side.` : 'The original game: lasers, railguns and superweapons.'}</p>
             <h3>Difficulty</h3>
             <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}" ${opts.daily ? 'disabled' : ''}>${DIFFICULTIES[d].name}</button>`).join('')}</div>
             <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win</p>
@@ -214,7 +233,11 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
     paintPreview(overlay.querySelector('canvas')!, map);
     on('[data-era]', (el) => {
       const id = el.dataset.era as Faction | 'modern';
-      era = id === 'modern' ? undefined : { side: id, foe: id === 'de' ? 'su' : 'de' };
+      era = id === 'modern' ? undefined : { side: id, foe: FACTIONS[id].foes.find((o) => ARMIES[o])! };
+      render();
+    });
+    on('[data-foe]', (el) => {
+      if (era) era = { side: era.side, foe: el.dataset.foe as Faction };
       render();
     });
     on('[data-diff]', (el) => {

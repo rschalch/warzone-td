@@ -19,7 +19,7 @@ const THROTTLE: Record<string, number> = {
   deny: 0.2, click: 0.03, level: 0.5, item: 0.2, freeze: 0.1, shatter: 0.08, hack: 0.2, swallow: 0.12,
   stun: 0.3, airstrike: 0.5, rally: 0.5, coin: 0.06, victory: 1, defeat: 1,
   mg42: 0.03, flak38: 0.06, pak40: 0.1, flak88: 0.12, tiger: 0.12, schreck: 0.1, mortar: 0.08, nebel: 0.6, stuka: 1, ricochet: 0.07,
-  mosin: 0.05, ppsh: 0.04, dt: 0.04, f34: 0.1, rs82: 0.15, wreck: 0.15, katyusha: 1.5, v2: 2,
+  mosin: 0.05, ppsh: 0.04, dt: 0.04, f34: 0.1, rs82: 0.15, wreck: 0.15, katyusha: 1.5, v2: 2, maxim: 0.04, ptrd: 0.08, m1919: 0.035, type92: 0.06, bazooka: 0.1,
 };
 
 /** Mix level of each effect. */
@@ -31,7 +31,7 @@ const GAIN: Record<string, number> = {
   orbital: 0.8, leak: 0.38, build: 0.55, upgrade: 0.5, sell: 0.5, coin: 0.3, item: 0.45, deny: 0.35,
   click: 0.25, freeze: 0.35, shatter: 0.3, hack: 0.3, swallow: 0.45, stun: 0.6, airstrike: 0.7,
   mg42: 0.26, flak38: 0.4, pak40: 0.7, flak88: 0.8, tiger: 0.8, schreck: 0.5, mortar: 0.5, nebel: 0.7, stuka: 0.75, ricochet: 0.25,
-  mosin: 0.3, ppsh: 0.22, dt: 0.24, f34: 0.72, rs82: 0.5, wreck: 0.9, katyusha: 0.8, v2: 0.9,
+  mosin: 0.3, ppsh: 0.22, dt: 0.24, f34: 0.72, rs82: 0.5, wreck: 0.9, katyusha: 0.8, v2: 0.9, maxim: 0.3, ptrd: 0.55, m1919: 0.28, type92: 0.34, bazooka: 0.5,
 };
 
 /** Reverb send per effect (distance adds more). */

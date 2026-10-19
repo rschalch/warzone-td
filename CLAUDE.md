@@ -130,7 +130,12 @@ their slope (multi-pass blurs, no hard `max`), or the light draws crease lines. 
 
 ## WW2 mode (branch `ww2`, never merged to `main`: main deploys publicly)
 
-Design and phase plan: `docs/ww2-design.md`. `GameConfig.ww2 = { side, foe }` selects it; `Sim.create()` calls
+Design and phase plan: `docs/ww2-design.md`. Four factions (`de`, `su`, `us`, `jp`), each with an arsenal (as the
+defender) and an army (as the attacker): `src/game/ww2_<faction>.ts`, wired up in `ww2.ts` (`ARSENALS`, `ARMIES`,
+`FACTIONS[f].foes`). Every arsenal fills the standard `SLOTS` in order (`ww2_kit.ts`; other sides `derive()` their
+towers from the German ones and change names, models, sounds and stats); every army fills the `ARole` roster that
+the shared wave builder `assault()` asks for, scaled by its doctrine. Help texts live with the data.
+`GameConfig.ww2 = { side, foe }` selects it; `Sim.create()` calls
 `setRuleset()` (`src/game/rules.ts`), which swaps the live bindings `TOWERS`, `ENEMIES`, `COMBOS`, `CATEGORIES`,
 `RANKS`, `buildWave` and the `WW2` flag in `defs.ts` (like the map size). Never call it while another game is
 running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it.
@@ -140,8 +145,11 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - Ballistics: `Sim.ballistics()` — `pen` (mm, falls off with range) against `arm` [front, side, rear, top] by the
   shooter's bearing to the hull heading; blasts and bombs hit the top. Bounce = ~0 damage; overmatch may crit.
   `canHurt()` keeps crews from targeting armour they can't penetrate. Infantry get suppression (`eSupp`).
-- Models: `src/render/models_ww2.ts` (set `ww2`), baked lazily the first time a WW2 game starts
-  (`buildAtlas(['classic','ww2'])` in `startGame`), so the boot stays as fast as before.
+- Models: model sets are `scenery` (rocks, trees: every atlas), `classic` (modern), `ww2` (shared) and one per
+  faction (`models_ww2.ts` has the kit — soldier, crew, tracks, plane — and the emplacement factories that take a
+  faction `Style`, plus the German and Red Army models; `models_su/de/us/jp.ts` the rest). A game's atlas packs only
+  `setsFor(cfg.ww2)`; `startGame` rebuilds it when the sets differ. About 1,900 px tall per matchup.
+- Balance: `WW2=1 SIDE=us FOE=jp npm run bot` and `WW2=1 SIDE=.. FOE=.. npm run gauntlet` (any matchup).
 - Return fire: attackers with an `EnemyDef.gun` pick a defender (`pickDefender`: towers with `hp`, or the
   commander as id -1; `eTgt`), tanks halt to aim (`eAimT`), and `hitDefender()` applies pen against the
   emplacement's `fort` (mm, rises with level like the base visuals). Small arms mostly suppress crews
@@ -163,7 +171,7 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   Sappers lift mines and wire; tanks pop smoke under AT fire (`sm*`, blinds both ways); armoured waves open
   with a barrage on known positions (`barrage`, shells in the `rk*` arrays); `adapt()` trades infantry for
   armour by what you built and adds Il-2s if you have no flak.
-- Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
+- The AI partner is off in WW2 for now.
 
 ## Balance notes
 

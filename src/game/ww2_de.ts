@@ -5,8 +5,8 @@
 // loosely, keeping their order: an MG-42 can't scratch a T-34 from any side, a PaK 40 kills it
 // from the flank and struggles against a KV-1's front.
 
-import { RT, growAll, type TowerDef, type UnitDef } from './defs';
-import type { Arsenal } from './ww2_kit';
+import { RT, growAll, type EnemyDef, type TowerDef, type UnitDef } from './defs';
+import type { Arsenal, Army, UnitHelp } from './ww2_kit';
 
 // ---------------------------------------------------------------- emplacements (in slot order)
 
@@ -82,7 +82,7 @@ export const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'nebel', slot: 'rockets', role: 'cannon', cat: 'fire', name: 'Nebelwerfer 41', short: 'Nebelwerfer', desc: 'Six screaming rockets per salvo, scattered over the target area.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xb05a3a, turret: 'w_nebel', sfx: 'nebel',
-    levels: [{ cost: 130, damage: 45, range: 300, rate: 0.1, splash: 36, pen: 18, supp: 0.4, salvo: 6, hp: 140, fort: 8 }],
+    levels: [{ cost: 130, damage: 65, range: 300, rate: 0.1, splash: 38, pen: 18, supp: 0.4, salvo: 6, hp: 140, fort: 8 }],
   }),
 
   // ---- support
@@ -232,4 +232,68 @@ export const GERMANY: Arsenal = {
   superName: 'Luftwaffe & V-weapons',
   look: { base: 'wbase', hero: 'w_officer', nuke: 'v2shell' },
   help: HELP,
+};
+
+// ---------------------------------------------------------------- the German army attacking
+//
+// Doctrine: fewer men and tanks than the Red Army, but better ones — the Panther and the Tiger
+// outrange and outlast most of what faces them.
+
+const WEHRMACHT: EnemyDef[] = [
+  { name: 'Grenadier Squad', hp: 34, speed: 42, reward: 2, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_rifle', bio: 2, inf: true,
+    gun: { dmg: 3, range: 110, rate: 0.75, pen: 7, supp: 0.03, fx: 'rifle' } },
+  { name: 'Sturmgrenadiere', hp: 44, speed: 52, reward: 3, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_assault', bio: 2, inf: true,
+    gun: { dmg: 4.2, range: 70, rate: 1.2, pen: 6, supp: 0.05, fx: 'smg' } },
+  { name: 'Scharfschütze', hp: 26, speed: 46, reward: 4, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_sniper', bio: 2, inf: true, stealth: true, spot: 150,
+    gun: { dmg: 14, range: 230, rate: 0.25, pen: 10, supp: 0.15, fx: 'rifle' } },
+  { name: 'Sanitäter', hp: 40, speed: 44, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_medic', bio: 2, inf: true, heal: 0.08 },
+  { name: 'Kübelwagen', hp: 50, speed: 95, reward: 3, armor: 0, air: false, radius: 8, lives: 1, tex: 'de_kubel', bio: 1, spot: 220 },
+  { name: 'SdKfz 251 Half-track', hp: 95, speed: 68, reward: 5, armor: 0, air: false, radius: 10, lives: 1, tex: 'de_251', bio: 0.6, arm: [14, 8, 8, 6], spot: 180,
+    gun: { dmg: 3, range: 110, rate: 2.2, pen: 8, supp: 0.05, fx: 'mg' } },
+  { name: 'Panzer III', hp: 140, speed: 48, reward: 6, armor: 0, air: false, radius: 11, lives: 1, tex: 'de_pz3', bio: 0.4, arm: [50, 30, 30, 12],
+    gun: { dmg: 22, range: 165, rate: 0.3, pen: 60, supp: 0.2, halt: 0.5, fx: 'tank' } },
+  { name: 'Panzer IV', hp: 200, speed: 42, reward: 8, armor: 0, air: false, radius: 12, lives: 2, tex: 'de_pz4', bio: 0.35, arm: [80, 30, 20, 15],
+    gun: { dmg: 36, range: 185, rate: 0.24, pen: 105, supp: 0.3, halt: 0.6, splash: 14, fx: 'tank' } },
+  { name: 'Panther', hp: 260, speed: 46, reward: 11, armor: 0, air: false, radius: 14, lives: 2, tex: 'de_panther', bio: 0.35, arm: [110, 45, 40, 16],
+    gun: { dmg: 46, range: 210, rate: 0.22, pen: 150, supp: 0.3, halt: 0.6, splash: 14, fx: 'tank' } },
+  { name: 'Tiger I', hp: 360, speed: 28, reward: 15, armor: 0, air: false, radius: 14, lives: 3, tex: 'de_tiger', bio: 0.3, arm: [100, 80, 80, 25],
+    gun: { dmg: 52, range: 200, rate: 0.2, pen: 140, supp: 0.35, halt: 0.7, splash: 18, fx: 'tank' } },
+  { name: 'King Tiger', hp: 2100, speed: 22, reward: 85, armor: 0, air: false, radius: 18, lives: 4, tex: 'de_kingtiger', bio: 0.25, arm: [180, 80, 80, 40], boss: true,
+    gun: { dmg: 140, range: 230, rate: 0.1, pen: 190, supp: 0.6, halt: 0.9, splash: 30, fx: 'tank' } },
+  { name: 'Ju 87 Stuka', hp: 90, speed: 74, reward: 6, armor: 0, air: true, radius: 13, lives: 1, tex: 'de_ju87', bio: 0, arm: [10, 10, 8, 8],
+    gun: { dmg: 44, range: 60, rate: 0.3, pen: 70, supp: 0.35, splash: 26, fx: 'rocket' } },
+  { name: 'Bf 109', hp: 65, speed: 115, reward: 4, armor: 0, air: true, radius: 12, lives: 1, tex: 'de_bf109', bio: 0,
+    gun: { dmg: 7, range: 120, rate: 3, pen: 15, supp: 0, fx: 'mg', air: true } },
+  { name: 'Panzerwerfer 42', hp: 110, speed: 52, reward: 9, armor: 0, air: false, radius: 11, lives: 1, tex: 'de_pzwerfer', bio: 0.8, arm: [10, 8, 8, 6],
+    gun: { dmg: 24, range: 330, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 10, fx: 'katyusha' } },
+  { name: 'Pioniere', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_pioneer', bio: 2, inf: true,
+    gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+];
+
+const WEHRMACHT_HELP: UnitHelp[] = [
+  { text: 'Grenadiers with Kar98k rifles and an MG 34: their fire pins your crews.', counter: 'Machine guns, mortars, AP mines; wire slows them under your guns.' },
+  { text: 'Assault grenadiers with MP 40s: fast and deadly up close.', counter: 'Machine guns and flamethrowers; suppression slows them down.' },
+  { text: 'A camouflaged sniper: invisible unless spotted, and it hunts your commander.', counter: 'Observation posts reveal snipers; any emplacement spots one point-blank.' },
+  { text: 'A medic who patches up everyone around.', counter: 'Kill medics first (Strong targeting).' },
+  { text: 'A Kübelwagen with scouts: they spot hidden guns from far away.', counter: 'Anything kills it. Keep it away from your camouflaged positions.' },
+  { text: 'An armoured half-track with an MG 42; its crew spots hidden guns from afar.', counter: 'Light anti-aircraft guns and anything heavier; rifle bullets bounce off.' },
+  { text: 'The Panzer III: 50 mm of front armour and a 50 mm gun.', counter: 'Any anti-tank gun; anti-tank rifles through the sides.' },
+  { text: 'The Panzer IV: 80 mm at the front but thin sides, and a long 75 mm gun.', counter: 'Anti-tank guns into the sides; the front takes a 90+ mm gun.' },
+  { text: 'The Panther: a sloped 110 mm front that stops most guns, and a gun that goes through almost anything. Weak 45 mm sides.', counter: 'Shoot its sides at the turns of your maze; mines and air strikes.' },
+  { text: 'The Tiger I: 100 mm in front and 80 on the sides, and the 8.8 cm gun. Costs 3 lives.', counter: 'Only heavy guns (85 mm and up) or flank shots at close range. Mines and bombs from above.' },
+  { text: 'A boss: the King Tiger, with 180 mm of sloped front armour and the long 8.8 cm. Costs 4 lives.', counter: 'Nothing goes through the front: its 80 mm sides at short range, mines, and bombs on its top.' },
+  { text: 'The Ju 87 Stuka dive bomber: it drops a bomb on one of your positions. Armoured underneath.', counter: 'Light flak and heavy anti-aircraft guns.' },
+  { text: 'A Bf 109 fighter: it goes after your aircraft.', counter: 'Anti-aircraft guns and machine guns.' },
+  { text: 'The Panzerwerfer: ten rockets per salvo from long range, howling down on your positions.', counter: 'A lightly armoured half-track: long-range guns or artillery with an observer.' },
+  { text: 'Pioneers with satchel charges: they blow the weakest wall of a long maze, lift mines and cut wire.', counter: 'Machine guns and AP mines before they reach the wall.' },
+];
+
+export const WEHRMACHT_ARMY: Army = {
+  enemies: WEHRMACHT,
+  roster: {
+    rifle: 0, assault: 1, sniper: 2, medic: 3, recon: 4, armcar: 5, light: 6, medium: 7, medium2: 8, heavy: 9, boss: 10,
+    attack: 11, fighter: 12, rockets: 13, sapper: 14,
+  },
+  doctrine: { inf: 0.85, armour: 0.85 },
+  help: WEHRMACHT_HELP,
 };

@@ -148,6 +148,19 @@ def('v2shell', 30, 10, (g) => {
   g.fill();
 });
 
+/** WW2: Little Boy falling. */
+def('littleboy', 28, 12, (g) => {
+  g.fillStyle = '#2e3a26';
+  g.fillRect(-13, -5, 5, 10); // box tail
+  const grd = g.createLinearGradient(0, -4.5, 0, 4.5);
+  grd.addColorStop(0, '#6a7a58');
+  grd.addColorStop(0.5, '#4a5a3a');
+  grd.addColorStop(1, '#2a3420');
+  g.fillStyle = grd;
+  rrect(g, -10, -4.5, 23, 9, 4.5);
+  g.fill();
+});
+
 // ---------------------------------------------------------------- floor decals (lie on the ground)
 
 def('d_mine', 20, 20, (g) => {
@@ -374,7 +387,7 @@ export function towerIcon(type: number, size = 28): HTMLCanvasElement {
   } else if (t.turret) {
     fitEntry(g, dirFrame(t.turret, -Math.PI * 0.75, models[t.turret].dirs), size, 0.95);
   } else {
-    fitEntry(g, `${t.kind}_0`, size, t.size === 1 ? 0.75 : 0.95);
+    fitEntry(g, `${t.block ?? t.kind}_0`, size, t.size === 1 ? 0.75 : 0.95);
   }
   return c;
 }

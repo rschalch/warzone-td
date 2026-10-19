@@ -142,7 +142,9 @@ Okinawa (1945, Japan: Shuri Line).
 
 ## 7. Phases
 
-Status: phases 0–5 done (Germany vs Soviet Union): ballistics, return fire (with the Katyusha and the V-2), units, stealth and spotting, enemy intelligence (breaching from Normal up, sappers, smoke, artillery preparation, adaptive waves).
+Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:
+Germany vs Soviet Union, Soviet Union vs Germany, Germany vs Allies (Normandy), Allies vs Germany (the
+Bulge), Allies vs Japan (Guadalcanal), Japan vs Allies (Iwo Jima). Remaining: phase 7 (campaign).
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs

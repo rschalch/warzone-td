@@ -40,7 +40,7 @@ export interface Style {
 
 // ---------------------------------------------------------------- soldiers
 
-type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'none';
+type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'ptrd' | 'bazooka' | 'lunge' | 'none';
 export interface Soldier {
   tunic: string[];
   helmet: string;
@@ -91,6 +91,28 @@ export function soldier(o: Soldier): Part[] {
       box(g, 5, 0.55, 7, 1.1, 0.4, '#3a3a36', null); // perforated jacket
       for (let x = 5.6; x < 11.5; x += 1.1) circ(g, x, 1.1, 0.25, '#111', null);
       line(g, [1, 1.6, -0.5, 3.6], '#b08a40', 0.7); // belt
+    }));
+  } else if (o.gear === 'ptrd') {
+    parts.push(P(5.5, 6.5, (g) => {
+      box(g, -2, 0.4, 16, 1.1, 0.4, '#3a3a34', null); // the long PTRD anti-tank rifle
+      box(g, -2, 0.2, 4, 1.5, 0.5, '#5a3c22', null);
+      box(g, 13.5, 0.1, 2, 1.7, 0.3, '#1a1a18', null); // muzzle brake
+    }));
+  } else if (o.gear === 'lunge') {
+    parts.push(P(5.5, 6.5, (g) => {
+      box(g, -2, 0.5, 14, 0.8, 0.3, '#7a5a32', null); // the lunge mine's pole
+      g.beginPath();
+      g.moveTo(12, -0.8);
+      g.lineTo(15, 0.9);
+      g.lineTo(12, 2.6);
+      g.closePath();
+      g.fillStyle = '#3a3a30';
+      g.fill(); // the shaped-charge cone
+    }));
+  } else if (o.gear === 'bazooka') {
+    parts.push(P(7, 8.5, (g) => {
+      box(g, -6, -2.4, 14, 1.6, 0.8, grad(g, 0, -2.4, 0, -0.8, [[0, '#7a7a52'], [1, '#3e3e28']]), null); // M1 bazooka
+      box(g, 7.5, -2.8, 1.5, 2.4, 0.4, '#3a3a2a', null); // flared muzzle
     }));
   } else if (o.gear === 'tube') {
     parts.push(P(7, 8.5, (g) => {
@@ -407,7 +429,10 @@ model('su_is2', 25, DIRS, [
 ]);
 
 /** Low-wing monoplane seen from above: wings across y, nose at +x, red stars on the wings. */
-export function plane(o: { span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number; german?: boolean }): Part[] {
+export function plane(o: {
+  span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number; german?: boolean;
+  mark?: (g: Ctx, x: number, y: number, r: number) => void; spinner?: string; bomb?: boolean;
+}): Part[] {
   const half = o.span / 2;
   return [
     P(2, 4, (g) => {
@@ -425,7 +450,10 @@ export function plane(o: { span: number; len: number; body: string[]; under?: st
       finish(g, grad(g, 0, -half, 0, half, [[0, o.body[0]], [0.5, o.body[1]], [1, o.body[2]]]));
       line(g, [-1.5, -half + 2, -1.5, -3], 'rgba(0,0,0,0.25)'); // ailerons / flaps
       line(g, [-1.5, half - 2, -1.5, 3], 'rgba(0,0,0,0.25)');
-      if (o.german) {
+      if (o.mark) {
+        o.mark(g, -1.5, -half * 0.62, 2);
+        o.mark(g, -1.5, half * 0.62, 2);
+      } else if (o.german) {
         balkenkreuz(g, -1.5, -half * 0.62, 2);
         balkenkreuz(g, -1.5, half * 0.62, 2);
       } else {
@@ -450,6 +478,9 @@ export function plane(o: { span: number; len: number; body: string[]; under?: st
       if (o.armoured) poly(g, [8, -2, 10.5, -1.4, 10.5, 1.4, 8, 2], '#4c5232', 'rgba(0,0,0,0.4)'); // armoured nose
       for (const s of [-1, 1]) box(g, 4, s * 1.6 - 0.25, 3, 0.5, 0.2, '#2a2a26', null); // exhausts
     }),
+    P(0.5, 1.5, (g) => {
+      if (o.bomb) box(g, -2, -1, 6, 2, 1, '#3a3a34'); // bomb under the belly
+    }),
     P(5.5, 7, (g) => {
       // canopy
       const w = o.seats > 1 ? 6.5 : 3.6;
@@ -464,7 +495,7 @@ export function plane(o: { span: number; len: number; body: string[]; under?: st
       g.ellipse(o.len * 0.5 + 0.6, 0, 0.8, 5.5, 0, 0, Math.PI * 2);
       g.fillStyle = 'rgba(40,40,36,0.35)';
       g.fill();
-      circ(g, o.len * 0.5 + 0.6, 0, 0.9, o.german ? '#e8d040' : RED, null);
+      circ(g, o.len * 0.5 + 0.6, 0, 0.9, o.spinner ?? (o.german ? '#e8d040' : RED), null);
     }),
   ];
 }
@@ -478,7 +509,7 @@ setModelSet('de');
 // Emplacements stand in a 2×2 gun pit (the wbase models below). Their models start a little
 // above the pit floor and aim along +x.
 
-const WD = 3;
+export const WD = 3;
 
 /** Two-plate gun shield in the faction's paint, with a light top edge. */
 export function shield(g: Ctx, x: number, w: number, d: number, paint = DG) {
@@ -487,7 +518,9 @@ export function shield(g: Ctx, x: number, w: number, d: number, paint = DG) {
 }
 
 /** mg42 emplacement (any faction's style). */
-export function mgNest(S: Style): Part[] {
+export type MgKind = 'mg42' | 'maxim' | 'm1919' | 'type92';
+export function mgNest(S: Style, gun: MgKind = 'mg42'): Part[] {
+  if (gun !== 'mg42') return mgNestOther(S, gun);
   return [
     P(WD, WD + 1.5, (g) => {
       // ammo boxes and spent belt
@@ -506,6 +539,63 @@ export function mgNest(S: Style): Part[] {
       line(g, [2.6, 0.9, 1, 3.6, -1.5, 4.6], '#b08a40', 0.8); // brass belt
     }),
     ...crew(-4.5, -5.5, 0.4, WD, S.uni, S.helm, S.hk),];
+}
+
+/** The Maxim on its wheeled Sokolov mount, the water-cooled Browning M1917/M1919, the Type 92 with its feed strips. */
+function mgNestOther(S: Style, gun: MgKind): Part[] {
+  const parts: Part[] = [
+    P(WD, WD + 1.5, (g) => {
+      box(g, -7, 4.5, 3.2, 2, 0.4, '#4a4c36'); // ammo boxes
+      box(g, -3.6, 5, 3.2, 2, 0.4, '#4a4c36');
+    }),
+  ];
+  if (gun === 'maxim') {
+    parts.push(
+      P(WD, WD + 3.5, (g) => {
+        for (const s of [-1, 1]) box(g, -1.5, s * 4.4 - 1, 4, 2, 0.9, '#1b1b19'); // Sokolov wheels
+        box(g, -5, -0.7, 6, 1.4, 0.4, '#3a3c2a'); // trail
+      }),
+      P(WD + 3, WD + 6.5, (g) => {
+        poly(g, [3.5, -4, 4.5, -4, 4.5, 4, 3.5, 4], grad(g, 3.5, -4, 4.5, 4, [[0, S.paint[0]], [1, S.paint[2]]])); // shield
+        box(g, -1, -1.6, 4.5, 3.2, 0.6, '#2e2e2a'); // receiver
+        box(g, 3.5, -1.3, 7.5, 2.6, 1.2, grad(g, 0, -1.3, 0, 1.3, [[0, '#6a6c5a'], [1, '#2e3026']])); // fat water jacket
+        box(g, 11, -0.4, 2.5, 0.8, 0.3, '#151513', null);
+        circ(g, 5.5, -1.6, 0.7, '#4a4c40', null); // filler cap
+      }),
+      ...crew(-4, -1.5, 0, WD, S.uni, S.helm, S.hk),
+      ...crew(-4, 5, 0.4, WD - 1, S.uni, S.helm, S.hk),
+    );
+  } else if (gun === 'm1919') {
+    parts.push(
+      ...prone(-1, -0.2, WD, S.uni, S.helm, S.hk),
+      P(WD + 2, WD + 3.2, (g) => {
+        line(g, [2.5, 0, 0, -3.5], '#2a2a26', 0.7); // low tripod
+        line(g, [2.5, 0, 0, 3.5], '#2a2a26', 0.7);
+        box(g, 1, -1.1, 4.5, 2.2, 0.5, '#2e2e2a');
+        box(g, 5.2, -0.8, 6.5, 1.6, 0.6, '#3a3a36'); // perforated cooling jacket
+        for (let x = 5.8; x < 11.2; x += 1.2) circ(g, x, 0, 0.35, '#121210', null);
+        box(g, 11.6, -0.35, 2.5, 0.7, 0.3, '#1c1c1a', null);
+        line(g, [2.8, 1.1, 1.4, 3.8, -1, 4.6], '#9a7a3a', 0.8);
+      }),
+      ...crew(-4.5, -5.5, 0.4, WD, S.uni, S.helm, S.hk),
+    );
+  } else {
+    parts.push(
+      ...prone(-1.5, -0.2, WD, S.uni, S.helm, S.hk),
+      P(WD + 2, WD + 3.4, (g) => {
+        line(g, [3, 0, 0, -3.8], '#2a2a26', 0.8); // tripod with carrying poles
+        line(g, [3, 0, 0, 3.8], '#2a2a26', 0.8);
+        line(g, [3, 0, -2.5, 0], '#2a2a26', 0.8);
+        box(g, 1, -1, 4, 2, 0.5, '#2e2e2a');
+        box(g, 5, -0.9, 6, 1.8, 0.4, '#3a3a36'); // finned barrel
+        for (let x = 5.4; x < 10.8; x += 0.7) line(g, [x, -1.1, x, 1.1], 'rgba(0,0,0,0.45)', 0.35);
+        box(g, 11, -0.4, 3, 0.8, 0.3, '#1c1c1a', null);
+        box(g, 0.5, 1, 3.5, 1.2, 0.2, '#b08a40', null); // feed strip
+      }),
+      ...crew(-4.5, -5.5, 0.4, WD, S.uni, S.helm, S.hk),
+    );
+  }
+  return parts;
 }
 
 /** flak38 emplacement (any faction's style). */
@@ -821,7 +911,7 @@ export function hq(S: Style): Part[] {
     }),];
 }
 
-function swastika(g: Ctx, x: number, y: number, r: number) {
+export function swastika(g: Ctx, x: number, y: number, r: number) {
   // a cross whose arms each bend a quarter turn clockwise, stood on its corner
   const w = r * 0.34;
   g.save();
@@ -837,7 +927,7 @@ function swastika(g: Ctx, x: number, y: number, r: number) {
   g.restore();
 }
 
-function balkenkreuz(g: Ctx, x: number, y: number, r: number) {
+export function balkenkreuz(g: Ctx, x: number, y: number, r: number) {
   box(g, x - r, y - r * 0.32, 2 * r, r * 0.64, 0.1, '#f0f0e8', null);
   box(g, x - r * 0.32, y - r, r * 0.64, 2 * r, 0.1, '#f0f0e8', null);
   box(g, x - r * 0.85, y - r * 0.17, 1.7 * r, r * 0.34, 0.1, BLACK, null);
@@ -1143,34 +1233,50 @@ model('roadblock', 22, 1, [
 
 setModelSet('de');
 
-model('w_officer', 12, DIRS, [
+/** A commander on foot: coat colour, cap, the weapon carried and its marking. */
+export function officer(o: { coat: string[]; tails: string; cap: string[]; band?: string; badge: string; weapon: 'smg' | 'sword' | 'carbine' }): Part[] {
+  return [
   P(0, 4, (g) => {
-    box(g, -2.6, -4, 4.6, 2.6, 1.2, '#141412'); // jackboots
+    box(g, -2.6, -4, 4.6, 2.6, 1.2, '#141412'); // boots
     box(g, -1.2, 1.4, 4.6, 2.6, 1.2, '#141412');
   }),
   P(4, 11, (g) => {
-    poly(g, [-5.5, -4.4, -7.2, 0, -5.5, 4.4, -3, 3.4, -3, -3.4], '#3e4238'); // leather greatcoat tails
+    poly(g, [-5.5, -4.4, -7.2, 0, -5.5, 4.4, -3, 3.4, -3, -3.4], o.tails); // greatcoat tails
     g.beginPath();
     g.ellipse(0, 0, 4, 5.2, 0, 0, Math.PI * 2);
-    finish(g, grad(g, -4, -5, 4, 5, [[0, FG[0]], [1, FG[2]]]));
+    finish(g, grad(g, -4, -5, 4, 5, [[0, o.coat[0]], [1, o.coat[2]]]));
     line(g, [-2.5, -4, 2.5, 4], '#2a2014', 0.8); // cross strap
     circ(g, 2, -3.5, 0.9, '#c8c8c0', null); // binoculars
     circ(g, 2, -2, 0.9, '#c8c8c0', null);
   }),
   P(8, 9.5, (g) => {
-    box(g, 1, 1.2, 8, 1.3, 0.5, '#151515', null); // MP 40
-    box(g, 3, 2.3, 1, 2.4, 0.3, '#151515', null);
+    if (o.weapon === 'sword') {
+      line(g, [-1, 3.6, 9, 4.6], '#d8d8d0', 0.7); // the officer's sword
+      box(g, -2.4, 3, 2, 1.4, 0.3, '#3a2a14', null);
+    } else {
+      box(g, 1, 1.2, o.weapon === 'carbine' ? 9 : 8, 1.3, 0.5, o.weapon === 'carbine' ? '#5a3c22' : '#151515', null);
+      box(g, 3, 2.3, 1, 2.4, 0.3, '#151515', null);
+    }
   }),
   P(11, 14, (g) => {
     // peaked cap
     circ(g, 0.6, 0, 2.4, SKIN);
     g.beginPath();
     g.ellipse(0, 0, 3.1, 3, 0, 0, Math.PI * 2);
-    finish(g, rgrad(g, 0, 0, 3.1, [[0, '#7c8272'], [1, '#3e4238']]));
+    finish(g, rgrad(g, 0, 0, 3.1, [[0, o.cap[0]], [1, o.cap[1]]]));
+    if (o.band) {
+      g.beginPath();
+      g.ellipse(0, 0, 3.1, 3, 0, 0, Math.PI * 2);
+      g.strokeStyle = o.band;
+      g.lineWidth = 0.7;
+      g.stroke();
+    }
     poly(g, [1.8, -2, 4.2, -1.4, 4.2, 1.4, 1.8, 2], '#141412', null);
-    circ(g, 1.6, 0, 0.6, '#d8d0b0', null);
+    circ(g, 1.6, 0, 0.6, o.badge, null);
   }),
-]);
+  ];
+}
+model('w_officer', 12, DIRS, officer({ coat: FG, tails: '#3e4238', cap: ['#7c8272', '#3e4238'], badge: '#d8d0b0', weapon: 'smg' }));
 
 // ---------------------------------------------------------------- emplacement bases (one per level)
 //
@@ -1180,7 +1286,7 @@ model('w_officer', 12, DIRS, [
 
 const BAG = ['#c4b082', '#a08a5c', '#6e5c3a'];
 
-function sandbagRing(g: Ctx, r: number, rng: Rng, dark = 0) {
+export function sandbagRing(g: Ctx, r: number, rng: Rng, dark = 0) {
   const n = Math.round(r * 1.25);
   for (let k = 0; k < n; k++) {
     const a = (k / n) * Math.PI * 2 + rng.range(-0.04, 0.04);
@@ -1211,6 +1317,8 @@ function germanRank(g: Ctx, lv: number) {
   }
 }
 
+/** The ten emplacement bases of a faction: its rank insignia sit on the front edge. */
+export function makeBases(prefix: string, rank: (g: Ctx, lv: number) => void): void {
 for (let lv = 0; lv < 10; lv++) {
   const rng = new Rng(4000 + lv);
   const parts: Part[] = [
@@ -1267,9 +1375,11 @@ for (let lv = 0; lv < 10; lv++) {
       g.stroke();
     }));
   }
-  parts.push(P(top - 0.5, top, (g) => germanRank(g, lv)));
-  model(`wbase${lv}`, 22, 1, parts);
+  parts.push(P(top - 0.5, top, (g) => rank(g, lv)));
+  model(`${prefix}${lv}`, 22, 1, parts);
 }
+}
+makeBases('wbase', germanRank);
 
 // ---------------------------------------------------------------- German units (mobile, facing +x)
 
@@ -1282,7 +1392,7 @@ model('de_pioneer', 8, DIRS, soldier({ tunic: ['#7a7a6a', '#5a5a4c', '#3a3a30'],
 model('de_medic', 8, DIRS, soldier({ tunic: FG, helmet: HELM, gear: 'none', pack: 'medic' }));
 
 /** A German tank: box hull, side skirts, a turret set mid-hull and a long gun. */
-function panzer(o: { len: number; wid: number; tr: number; gun: number; slope?: boolean; skirts?: boolean; seed: number }): Part[] {
+export function panzer(o: { len: number; wid: number; tr: number; gun: number; slope?: boolean; skirts?: boolean; seed: number }): Part[] {
   const L = o.len / 2;
   const W = o.wid / 2;
   return [

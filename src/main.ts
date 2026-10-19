@@ -936,7 +936,7 @@ const SHOT_SOUND: Record<string, string> = {
 };
 const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom'];
 /** WW2: the attackers' weapons, by ENEMY_FX index. */
-const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha', '', ''];
+const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha', '', '', 'stuka'];
 
 function handleEvents(s: Sim): void {
   const ev = s.events;

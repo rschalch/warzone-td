@@ -5,13 +5,18 @@
 import { TOWERS, ENEMIES } from '../src/game/defs';
 import { MAPS } from '../src/game/maps';
 import { Sim } from '../src/game/sim';
+import type { Faction } from '../src/game/ww2';
 
 const WAVE = Number(process.env.WAVE ?? 12);
-const MIX = (process.env.AIR ? [4] : [0, 0, 0, 1, 1, 2, 2, 3, 4, 7, 6, 8]);
+/** WW2=1 SIDE=de FOE=su: measure a WW2 arsenal against an army (every roster has the same layout). */
+const WW2 = process.env.WW2 ? { side: (process.env.SIDE ?? 'de') as Faction, foe: (process.env.FOE ?? 'su') as Faction } : undefined;
+const MIX = WW2
+  ? (process.env.AIR ? [11] : [0, 0, 0, 1, 1, 5, 5, 7, 11, 9, 2, 3]) // riflemen, assault, armoured cars, a medium and a heavy tank, a plane, sniper, medic
+  : (process.env.AIR ? [4] : [0, 0, 0, 1, 1, 2, 2, 3, 4, 7, 6, 8]);
 const SPACING = Number(process.env.SPACING ?? 24); // ticks between spawns // infantry-heavy, some armour, air, shields, stealth, medic
 
 function run(type: number, level: number): { dmg: number; cost: number } {
-  const sim = Sim.create({ map: { ...MAPS[0], rocks: 0, rivers: 0, mountains: 0 }, difficulty: 'normal', modifiers: [], perks: {}, seed: 5 });
+  const sim = Sim.create({ map: { ...MAPS[0], rocks: 0, rivers: 0, mountains: 0 }, difficulty: 'normal', modifiers: [], perks: {}, seed: 5, ww2: WW2 });
   sim.hero = null;
   const def = TOWERS[type];
   const row = def.walkable ? 31 : 27;
@@ -19,7 +24,7 @@ function run(type: number, level: number): { dmg: number; cost: number } {
   if (!t) throw new Error(`could not place ${def.kind}`);
   t.level = level;
   // a radar so stealth units are fair game for everyone
-  sim.place(TOWERS.findIndex((d) => d.kind === 'radar'), 4, 4, true);
+  sim.place(TOWERS.findIndex((d) => d.role === 'radar'), 4, 4, true);
   let cost = 0;
   for (let l = 0; l <= level; l++) cost += def.levels[l].cost;
   if (def.manual) t.charge = 0;

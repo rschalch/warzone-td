@@ -6,11 +6,21 @@
 
 import type { Difficulty } from '../src/game/config';
 import { COLS, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
+import type { Faction } from '../src/game/ww2';
 import { MAPS, type MapDef } from '../src/game/maps';
 import { Partner, PARTNER_EVERY } from '../src/game/partner';
 import { Sim } from '../src/game/sim';
 
 const WW2 = !!process.env.WW2;
+/** WW2 matchup: SIDE=de|su|us|jp defends against FOE. */
+const SIDE = (process.env.SIDE ?? 'de') as Faction;
+const FOE = (process.env.FOE ?? (SIDE === 'de' ? 'su' : SIDE === 'jp' ? 'us' : 'de')) as Faction;
+/** The bot's build order names German towers; they stand for the arsenal slots every side fills. */
+const SLOT_OF: Record<string, string> = {
+  mg42: 'mg', flak38: 'lightaa', schreck: 'at', sniper: 'sniper', flamer: 'flamer', pak40: 'atgun', flak88: 'heavyaa', tiger: 'tank',
+  bunker: 'bunker', mortar: 'mortar', lefh18: 'howitzer', nebel: 'rockets', depot: 'depot', observer: 'observer', hq: 'hq', workshop: 'workshop',
+};
+const slot = (k: string) => TOWERS.findIndex((t) => t.slot === SLOT_OF[k]);
 const T = {
   gun: towerIndex('gun'), cannon: towerIndex('cannon'), missile: towerIndex('missile'), tesla: towerIndex('tesla'),
   laser: towerIndex('laser'), flak: towerIndex('flak'), radar: towerIndex('radar'), jammer: towerIndex('jammer'),
@@ -53,7 +63,8 @@ function routeLength(sim: Sim, fields = sim.fields): number {
 
 /** WW2 build order: MG-42s as the backbone, anti-tank guns against armour, flak against aircraft. */
 function chooseWW2(sim: Sim, built: Map<number, number>): number {
-  const W = (k: string) => towerIndex(k);
+  // the German names stand for the arsenal slots, so the same build order plays any side
+  const W = (k: string) => slot(k);
   const n = (k: string) => built.get(W(k)) ?? 0;
   const total = [...built.values()].reduce((a, b) => a + b, 0);
   if (sim.wave >= 4 && n('flak38') + 2 * n('flak88') < 1 + total / 7) return W('flak38');
@@ -94,19 +105,19 @@ function decide(sim: Sim, built: Map<number, number>): void {
     for (const t of hurt) if (sim.money >= sim.repairCost(t) && sim.exec({ t: 'repair', ids: [t.id] })) fixed = true;
     if (fixed) return;
     // one workshop per dozen emplacements once the enemy shoots back in earnest
-    const shops = built.get(towerIndex('workshop')) ?? 0;
-    if (sim.wave >= 5 && shops < sim.towers.length / 12 && sim.money < sim.cost(towerIndex('workshop'))) return;
+    const shops = built.get(slot('workshop')) ?? 0;
+    if (sim.wave >= 5 && shops < sim.towers.length / 12 && sim.money < sim.cost(slot('workshop'))) return;
   }
   // upgrade the busiest tower when it beats building
   const best = [...sim.towers].filter((t) => sim.upgradeCost(t) > 0).sort((a, b) => b.damage - a.damage)[0];
-  const needs = WW2 && chooseWW2(sim, built) !== towerIndex('mg42') && chooseWW2(sim, built) !== towerIndex('mortar');
+  const needs = WW2 && chooseWW2(sim, built) !== slot('mg42') && chooseWW2(sim, built) !== slot('mortar');
   if (best && !needs && sim.towers.length > 12 && sim.money >= sim.upgradeCost(best) && sim.upgradeCost(best) < 120) {
     sim.exec({ t: 'upgrade', ids: [best.id] });
     return;
   }
   const type = chooseType(sim, built);
   if (sim.money < sim.cost(type)) return;
-  const aa = WW2 && (TOWERS[type].kind === 'flak38' || TOWERS[type].kind === 'flak88') && sim.wave >= 4;
+  const aa = WW2 && (type === slot('flak38') || type === slot('flak88')) && sim.wave >= 4;
   const path = aa ? airCells(sim) : pathCells(sim);
   if (!path.length) return;
   const r = Math.max(60, TOWERS[type].levels[0].range);
@@ -145,7 +156,7 @@ function decide(sim: Sim, built: Map<number, number>): void {
 }
 
 function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number; win: boolean; lives: number; towers: number } {
-  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed, ww2: WW2 ? { side: 'de', foe: 'su' } : undefined });
+  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed, ww2: WW2 ? { side: SIDE, foe: FOE } : undefined });
   const built = new Map<number, number>();
   const share = Number(process.env.PARTNER ?? 0);
   const solo = !!process.env.SOLO;

@@ -171,6 +171,30 @@ try {
   check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
   check(ww2.shelled && ww2.repaired, `WW2 return fire: a T-34 shells an MG nest (${ww2.shelled}), repair restores it (${ww2.repaired})`);
   check(ww2.wave >= 6 && ww2.kills > 0, `WW2 waves run (wave ${ww2.wave}, ${ww2.kills} kills)`);
+  // every playable matchup: a full arsenal, and waves that run without errors
+  const matchups = await page.evaluate(() => {
+    const { Sim, session } = window.game;
+    const out = [];
+    for (const [side, foe] of [['de', 'su'], ['su', 'de'], ['de', 'us'], ['us', 'de'], ['us', 'jp'], ['jp', 'us']]) {
+      try {
+        const s = Sim.create({ ...session.config, seed: 9, difficulty: 'normal', ww2: { side, foe } });
+        s.money = 5000;
+        const types = window.game.towerDef ? [...Array(30).keys()].filter((t) => window.game.towerDef(t)).length : 0;
+        for (let t = 0; t < 8; t++) s.place(t, 8 + t * 3, 10, true);
+        s.exec({ t: 'wave' });
+        for (let n = 0; n < 2400; n++) {
+          if (n % 600 === 599) s.exec({ t: 'wave' });
+          s.step();
+        }
+        out.push(`${side}-${foe}:${types}:${s.wave}:${s.totalKills}`);
+      } catch (e) {
+        out.push(`${side}-${foe}:error ${e.message}`);
+      }
+    }
+    Sim.create(session.config); // the running game's ruleset back
+    return out;
+  });
+  check(matchups.every((m) => /:26:\d+:\d+$/.test(m)), `WW2 matchups run (${matchups.join(' ')})`);
   check(ww2.unseen && ww2.spotted, `WW2 camouflage: a tank misses a hidden sniper (${ww2.unseen}), a recon jeep spots it (${ww2.spotted})`);
   check(ww2.units >= 1, `WW2 units: the barracks trains a squad (${ww2.units})`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');

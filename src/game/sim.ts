@@ -226,7 +226,7 @@ export const AIR_Z = 34;
 export const MUZZLE_Z = 16;
 const TWO_PI = Math.PI * 2;
 /** WW2: how the attackers' weapons sound (EV_ESHOT), indexed like EnemyGun.fx. */
-export const ENEMY_FX = ['rifle', 'smg', 'mg', 'tank', 'rocket', 'katyusha', 'satchel', 'barrage'] as const;
+export const ENEMY_FX = ['rifle', 'smg', 'mg', 'tank', 'rocket', 'katyusha', 'satchel', 'barrage', 'kamikaze'] as const;
 /** WW2: Katyusha rockets in flight at once. */
 export const MAX_ROCKETS = 512;
 /** WW2: what a wrecked emplacement costs to rebuild, and what a repair costs, as a share of what went into it. */
@@ -1176,6 +1176,7 @@ export class Sim {
       if (g.fx === 'tank') s += (lv.pen ?? 0) >= 40 ? 90 : 0;
       else if (def.inf) s += lv.supp ? 50 : 0;
       if (g.fx === 'rocket') s += t.size * 20;
+      else if (g.fx === 'kamikaze') s += t.spent / 6; // the most valuable target in reach
       if (s > bestScore) {
         bestScore = s;
         best = t.id;
@@ -1302,6 +1303,13 @@ export class Sim {
       this.explosion(tx, ty, 1.3, 4);
       return;
     }
+    if (g.fx === 'kamikaze') {
+      // the plane dives into the target with its bomb
+      this.explosion(tx, ty, 1.8, 4);
+      this.ev(EV_ESHOT, tx, ty, ENEMY_FX.indexOf('kamikaze'));
+      this.freeEnemy(i);
+      return;
+    }
     this.fx(FX_GLOW, 1, x + ca * 8, y + sa * 8, 0, 0, 0.07, big ? 16 : 6, big ? 6 : 2, 0.9, 0xffd890, 0, z);
     if (g.fx === 'rifle') this.streak(x, y, z, tx, ty, 8, 0.1, 0xfff0c0, 0.8);
     else if (g.fx === 'rocket') this.streak(x, y, z, tx, ty, 4, 0.3, 0xffb060, 1.6);
@@ -1377,12 +1385,13 @@ export class Sim {
       return true;
     }
     if (t.kind === 'stuka') {
-      // three Ju 87s dive one after another along the line from the airfield, bombs on the target
+      // the dive bombers (three Ju 87s, four Il-2s…) come one after another along the line from the airfield
       const d = Math.hypot(x - t.x, y - t.y) || 1;
       const ux = (x - t.x) / d;
       const uy = (y - t.y) / d;
-      for (let k = 0; k < 3; k++) {
-        const off = (k - 1) * 22;
+      const n = lv.salvo ?? 3;
+      for (let k = 0; k < n; k++) {
+        const off = (k - (n - 1) / 2) * 22;
         const bx = x + ux * off - uy * this.rng.range(-12, 12);
         const by = y + uy * off + ux * this.rng.range(-12, 12);
         this.strikes.push({ x: bx, y: by, t: 1.6 + k * 0.45, dmg: lv.damage * t.dmgMult, r: lv.splash ?? 48, src: t, pen: lv.pen ?? 70 });
@@ -2809,10 +2818,11 @@ export class Sim {
       }
       if (!air) sp *= this.tarGrid[g];
       if (WW2 && def.gun && this.enemyFire(i, def, def.gun)) sp = 0; // halted to fire
+      if (!this.eAlive[i]) continue; // a kamikaze dived in
       if (def.inf) {
         sp *= this.wireGrid[g];
         if (this.eSupp[i] > 0) {
-          sp *= 1 - 0.55 * this.eSupp[i];
+          if (!def.banzai) sp *= 1 - 0.55 * this.eSupp[i];
           this.eSupp[i] = Math.max(0, this.eSupp[i] - 0.45 * DT);
         }
       }
@@ -3368,7 +3378,7 @@ export class Sim {
           // a rocket salvo: one round after another, scattered over the target area
           for (let k = 0; k < lv.salvo; k++) {
             const a = this.rng.next() * TWO_PI;
-            const r = Math.sqrt(this.rng.next()) * lv.splash! * 1.4;
+            const r = Math.sqrt(this.rng.next()) * lv.splash! * 0.9;
             const p = this.lobAt(P_SHELL, t, tgt, mx, my, 300 + k * 18, dmg, lv.splash!);
             if (p >= 0) {
               this.pTx[p] += Math.cos(a) * r;

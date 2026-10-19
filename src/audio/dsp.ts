@@ -297,6 +297,17 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
   flak88: { variants: 3, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.12, bodyF: 4000, thumpF: 48, thump: 1.4, tail: 0.8, tailLp: 550, drive: 3.2, echo: [[0.4, 0.35], [1.0, 0.18]], mech: 0.12 }) },
   tiger: { variants: 2, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.13, bodyF: 3600, thumpF: 44, thump: 1.5, tail: 0.85, tailLp: 520, drive: 3.4, echo: [[0.42, 0.33], [1.05, 0.16]], mech: 0.14 }) },
   schreck: { variants: 3, render: () => rocket(0.9, 800, 2200, 0.25, 70) },
+  // ---- other armies' guns
+  /** Maxim: slower and heavier than the MG-42, a thudding chug. */
+  maxim: { variants: 4, render: () => firearm({ dur: 0.35, crack: 0.003, body: 0.014, bodyF: 5000, thumpF: 120, thump: 0.6, tail: 0.07, tailLp: 1500, drive: 3, echo: [[0.1, 0.1]] }) },
+  /** PTRD and other anti-tank rifles: a huge rifle crack with a long tail. */
+  ptrd: { variants: 2, render: () => firearm({ dur: 1.4, crack: 0.008, body: 0.05, bodyF: 5500, thumpF: 80, thump: 1, tail: 0.3, tailLp: 900, drive: 2.6, echo: [[0.22, 0.28], [0.5, 0.12]], mech: 0.12 }) },
+  /** Browning M1919: a measured, steady hammering. */
+  m1919: { variants: 4, render: () => firearm({ dur: 0.3, crack: 0.003, body: 0.011, bodyF: 6500, thumpF: 140, thump: 0.5, tail: 0.06, tailLp: 1700, drive: 3, echo: [[0.09, 0.09]] }) },
+  /** Type 92 "woodpecker": a slow, knocking rhythm. */
+  type92: { variants: 3, render: () => firearm({ dur: 0.4, crack: 0.004, body: 0.02, bodyF: 4200, thumpF: 110, thump: 0.7, tail: 0.08, tailLp: 1300, drive: 2.8, echo: [[0.12, 0.12]], mech: 0.1 }) },
+  bazooka: { variants: 3, render: () => rocket(0.8, 900, 2400, 0.22, 80) },
+
   // ---- Soviet return fire
   /** Mosin-Nagant: a single flat crack from further off. */
   mosin: { variants: 3, render: () => firearm({ dur: 0.9, crack: 0.006, body: 0.03, bodyF: 6500, thumpF: 110, thump: 0.6, tail: 0.18, tailLp: 1200, drive: 2.2, echo: [[0.16, 0.2], [0.36, 0.08]], mech: 0.06 }) },
