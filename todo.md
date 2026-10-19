@@ -18,6 +18,7 @@ After all of them (October 2026, `SEEDS=3`; single runs vary a lot, so compare t
 | Run | Result |
 |---|---|
 | `SEEDS=3 WW2=1 MAPS=0,1,2 DIFF=easy,normal npm run bot` | Easy: Open Field and Crossfire won 2 of 3, Boulder Pass lost ~wave 29 (as before). Normal: Open Field ~23, Crossfire ~28, Boulder Pass ~17 (was ~20: sight and hulks on a rocky map) |
+| After the second fix round (5×5 HQ, scouts, crew ranks, accuracy; enemy HQ kept where the bot's guns reach it), `SEEDS=3`/`5 WW2=1 MAPS=0,1,2` | Easy: Open Field won 3 of 5, Crossfire 3 of 3, Boulder Pass ~28. Normal: Crossfire ~27, Boulder Pass ~22. Moving their HQ further from the road cost the bot its wins (it shells the HQ) |
 | `BATTLE=all DIFF=easy npm run bot` | 10 of 12 won (Iwo Jima now won); Okinawa and Seelow Heights lost on their last wave |
 
 A new feature shouldn't make these noticeably worse unless that's the point; if it does, retune.

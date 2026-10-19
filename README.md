@@ -43,7 +43,10 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
 - **Units**: barracks, motor pool and airfield train squads, MG and anti-tank teams, snipers, engineers, medics,
   tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances. Units dig in (foxholes, hull-down tanks),
   earn veterancy ranks from their kills, and engineers lay anti-tank mines. Dragon's teeth stop vehicles; infantry
-  climb over them.
+  climb over them. Scouts slip unseen across the map and uncover it, at night above all.
+- **Experienced crews**: guns earn ranks from their kills (Veteran, Hardened, Elite), each with new abilities —
+  steadier nerves, faster reloads, and at Elite a knack of their arm. Not every round hits: better crews and
+  higher levels hit more often, suppression and darkness spoil their aim.
 - **Supply**: guns use up their ammunition (artillery and anti-tank guns fastest) and fire slowly when empty.
   Depots keep the guns round them supplied and trucks from your HQ refill the depots — the enemy shoots them.
   The enemy has its own supply dump and truck column: cut it and its next waves come smaller and later.

@@ -536,6 +536,7 @@ async function showEnd(win: boolean): Promise<void> {
   const s = session!.sim;
   const cfg = session!.config;
   const replayMode = session!.mode === 'replay';
+  sound.endMusic();
   sound.play(win ? 'victory' : 'defeat');
   const finalWin = win || endlessFrom > 0;
   const score = computeScore(cfg, s.wave, s.totalKills, cfg.ww2 ? s.lives / 5 : s.lives, finalWin);
@@ -578,6 +579,7 @@ async function showEnd(win: boolean): Promise<void> {
     s.victory = false;
     endlessFrom = s.wave;
     endShown = false;
+    sound.setMusic(true);
     hideMenus();
   };
 }
@@ -1210,7 +1212,7 @@ async function boot(): Promise<void> {
   stage.appendChild(app.canvas);
   app.stage.addChild(cam);
   atlas = await buildAtlas();
-  hud.setIcons((type) => towerIcon(type));
+  hud.setIcons((type) => towerIcon(type, 48));
   fit();
   new ResizeObserver(fit).observe(stage);
   bindInput();

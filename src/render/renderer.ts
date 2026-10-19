@@ -112,6 +112,8 @@ const C_GHOST = 7 << 16;
 /** WW2 fog of war: s an attacker's last known position stays marked; how dark the unseen ground gets. */
 const GHOST_T = 7;
 const FOG_ALPHA = 105;
+/** Ground nothing of ours has ever seen (scouts explore it, like Age of Empires' black map, only lighter). */
+const DARK_ALPHA = 175;
 
 const STATUS_WORDS = [
   ['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff],
@@ -243,6 +245,8 @@ export class GameRenderer {
   private readonly fogCanvas: HTMLCanvasElement | null = null;
   private readonly fogTex: Texture | null = null;
   private fogVersion = -1;
+  /** Cells something of ours has seen at least once (cosmetic: the fog over them is lighter). */
+  private explored = new Uint8Array(0);
   private readonly lastSeen = new Map<number, { x: number; y: number; ang: number; kind: number; t: number }>();
   private readonly ghosts: { x: number; y: number; ang: number; kind: number; a: number }[] = [];
   private readonly aliveUids = new Set<number>();
@@ -257,6 +261,8 @@ export class GameRenderer {
   private readonly turretTopTex: Texture[];
   /** Per tower type, per level (bases show the tower's rank). */
   private readonly baseTex: (Texture | null)[][];
+  /** WW2: our headquarters' walled compound, by tower type (the HQ slot only). */
+  private readonly compoundTex: (Texture | null)[];
   private readonly cornerTex: Texture;
   private readonly rockTex: Texture[];
   private readonly sceneryTex: Texture[];
@@ -313,6 +319,7 @@ export class GameRenderer {
       if (t.turret) return t.levels.map((_, lv) => atlas[`${base}${lv}_${view}`]);
       return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.block ?? t.kind}_${view}`] : null];
     });
+    this.compoundTex = TOWERS.map((t) => (WW2 && t.slot === 'hq' ? atlas[`${t.turret}_base_${view}`] ?? null : null));
     // a city battle's rocks are ruined houses
     const rock = sim.map.def.theme === 'ruins' ? 'ruin' : 'rock';
     this.rockTex = [atlas[`${rock}1_${view}`], atlas[`${rock}2_${view}`]];
@@ -741,6 +748,23 @@ export class GameRenderer {
         this.world.push(this.rubbleTex, sx, sy, (t.id % 4) * (this.iso ? 0 : Math.PI / 2), sc, sc, 0xffffff, 1);
         return;
       }
+      const compound = t.base && t.id !== s.objectiveId ? this.compoundTex[t.type] : null;
+      if (compound) {
+        // our headquarters: a whole walled compound rather than an emplacement
+        if (!this.iso) this.shadows.push(compound, t.x + 3, t.y + 4, 0, 1, 1, 0x000000, 0.3);
+        this.world.push(compound, sx, sy, 0, 1, 1, 0xffffff, 1);
+        this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, time, (t.size * TILE * 1.3) / 128, (t.size * TILE * 1.3) / 128, 0xff5a3a, 0.35 + 0.2 * Math.sin(time * 3), 0.5);
+        const max = s.maxHp(t);
+        if (max && t.hp < max) {
+          const f = t.hp / max;
+          const w = t.size * TILE * 0.8;
+          const by = sy - (this.iso ? 46 : t.size * TILE * 0.5 + 3);
+          this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1.3, 0x111111, 0.85, 0);
+          const pal = palette();
+          this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, f)) / 4, 0.75, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
+        }
+        return;
+      }
       const bases = this.baseTex[t.type];
       const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
@@ -790,6 +814,13 @@ export class GameRenderer {
         this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
         const pal = palette();
         this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, f)) / 4, 0.5, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
+      }
+      const rank = s.crewRank(t);
+      if (rank) {
+        // the crew's rank: chevrons at the emplacement's corner
+        const vx = sx - t.size * TILE * 0.38;
+        const vy = sy - (this.iso ? 14 : t.size * TILE * 0.3);
+        for (let n = 0; n < rank; n++) this.bars.push(this.atlas.pip, vx, vy - n * 3, 0, 1, 1, 0xffffff, 1, 0.5);
       }
       if (WW2 && t.ammo < 0.999 && !t.wreck && (s.usesAmmo(t) || def.role === 'depot')) {
         // ammunition (a depot: its store), under the emplacement; red once empty
@@ -1351,11 +1382,14 @@ export class GameRenderer {
       const g = this.fogCanvas.getContext('2d')!;
       const img = g.createImageData(COLS, ROWS);
       const d = img.data;
+      if (this.explored.length !== COLS * ROWS) this.explored = new Uint8Array(COLS * ROWS);
+      const ex = this.explored;
       for (let c = 0; c < COLS * ROWS; c++) {
         d[c * 4] = 12;
         d[c * 4 + 1] = 18;
         d[c * 4 + 2] = 28;
-        d[c * 4 + 3] = s.seenGrid[c] ? 0 : FOG_ALPHA;
+        if (s.seenGrid[c]) ex[c] = 1;
+        d[c * 4 + 3] = s.seenGrid[c] ? 0 : ex[c] ? FOG_ALPHA : DARK_ALPHA;
       }
       g.putImageData(img, 0, 0);
       this.fogTex.source.update();

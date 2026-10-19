@@ -42,7 +42,7 @@ export function ww2Ruleset(side: Faction, foe: Faction, battle?: string): Rulese
     foe,
     towers: a.towers,
     enemies: [...army.enemies, ...garrison(foe)],
-    units: [...a.units, supplyTruck(side)],
+    units: [...a.units, supplyTruck(side), scouts(side)],
     combos: a.combos,
     categories: [
       { id: 'basic', name: 'Infantry' },
@@ -69,8 +69,8 @@ function garrison(foe: Faction): EnemyDef[] {
   const base = (lv: number) => `${a.look.base}${lv}`;
   const adj = FACTIONS[foe].adj;
   return [
-    { name: `${adj} Headquarters`, hp: 6000, speed: 0, reward: 0, armor: 0, air: false, radius: 20, lives: 0, tex: gun('hq').turret!, bio: 0,
-      arm: [100, 100, 100, 70], fixed: 'hq', base: base(7), spot: 220, gun: { dmg: 3, range: 150, rate: 6, pen: 8, supp: 0.05, fx: 'mg' } },
+    { name: `${adj} Headquarters`, hp: 6000, speed: 0, reward: 0, armor: 0, air: false, radius: 36, lives: 0, tex: `${gun('hq').turret!}_base`, bio: 0,
+      arm: [100, 100, 100, 70], fixed: 'hq', spot: 220, gun: { dmg: 3, range: 150, rate: 6, pen: 8, supp: 0.05, fx: 'mg' } },
     { name: gun('mg').name, hp: 260, speed: 0, reward: 12, armor: 0, air: false, radius: 9, lives: 0, tex: gun('mg').turret!, bio: 0.5,
       arm: [25, 25, 25, 12], fixed: 'mg', base: base(3), spot: 180, gun: { dmg: 3, range: 140, rate: 8, pen: 8, supp: 0.07, fx: 'mg' } },
     { name: gun('atgun').name, hp: 320, speed: 0, reward: 18, armor: 0, air: false, radius: 11, lives: 0, tex: gun('atgun').turret!, bio: 0.5,
@@ -100,6 +100,24 @@ function supplyTruck(side: Faction): UnitDef {
     kind: `${side}_truck`, name: `${name} supply truck`, short: 'Truck', tex, from: 'supply', truck: true,
     cost: 0, manpower: 0, train: 0, hp: 90, speed: 55, radius: 9,
     desc: 'Drives ammunition from the headquarters to a depot that is running low, then goes back. Unarmoured: the enemy shoots at it, and a depot whose truck is lost waits for the next one.',
+  };
+}
+
+/** Each side's scouts: name and model (its sniper's). */
+const SCOUTS: Record<Faction, [string, string]> = {
+  de: ['Spähtrupp', 'de_sniper'],
+  su: ['Razvedchiki', 'su_sniper'],
+  us: ['Recon Scouts', 'us_sniper'],
+  jp: ['Sekkō Scouts', 'jp_sniper'],
+};
+
+/** Scouts, trained at the barracks of every arsenal: the eyes of the army, at night above all. */
+function scouts(side: Faction): UnitDef {
+  const [name, tex] = SCOUTS[side];
+  return {
+    kind: `${side}_scout`, name, short: 'Scouts', tex, from: 'barracks', scout: true, camo: true, inf: true,
+    cost: 25, manpower: 1, train: 5, hp: 30, speed: 62, radius: 5,
+    desc: 'Unarmed scouts who see far, at night too, and slip past the enemy unseen unless one walks right into them. In Hunt they roam the battlefield by themselves, uncovering the ground and showing your guns, above all your artillery, where to fire; send them somewhere and set Guard or Hold to keep a watch there.',
   };
 }
 

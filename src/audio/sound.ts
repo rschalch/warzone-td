@@ -589,6 +589,9 @@ export class Sound {
           for (const m of ch) this.note(o, t + k * 1.1, 1.1, m, { ...STRINGS, attack: 0.3, cut: 600 }, 1.8);
           this.sample(o, 'm_taiko', t + k * 1.1, 0.7, 0.8);
         });
+        // a lone bugle over it: the opening of Taps
+        [[55, 0, 0.45], [55, 0.5, 0.2], [60, 0.75, 1.3], [55, 2.2, 0.45], [60, 2.7, 0.2], [64, 2.95, 1.6]].forEach(([m, at, len]) =>
+          this.note(o, t + 0.6 + at, len, m + 12, { ...BRASS, voices: 1, cut: 600, peak: 2400 }, 1.1));
         break;
     }
   }
@@ -598,12 +601,29 @@ export class Sound {
   setMusic(on: boolean): void {
     this.musicOn = on;
     if (on) {
+      if (this.ctx) {
+        this.musicBus.gain.cancelScheduledValues(this.ctx.currentTime);
+        this.applyVolumes();
+      }
       this.startMusic();
       this.playRecord();
     } else {
       this.stopMusic();
       this.player?.pause();
     }
+  }
+
+  /** The game is over: the music fades out in a second and stays silent for the ending (setMusic(true) brings it back). */
+  endMusic(): void {
+    this.musicOn = false;
+    this.stopMusic();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const g = this.musicBus.gain;
+    g.cancelScheduledValues(ctx.currentTime);
+    g.setValueAtTime(g.value, ctx.currentTime);
+    g.linearRampToValueAtTime(0, ctx.currentTime + 1);
+    setTimeout(() => !this.musicOn && this.player?.pause(), 1100);
   }
 
   private startMusic(): void {

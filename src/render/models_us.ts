@@ -3,7 +3,7 @@
 
 import { DIRS, P, box, circ, finish, grad, line, model, poly, rgrad, setModelSet, star, wheel, type Ctx, type Part } from './modelkit';
 import {
-  WD, airfield, atGun, barracks, crew, depot, flamerTeam, heavyAA, howitzer, hq, makeBases, mgNest, mortarPit, motorpool, observer,
+  WD, airfield, atGun, barracks, crew, depot, flamerTeam, heavyAA, howitzer, hq, compound, makeBases, mgNest, mortarPit, motorpool, observer,
   officer, pillbox, plane, sniperPit, soldier, tracks, workshop, type Style,
 } from './models_ww2';
 import { dugIn } from './models_su';
@@ -123,6 +123,7 @@ model('us_calliope', 18, DIRS, calliope);
 model('us_w_depot', 21, 1, depot(S));
 model('us_w_observer', 16, DIRS, observer(S));
 model('us_w_hq', 21, 1, hq(S));
+model('us_w_hq_base', 54, 1, compound(S));
 model('us_w_workshop', 21, 1, workshop(S));
 model('us_w_barracks', 21, 1, barracks(S));
 model('us_w_motorpool', 22, 1, motorpool(S));

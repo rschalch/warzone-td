@@ -112,7 +112,9 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 - It must be a **mazing** TD (no predefined path) like the original; large maps with pan/zoom and a minimap.
 - **Top-down camera is the default**; isometric is an option (`V`), remembered between sessions.
 - **All 34 towers visible at once** in the build palette, with icons — no tabs or submenus. The palette is icon
-  tiles (icon over price), six columns so each category is one row; the names show under the icons when the
+  tiles (48 px icon over price; the sidebar is 420 px), as many columns as the biggest category so each is one row
+  (`Hud.buildPalette()`); a column of badges on each tile says what it is good against (soldier, tank, plane:
+  `targetRating()` in defs.ts; dim = only somewhat, also in the panel); the names show under the icons when the
   window is at least 840 px tall (squeezed to fit by `Hud.fitNames()`), and always in the tooltip and the explain
   panel. Info-panel buttons must fit their labels on one line (`npm run smoke` checks).
 - Clicking a tower on the battlefield **selects it even while a build tool is active**.
@@ -262,6 +264,21 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `public/music/credits.json` (the playlist `sound.ts` reads) and `CREDITS.md`; add a track by adding a line there.
   `sound.setFaction(side)` streams them through an `<audio>` element into the music bus (the service worker leaves
   `/music/` to the network). If they can't load (offline), the synth arrangements in `src/audio/anthems.ts` play.
+  At the end of a game `sound.endMusic()` fades the music out and the victory / defeat stinger plays alone.
+- Our headquarters is a 5×5 walled compound (`BASE_SIZE`; `place()`/`placeNear()` take a footprint size, falling
+  back to smaller where the ground won't take it), drawn from the `<hq turret>_base` model (`compound()` in
+  models_ww2.ts) instead of a base plate and turret; the enemy's HQ uses the same model (radius 36).
+- Sight: towers see `sightRange()` = max(range × `CREW_SIGHT`, `TOWER_SIGHT`), observation posts range ×
+  `OBSERVER_SIGHT` with night and weather halved. Scouts (`UnitDef.scout`, `scouts()` in ww2.ts, every arsenal,
+  appended after the truck): unarmed, `SCOUT_SIGHT`, hidden even on the move (found within `SCOUT_SPOT` × spot
+  range), and in Hunt (their default) roam to random open cells clear of the enemy's guns (`scoutRoam()`). The
+  renderer remembers explored cells (cosmetic): never-seen ground is darker (`DARK_ALPHA`) than unwatched ground.
+- Crews and accuracy: towers rank up by kills (`CREW_KILLS`, `crewRank()`: Veteran aims better and takes 25% less
+  suppression, Hardened +10% rate and +15% sight, Elite a knack by role: `ELITE_*`), chevrons on the map, rows in
+  the panel. Direct fire and shells roll `hitChance()` (`MISS` by role, falls with level and rank, rises with
+  distance, suppression and night); a miss flies wide (`missShot()`); hits do `hitComp()` × damage so a green
+  level-1 crew at 60% range matches its listed damage. Units roll the same way (`MISS.unit`, better with
+  veterancy); Hardened units see 25% further, Elite soldiers are hidden while still.
 
 ## Balance notes
 
@@ -275,6 +292,9 @@ Open Field and Crossfire two times in three, Boulder Pass falls around wave 29; 
 Field), ~28 (Crossfire), ~17 (Boulder Pass: rocks and woods block sight, hulks block the way). The bot builds depots
 for dry guns, counts only the path its guns can see, and sets every other mortar to flares at night; it trains no
 units, so it never captures positions. Single runs vary a lot between seeds: compare with SEEDS=3.
+After the crew ranks / accuracy / 5×5 HQ round: Easy wins Open Field 3 of 5 and Crossfire 3 of 3, Boulder Pass
+~28; Normal Crossfire ~27, Boulder Pass ~22. Keep the enemy HQ where it is: further from the road, the bot's guns
+can't reach it and it stops winning.
 
 ## Known limitations
 

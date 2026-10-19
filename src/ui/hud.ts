@@ -1,11 +1,11 @@
 import {
-  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOWERS, UNITS, WW2, hpScale,
+  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOWERS, UNITS, WW2, hpScale, targetRating,
   type EnemyDef, type TowerDef, type TowerLevel,
 } from '../game/defs';
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
-import { MODE_AMBUSH, MODE_FLARE, VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { CREW_KILLS, MODE_AMBUSH, MODE_FLARE, VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
 import { ABILITY_HELP, ABILITY_HELP_WW2, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 import { settings, updateSettings } from '../app/settings';
@@ -66,6 +66,24 @@ export interface UiState {
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
+/** Glyphs of what a tower fights: soldiers (classic: anything on the ground), tanks, aircraft. */
+const GLYPHS = [
+  '<svg viewBox="0 0 16 16"><circle cx="8" cy="3.6" r="2.6"/><path d="M3.5 15.5V9.5a4.5 3.4 0 0 1 9 0v6z"/></svg>',
+  '<svg viewBox="0 0 16 16"><path d="M1 9.5h14v2.8a2.2 2.2 0 0 1-2.2 2.2H3.2A2.2 2.2 0 0 1 1 12.3zM4 5.5h7.5v4H4zM11 6.6h4.8v1.6H11z"/></svg>',
+  '<svg viewBox="0 0 16 16"><path d="M8 .5l1.3 5.3 6.2 3v1.8l-6.4-1.3-.4 3.6 2 1.4v1.4L8 14.9l-2.7.8v-1.4l2-1.4-.4-3.6L.5 10.6V8.8l6.2-3z"/></svg>',
+];
+/**
+ * A tower's "good against" badges: bright when it does well against that kind of target, dim when only
+ * somewhat; none when it can't. `words` adds the labels (the panel; the palette tiles show icons only).
+ */
+function targetBadges(def: TowerDef, words = false): string {
+  const r = targetRating(def);
+  const names = [WW2 ? 'Infantry' : 'Ground', 'Armour', 'Air'];
+  if (!words && !r.some((v) => v)) return '';
+  // (the tiles keep each kind in its own row: soldier, tank, plane)
+  return r.map((v, k) => (v ? `<span class="tg tg${k}${v === 1 ? ' some' : ''}" title="${names[k]}: ${v === 2 ? 'good' : 'some effect'}">${GLYPHS[k]}${words ? `${names[k]}${v === 1 ? ' <small>(some)</small>' : ''}` : ''}</span>` : words ? '' : '<span class="tg none"></span>')).join('');
+}
+
 const num = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n)}` : n.toFixed(1));
 const pct = (f: number) => `${Math.round(f * 100)}%`;
 /** Kinds whose damage figure is per second rather than per shot. */
@@ -201,6 +219,9 @@ export class Hud {
     this.palette = rulesetKey();
     const build = $('build');
     build.replaceChildren();
+    // as many columns as the biggest category, so each is one row and the tiles fill the sidebar
+    const cols = Math.max(...CATEGORIES.map((c) => TOWERS.filter((t) => t.cat === c.id).length));
+    build.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     this.buttons.length = 0;
     for (const c of CATEGORIES) {
       const h = document.createElement('div');
@@ -212,8 +233,9 @@ export class Hud {
         const b = document.createElement('button');
         b.className = 'tb';
         const key = i < 10 ? `<span class="k">${(i + 1) % 10}</span>` : '';
-        b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="ic"></span><span class="tx"><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span></span>${key}`;
-        b.title = `${t.name} — ${t.desc}`;
+        b.innerHTML = `<span class="sw" style="background:${hex(t.color)}"></span><span class="tgs">${targetBadges(t)}</span><span class="ic"></span><span class="tx"><span class="n">${t.short}</span><span class="c">$${t.levels[0].cost}</span></span>${key}`;
+        const good = targetRating(t).map((v, k) => (v ? `${[WW2 ? 'infantry' : 'ground', 'armour', 'air'][k]}${v === 1 ? ' (some)' : ''}` : '')).filter(Boolean);
+        b.title = `${t.name} — ${t.desc}${good.length ? `\nGood against: ${good.join(', ')}` : ''}`;
         b.onclick = () => act.pick(i);
         this.hoverable(b, { kind: 'tower', index: i });
         build.appendChild(b);
@@ -614,7 +636,7 @@ export class Hud {
           <tr><td>Kills</td><td>${t.kills}</td><td></td></tr>
           <tr><td>Damage dealt</td><td>${Math.floor(t.damage)}</td><td></td></tr>` : '';
       const sameType = sim.towers.filter((o) => o.type === t.type && sim.upgradeCost(o) > 0).length;
-      const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
+      const hits = targetBadges(def, true);
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
         <div class="row">
@@ -627,14 +649,15 @@ export class Hud {
         ${actions}
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
         ${special}
-        <table>${condition}${supplyRow}${camoRow}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
+        <table>${condition}${supplyRow}${camoRow}${rows}${hits ? `<tr><td>Good against</td><td colspan="2">${hits}</td></tr>` : ''}${record}${WW2 && !t.wreck ? crewRows(sim, t) : ''}</table>
+        ${WW2 && !t.wreck ? crewNote(sim, t) : ''}
         ${penRows(lv)}
         ${combos}
         <div class="help">${towerHelp(def)}</div>`;
     } else if (ui.placing >= 0) {
       const def = TOWERS[ui.placing];
       const rows = stats(def, def.levels[0]).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-      const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
+      const hits = targetBadges(def, true);
       const partners = COMBOS.filter((c) => c.a === def.kind || c.b === def.kind)
         .map((c) => `<div class="combo"><b>${c.name}</b> next to ${TOWERS.find((o) => o.kind === (c.a === def.kind ? c.b : c.a))!.short}: ${c.desc}</div>`).join('');
       const how = def.walkable ? 'Goes on the path itself: it never blocks the route.'
@@ -643,7 +666,7 @@ export class Hud {
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">$${sim.cost(ui.placing)}</span></div>
         <div class="help">${towerHelp(def)}</div>
-        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>
+        <table>${rows}${hits ? `<tr><td>Good against</td><td>${hits}</td></tr>` : ''}</table>
         ${penRows(def.levels[0])}
         ${partners}
         <div class="desc" style="margin-top:8px">${how}</div>`;
@@ -667,14 +690,14 @@ export class Hud {
       const def = TOWERS[type];
       const lv = def.levels[tower ? tower.level : 0];
       const rows = stats(def, lv).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
-      const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
+      const hits = targetBadges(def, true);
       const partners = COMBOS.filter((c) => c.a === def.kind || c.b === def.kind)
         .map((c) => `<div class="combo"><b>${c.name}</b> next to ${TOWERS.find((o) => o.kind === (c.a === def.kind ? c.b : c.a))!.short}: ${c.desc}</div>`).join('');
       const price = tower ? `Lv ${tower.level + 1}` : `$${sim.cost(type)}`;
       const locked = !tower && !sim.allowed(type) ? '<div class="desc bad">Not available in this game.</div>' : '';
       return `<div class="title">${def.name}<span class="lvl">${price}</span></div>${aimNote}${locked}
         <div class="help">${towerHelp(def)}</div>
-        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td></tr>` : ''}</table>${penRows(lv)}${partners}`;
+        <table>${rows}${hits ? `<tr><td>Good against</td><td>${hits}</td></tr>` : ''}</table>${penRows(lv)}${partners}`;
     }
     if (w.kind === 'item') {
       const it = ITEMS[w.index];
@@ -787,7 +810,7 @@ export class Hud {
     } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
     return `<div class="title">${one >= 0 ? d.name : `${units.length} units`}<span class="lvl">${air ? 'aircraft' : 'unit'}</span></div>
       ${buttons}${body}
-      <div class="desc" style="margin-top:8px">${trucks ? 'Supply trucks drive their own rounds: headquarters → depot → back.' : air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
+      <div class="desc" style="margin-top:8px">${trucks ? 'Supply trucks drive their own rounds: headquarters → depot → back.' : units.every((u) => UNITS[sim.uKind[u]].scout) ? 'In Hunt, scouts roam the battlefield on their own. Click the ground to send them somewhere; Guard or Hold keeps them watching there.' : air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
   }
 
   /** Cost of upgrading every tower in the selection by one level. */
@@ -805,9 +828,43 @@ export class Hud {
 }
 
 /** Veterancy: the rank's stars, and how many kills to the next one. */
+const CREW_RANKS = ['Green', 'Veteran', 'Hardened', 'Elite'];
+/** What each rank of a crew brings (Elite: by the gun's role). */
+function crewPerk(rank: number, role: string): string {
+  if (rank === 1) return 'aims better, shrugs off fire';
+  if (rank === 2) return '+10% rate of fire, watches 15% further';
+  return role === 'at' ? 'aims for weak spots: +15% penetration'
+    : role === 'gun' || role === 'bunker' ? 'grazing fire: pins down 50% harder'
+      : role === 'cannon' || role === 'arty' ? 'registered fire: +25% blast radius'
+        : role === 'sniper' || role === 'flame' ? '+25% damage' : 'their best';
+}
+
+/** WW2: how far the crew sees, its rank and how many of its rounds hit. */
+function crewRows(sim: Sim, t: Tower): string {
+  const sight = `<tr><td>Sight</td><td colspan="2">${Math.round(sim.sightRange(t))} px${sim.night > 0.1 || sim.weather !== 'clear' ? ' (night / weather)' : ''}</td></tr>`;
+  if (!TOWERS[t.type].hitsGround && !TOWERS[t.type].hitsAir) return sight;
+  const rank = sim.crewRank(t);
+  const range = TOWERS[t.type].levels[t.level].range * t.rangeMult;
+  const near = sim.hitChance(t, range * 0.3, range, false);
+  const far = sim.hitChance(t, range, range, false);
+  const next = rank < 3 ? ` <small>· ${CREW_KILLS[rank] - t.kills} kills to ${CREW_RANKS[rank + 1]}</small>` : '';
+  return `${sight}<tr><td>Crew</td><td colspan="2">${rank ? `<b style="color:#ffd34a">${'★'.repeat(rank)}</b> ` : ''}${CREW_RANKS[rank]}${next}</td></tr>`
+    + (far < 1 ? `<tr><td>Accuracy</td><td colspan="2">${Math.round(near * 100)}% close · ${Math.round(far * 100)}% far</td></tr>` : '');
+}
+
+/** WW2: what the crew's rank brings, and what the next one will. */
+function crewNote(sim: Sim, t: Tower): string {
+  if (!TOWERS[t.type].hitsGround && !TOWERS[t.type].hitsAir) return '';
+  const rank = sim.crewRank(t);
+  const has = [1, 2, 3].filter((r) => r <= rank).map((r) => crewPerk(r, t.kind));
+  const next = rank < 3 ? `${CREW_RANKS[rank + 1]}: ${crewPerk(rank + 1, t.kind)}.` : '';
+  return `<div class="desc">${has.length ? `<b>${CREW_RANKS[rank]} crew:</b> ${has.join('; ')}. ` : 'A green crew: kills make veterans. '}${next ? `<small>Next, ${next}</small>` : ''}</div>`;
+}
+
 function vetLine(sim: Sim, u: number): string {
   const v = sim.unitVet(u);
-  const stars = v ? ` · <b style="color:#ffd34a">${'★'.repeat(v)}</b> ${['', 'Veteran', 'Hardened', 'Elite'][v]}` : '';
+  const perk = ['', 'better shots', 'better shots, sees 25% further', 'better shots, sees further, hidden while still'][v];
+  const stars = v ? ` · <b style="color:#ffd34a">${'★'.repeat(v)}</b> ${['', 'Veteran', 'Hardened', 'Elite'][v]} <small>(${perk})</small>` : '';
   const next = v < 3 ? ` (${VET_KILLS[v] - sim.uKills[u]} to ${['Veteran', 'Hardened', 'Elite'][v]})` : '';
   return stars + next;
 }

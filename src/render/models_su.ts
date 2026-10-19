@@ -3,7 +3,7 @@
 
 import { DIRS, P, box, circ, grad, line, model, setModelSet, star, type Ctx, type Part } from './modelkit';
 import {
-  KHAKI, RED, SU, WD, atGun, crew, depot, flamerTeam, heavyAA, hq, howitzer, lightAA, makeBases, mgNest, motorpool, observer,
+  KHAKI, RED, SU, WD, atGun, crew, depot, flamerTeam, heavyAA, hq, compound, howitzer, lightAA, makeBases, mgNest, motorpool, observer,
   officer, pillbox, plane, prone, sniperPit, soldier, t34, workshop, barracks, airfield, mortarPit, type Style,
 } from './models_ww2';
 
@@ -54,6 +54,7 @@ model('su_w_m30', 26, DIRS, howitzer(S));
 model('su_w_depot', 21, 1, depot(S));
 model('su_w_observer', 16, DIRS, observer(S));
 model('su_w_hq', 21, 1, hq(S));
+model('su_w_hq_base', 54, 1, compound(S));
 model('su_w_workshop', 21, 1, workshop(S));
 model('su_w_barracks', 21, 1, barracks(S));
 model('su_w_motorpool', 22, 1, motorpool(S));

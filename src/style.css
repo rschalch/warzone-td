@@ -57,27 +57,40 @@ main { flex: 1; display: flex; min-height: 0; }
 #stage canvas.minimap { position: absolute; right: 12px; bottom: 12px; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); cursor: crosshair; opacity: 0.92; touch-action: none; }
 .maps .size { display: block; font-size: 11px; opacity: 0.6; margin: 2px 0 4px; }
 
-#side { width: 340px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 10px; }
+#side { width: 420px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 10px; }
 #side > * { flex-shrink: 0; }
 #side h3 { margin: 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
 /* every tower at once: one row per category (no ruleset has more than six in one), icon over price */
 #build { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
-#build .cat { grid-column: 1 / -1; font-size: 8.5px; line-height: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
+#build .cat { grid-column: 1 / -1; font-size: 10px; line-height: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
 #build .cat:first-child { margin-top: 0; }
 #info .combo { font-size: 11px; color: var(--dim); margin-top: 4px; }
 #info .help { font-size: 12px; color: var(--text); opacity: 0.85; margin: 3px 0 8px; line-height: 1.4; }
 #info .aim { font-size: 11px; color: var(--accent); margin: 3px 0 6px; }
 #info .combo b { color: var(--good); }
 .tb { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 3px 1px 2px; text-align: center; position: relative; min-width: 0; border-radius: 5px; line-height: 1.15; }
-.tb .ic { flex: none; width: 28px; height: 28px; }
+.tb .ic { flex: none; width: 48px; height: 48px; }
 .tb .ic canvas { display: block; }
 .tb .tx { display: flex; flex-direction: column; align-items: center; min-width: 0; max-width: 100%; }
 .tb.locked .ic { filter: grayscale(1); }
 /* the name: under the icon when the sidebar has the height for it (always in the tooltip and the explain panel) */
-.tb .n { display: none; font-weight: 600; font-size: 10px; white-space: nowrap; transform-origin: 50% 50%; } /* squeezed to fit by Hud.fitNames() */
-.tb .c { color: var(--accent); font-size: 10px; line-height: 11px; font-variant-numeric: tabular-nums; }
-.tb .k { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--dim); }
+.tb .n { display: none; font-weight: 600; font-size: 11.5px; white-space: nowrap; transform-origin: 50% 50%; } /* squeezed to fit by Hud.fitNames() */
+.tb .c { color: var(--accent); font-size: 11.5px; line-height: 13px; font-variant-numeric: tabular-nums; }
+.tb .k { position: absolute; top: 3px; right: 4px; font-size: 10px; color: var(--dim); }
 .tb .sw { position: absolute; left: 3px; top: 3px; width: 3px; height: 10px; border-radius: 2px; }
+/* what a tower is good against: soldiers, tanks, aircraft (bright: well, dim: somewhat) */
+.tg { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; white-space: nowrap; }
+.tg svg { width: 11px; height: 11px; fill: currentColor; flex: none; }
+.tg0 { color: #8fdc6a; }
+.tg1 { color: #ffaa3c; }
+.tg2 { color: #6ccfff; }
+.tg.some { opacity: 0.5; }
+.tg small { color: var(--dim); }
+.tb .tgs { position: absolute; left: 4px; top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.tb .tg { margin: 0; height: 13px; filter: drop-shadow(0 0 1px #000); }
+.tb .tg svg { width: 13px; height: 13px; }
+.tb:has(.tg) .sw { display: none; }
+.tb:has(.tg) .ic { margin-left: 12px; }
 .tb.on { border-color: var(--accent); background: #3a3a1c; }
 .tb.poor .c { color: var(--bad); }
 @media (min-height: 840px) {
@@ -85,7 +98,7 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 /* wide screens: room for a wider sidebar */
 @media (min-width: 1600px) {
-  #side { width: 384px; }
+  #side { width: 470px; }
 }
 
 /* a fixed share of the sidebar that scrolls inside itself: long texts never move the palette or the buttons */

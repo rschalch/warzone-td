@@ -580,6 +580,8 @@ export interface UnitDef {
     hitsAir?: boolean;
     sfx: string;
   };
+  /** WW2 scouts: unarmed, see far (even at night), hidden even on the move; they roam the map in Hunt. */
+  scout?: boolean;
   repair?: number; // engineers: hp/s restored to emplacements
   heal?: number; // medics: hp/s restored to soldiers
   desc: string;
@@ -640,4 +642,21 @@ export function installRuleset(r: Ruleset): void {
 export function towerIndex(kind: string): number {
   const i = TOWERS.findIndex((t) => t.kind === kind);
   return i >= 0 ? i : TOWERS.findIndex((t) => t.role === kind);
+}
+
+/**
+ * What a tower is good against, for the badges in the build palette and the panel: [infantry (classic:
+ * anything on the ground), armour (WW2 only), aircraft], each 0 not at all, 1 somewhat, 2 well.
+ */
+export function targetRating(d: TowerDef): [number, number, number] {
+  const l = d.levels[0];
+  const air = !d.hitsAir || !d.airMult ? 0 : d.airMult >= 1 ? 2 : 1;
+  if (!d.hitsGround || !(l.damage > 0)) return [0, 0, air];
+  if (!WW2) return [2, 0, air];
+  const pen = l.pen ?? 0;
+  // anti-tank weapons can kill soldiers too, but slowly and at a waste
+  const inf = d.trigger === 'vehicle' ? 0 : d.role === 'at' ? 1 : 2;
+  // a heavy shell from above goes through the thin deck armour
+  const arm = d.trigger === 'infantry' ? 0 : d.trigger === 'vehicle' || pen >= 90 ? 2 : pen >= 30 || (!!l.splash && l.damage >= 100) ? 1 : 0;
+  return [inf, arm, air];
 }

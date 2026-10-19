@@ -928,6 +928,102 @@ export function hq(S: Style): Part[] {
     }),];
 }
 
+/**
+ * The headquarters of a side's base (5×5 cells): a compound inside a sandbag wall with a gate on
+ * its +x side, a concrete command bunker under the national marking, tents, a radio mast, vehicles,
+ * stores and MG pits at the front corners.
+ */
+export function compound(S: Style): Part[] {
+  const bag = (g: Ctx, x: number, y: number, w: number, h: number) =>
+    box(g, x, y, w, h, 1.2, grad(g, x, y, x + w, y + h, [[0, '#c4b084'], [1, '#7a6a48']]), 'rgba(40,30,20,0.5)');
+  /** A run of sandbags from (x0,y0) to (x1,y1), axis-aligned. */
+  const wall = (g: Ctx, x0: number, y0: number, x1: number, y1: number) => {
+    const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / 4.6));
+    for (let k = 0; k < n; k++) {
+      const x = x0 + ((x1 - x0) * (k + 0.5)) / n;
+      const y = y0 + ((y1 - y0) * (k + 0.5)) / n;
+      if (x0 === x1) bag(g, x - 1.8, y - 2.3, 3.6, 4.6);
+      else bag(g, x - 2.3, y - 1.8, 4.6, 3.6);
+    }
+  };
+  const tent = (g: Ctx, x: number, y: number, w: number, h: number) => {
+    // a ridge tent seen from above: two canvas slopes
+    poly(g, [x, y, x + w, y, x + w, y + h / 2], grad(g, x, y, x, y + h / 2, [[0, '#9a9874'], [1, '#6e6c50']]));
+    poly(g, [x, y, x + w, y + h / 2, x, y + h], grad(g, x, y, x + w, y + h, [[0, '#7e7c5c'], [1, '#4a4a36']]));
+    poly(g, [x, y + h, x + w, y + h / 2, x + w, y + h], grad(g, x, y + h / 2, x, y + h, [[0, '#5e5c44'], [1, '#3e3e2c']]));
+    line(g, [x, y + h / 2, x + w, y + h / 2], 'rgba(255,255,240,0.25)', 0.7);
+  };
+  return [
+    P(0, 1, (g) => {
+      // trodden earth with tyre tracks from the gate
+      box(g, -49, -49, 98, 98, 6, grad(g, -49, -49, 49, 49, [[0, '#8a7c5c'], [1, '#64583e']]), 'rgba(40,30,20,0.35)');
+      line(g, [49, -4, 8, -4, -4, 10, -26, 18], 'rgba(50,40,25,0.35)', 2.2);
+      line(g, [49, 4, 10, 4, 2, 16, -22, 26], 'rgba(50,40,25,0.35)', 2.2);
+    }),
+    P(1, 5, (g) => {
+      // the sandbag wall, open at the gate
+      wall(g, -46, -46, 46, -46);
+      wall(g, -46, 46, 46, 46);
+      wall(g, -46, -42, -46, 42);
+      wall(g, 46, -42, 46, -12);
+      wall(g, 46, 12, 46, 42);
+    }),
+    P(1, 4, (g) => {
+      // MG pits at the front corners
+      for (const y of [-38, 38]) {
+        circ(g, 38, y, 6.5, grad(g, 32, y - 6, 44, y + 6, [[0, '#b8a47a'], [1, '#6e5e40']]));
+        circ(g, 38, y, 3.8, '#3e3626', null);
+      }
+    }),
+    P(4, 5.5, (g) => {
+      for (const y of [-38, 38]) line(g, [38, y, 45, y + (y < 0 ? -3 : 3)], '#222', 1.1); // the guns
+    }),
+    P(1, 12, (g) => {
+      // the command bunker: poured concrete, steps down to its door
+      box(g, -24, -18, 30, 26, 2.5, grad(g, -24, -18, 6, 8, [[0, '#a8a69a'], [1, '#6a6a60']]));
+      box(g, 6, -6, 5, 6, 0.6, '#3a3a34');
+    }),
+    P(12, 13.5, (g) => {
+      box(g, -22, -16, 26, 22, 2, grad(g, -22, -16, 4, 6, [[0, '#9a9a8e'], [1, '#7a7a70']]));
+      S.mark(g, -9, -5, 7);
+      box(g, -20, 2, 4, 3, 0.5, '#4a4a44'); // vent
+    }),
+    P(1, 10, (g) => {
+      tent(g, -40, 18, 20, 13);
+      tent(g, -40, 33, 20, 11);
+      tent(g, -16, 26, 18, 13);
+    }),
+    P(1, 6, (g) => {
+      // stores: fuel drums and ammunition crates under the north wall
+      for (let k = 0; k < 6; k++) circ(g, 14 + (k % 3) * 4.2, -40 + ((k / 3) | 0) * 4.2, 1.9, grad(g, 12, -42, 26, -34, [[0, '#6a7052'], [1, '#383c2a']]));
+      for (const [x, y] of [[28, -41], [28, -35], [34, -41]]) {
+        box(g, x, y, 5, 5, 0.5, grad(g, x, y, x + 5, y + 5, [[0, '#a08a5a'], [1, '#5c4c30']]));
+        line(g, [x, y + 2.5, x + 5, y + 2.5], 'rgba(0,0,0,0.3)');
+      }
+    }),
+    P(1, 7, (g) => {
+      // a lorry and a staff car by the gate
+      box(g, 14, 10, 20, 9, 1, grad(g, 14, 10, 34, 19, [[0, S.paint[1]], [1, S.paint[2]]]));
+      box(g, 30, 10.5, 5, 8, 1, S.paint[0]);
+      box(g, 16, 10.8, 12, 7.4, 0.5, 'rgba(70,72,50,0.85)', null); // canvas tilt
+      box(g, 18, 24, 11, 6, 1.4, grad(g, 18, 24, 29, 30, [[0, S.paint[0]], [1, S.paint[2]]]));
+      box(g, 21, 24.8, 4, 4.4, 0.6, 'rgba(40,40,30,0.6)', null);
+    }),
+    // the radio mast with its guy lines, and the flag
+    P(1, 2, (g) => {
+      for (const [dx, dy] of [[-8, -6], [8, -6], [0, 9]]) line(g, [-34, -30, -34 + dx, -30 + dy], 'rgba(30,30,25,0.5)', 0.4);
+      box(g, -40, -26, 7, 5, 0.6, '#4a4c40'); // radio hut
+    }),
+    P(1, 34, (g) => circ(g, -34, -30, 0.6, '#2a2a26', null)),
+    P(1, 26, (g) => circ(g, -6, -26, 0.5, '#3a3020', null)),
+    P(25, 26, (g) => S.flag(g, -6, -26)),
+    ...crew(42, -6, 0, 1, S.uni, S.helm, S.hk),
+    ...crew(42, 6, 0, 1, S.uni, S.helm, S.hk),
+    ...crew(10, -10, Math.PI * 0.8, 1, S.uni, S.helm, S.hk),
+    ...crew(-30, -18, 0.3, 1, S.uni, S.helm, S.hk),
+  ];
+}
+
 export function swastika(g: Ctx, x: number, y: number, r: number) {
   // a cross whose arms each bend a quarter turn clockwise, stood on its corner
   const w = r * 0.34;
@@ -1211,6 +1307,7 @@ model('w_nebel', 21, DIRS, rocketBattery(DE));
 model('w_depot', 21, 1, depot(DE));
 model('w_observer', 16, DIRS, observer(DE));
 model('w_hq', 21, 1, hq(DE));
+model('w_hq_base', 54, 1, compound(DE));
 model('w_workshop', 21, 1, workshop(DE));
 model('w_barracks', 21, 1, barracks(DE));
 model('w_motorpool', 22, 1, motorpool(DE));

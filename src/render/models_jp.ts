@@ -4,7 +4,7 @@
 import { Rng } from '../game/rng';
 import { DIRS, P, box, camo, circ, finish, grad, line, model, poly, rgrad, setModelSet, star, wheel, type Ctx, type Part } from './modelkit';
 import {
-  WD, airfield, atGun, barracks, crew, depot, flamerTeam, heavyAA, howitzer, hq, lightAA, makeBases, mgNest, mortarPit, motorpool,
+  WD, airfield, atGun, barracks, crew, depot, flamerTeam, heavyAA, howitzer, hq, compound, lightAA, makeBases, mgNest, mortarPit, motorpool,
   observer, officer, plane, prone, sniperPit, soldier, tracks, workshop, type Style,
 } from './models_ww2';
 import { dugIn } from './models_su';
@@ -157,6 +157,7 @@ model('jp_type4', 17, DIRS, type4Truck);
 model('jp_w_depot', 21, 1, depot(S));
 model('jp_w_observer', 16, DIRS, observer(S));
 model('jp_w_hq', 21, 1, hq(S));
+model('jp_w_hq_base', 54, 1, compound(S));
 model('jp_w_workshop', 21, 1, workshop(S));
 model('jp_w_barracks', 21, 1, barracks(S));
 model('jp_w_motorpool', 22, 1, motorpool(S));

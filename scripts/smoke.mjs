@@ -724,6 +724,35 @@ try {
   check(ranges.silent.length === 0 && ranges.roles >= 7, `WW2 ranges: every role fires at 95% of its range (${ranges.roles} roles${ranges.silent.length ? ', silent: ' + ranges.silent.join(' ') : ''})`);
   check(ranges.why.startsWith('Holding fire'), `WW2 ranges: an MG explains why it holds fire at a tank (${ranges.why.slice(0, 40)}…)`);
 
+  // October 2026 fixes: the HQ compound, scouts, crew ranks and accuracy
+  const late = await page.evaluate(() => {
+    const { Sim, session, towerIndex, unitIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' } };
+    const s = Sim.create(cfg);
+    const hq = s.towers.find((t) => t.base > 0);
+    // a scout roams by itself, unseen, and uncovers ground no tower sees
+    const k = unitIndex('de_scout');
+    const u = s.spawnUnit(k, hq.x - 80, hq.y + 80, -1);
+    const seen0 = s.seenGrid.reduce((a, v) => a + v, 0);
+    let maxSeen = seen0;
+    for (let n = 0; n < 60 * 25; n++) {
+      s.step();
+      if (n % 60 === 0) maxSeen = Math.max(maxSeen, s.seenGrid.reduce((a, v) => a + v, 0));
+    }
+    const moved = Math.hypot(s.uX[u] - (hq.x - 80), s.uY[u] - (hq.y + 80));
+    // crews: kills make ranks; a seasoned crew at level 10 hits more often
+    const c = Sim.create(cfg);
+    const mg = c.place(towerIndex('pak40'), 30, 30, true);
+    const r = c.stats(mg).range;
+    const green = c.hitChance(mg, r, r, false);
+    mg.level = 9;
+    mg.kills = 60;
+    return { size: hq.size, scoutHidden: s.unitHidden(u), moved, uncovered: maxSeen - seen0, green, elite: c.hitChance(mg, r, r, false), rank: c.crewRank(mg) };
+  });
+  check(late.size === 5, `WW2 HQ: our headquarters is a 5×5 compound (${late.size})`);
+  check(late.scoutHidden && late.moved > 100 && late.uncovered > 100, `WW2 scouts: stay hidden (${late.scoutHidden}), roam (${Math.round(late.moved)} px) and uncover ground (${late.uncovered} cells)`);
+  check(late.rank === 3 && late.elite > late.green, `WW2 crews: kills make an Elite crew (${late.rank}), which hits more (${Math.round(late.green * 100)}% → ${Math.round(late.elite * 100)}%)`);
+
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {
   check(false, `exception: ${e.message}`);
