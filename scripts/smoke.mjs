@@ -119,9 +119,20 @@ try {
     const f = Sim.create(cfg);
     const nest = f.place(window.game.towerIndex('mg42'), 20, 20, true);
     const tank = f.spawnEnemy(7, 1);
-    f.eX[tank] = nest.x + 120; f.eY[tank] = nest.y; f.eSpeed[tank] = 0;
+    f.eX[tank] = nest.x + 60; f.eY[tank] = nest.y; f.eSpeed[tank] = 0; // close enough to spot the camouflaged nest
     for (let n = 0; n < 900 && !nest.wreck; n++) f.step();
     const shelled = nest.hp < f.maxHp(nest);
+    // camouflage: a tank doesn't see a sniper 100 px away; a recon jeep does
+    const h = Sim.create(cfg);
+    const sn = h.place(window.game.towerIndex('sniper'), 20, 20, true);
+    const tk = h.spawnEnemy(7, 1);
+    h.eX[tk] = sn.x + 100; h.eY[tk] = sn.y; h.eSpeed[tk] = 0;
+    for (let n = 0; n < 300; n++) h.step();
+    const unseen = h.towerHidden(sn) && sn.hp === h.maxHp(sn);
+    const jeep = h.spawnEnemy(4, 1);
+    h.eX[jeep] = sn.x + 70; h.eY[jeep] = sn.y; h.eSpeed[jeep] = 0;
+    for (let n = 0; n < 30; n++) h.step();
+    const spotted = !h.towerHidden(sn);
     f.money = 1000;
     f.freeEnemy?.(tank);
     const repaired = f.exec({ t: 'repair', ids: [nest.id] }) && nest.hp === f.maxHp(nest) && !nest.wreck;
@@ -155,11 +166,12 @@ try {
       c.step();
     }
     const units = a.sim.nextUnitUid - 1;
-    return { units, shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
+    return { unseen, spotted, units, shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
   });
   check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
   check(ww2.shelled && ww2.repaired, `WW2 return fire: a T-34 shells an MG nest (${ww2.shelled}), repair restores it (${ww2.repaired})`);
   check(ww2.wave >= 6 && ww2.kills > 0, `WW2 waves run (wave ${ww2.wave}, ${ww2.kills} kills)`);
+  check(ww2.unseen && ww2.spotted, `WW2 camouflage: a tank misses a hidden sniper (${ww2.unseen}), a recon jeep spots it (${ww2.spotted})`);
   check(ww2.units >= 1, `WW2 units: the barracks trains a squad (${ww2.units})`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');
 

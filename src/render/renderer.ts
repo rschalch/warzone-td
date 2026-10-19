@@ -686,13 +686,17 @@ export class GameRenderer {
         const tx = t.x - Math.cos(a) * t.recoil * 3;
         const ty = t.y - Math.sin(a) * t.recoil * 3;
         const sc = 1 + t.level * 0.03;
+        // WW2: a camouflaged emplacement the enemy hasn't found yet is drawn under a green veil
+        const hid = WW2 && s.towerHidden(t);
+        const tint = hid ? 0xb8d0a0 : 0xffffff;
+        const ta = hid ? 0.8 : 1;
         if (this.iso) {
           const fr = this.turretFrames[t.type];
-          this.world.push(fr[dirIndex(a) % fr.length], p.x(tx, ty), p.y(tx, ty), 0, sc, sc, 0xffffff, 1);
+          this.world.push(fr[dirIndex(a) % fr.length], p.x(tx, ty), p.y(tx, ty), 0, sc, sc, tint, ta);
         } else {
           const tex = this.turretTopTex[t.type];
           this.world.push(tex, tx + 2, ty + 3, a, sc, sc, 0x000000, 0.3);
-          this.world.push(tex, tx, ty, a, sc, sc, 0xffffff, 1);
+          this.world.push(tex, tx, ty, a, sc, sc, tint, ta);
         }
       }
       const max = s.maxHp(t);

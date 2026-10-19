@@ -117,8 +117,8 @@ export const SOVIET_HELP: UnitHelp[] = [
   { text: 'Assault troops with PPSh submachine guns: faster and tougher than riflemen, deadly up close.', counter: 'MG-42s and flamethrowers; suppression slows them down.' },
   { text: 'A sniper in camouflage: invisible to your guns unless spotted. Picks off your commander from far away.', counter: 'Observation posts reveal snipers; any emplacement spots one point-blank.' },
   { text: 'A field medic who patches up everyone around.', counter: 'Kill medics first (Strong targeting), with snipers or MGs.' },
-  { text: 'A fast, unarmoured jeep.', counter: 'Anything hits it: MGs, flak, mortars. Keep the maze long.' },
-  { text: 'A light armoured car: rifle bullets bounce off its front.', counter: 'Flak 38 and anything heavier; MGs only from the side and rear.' },
+  { text: 'A fast, unarmoured jeep carrying scouts: they spot camouflaged guns from far away and give them away to the whole column.', counter: 'Anything hits it: MGs, flak, mortars. Keep the maze long.' },
+  { text: 'A light armoured car on reconnaissance: rifle bullets bounce off its front, and its crew spots hidden guns from afar.', counter: 'Flak 38 and anything heavier; MGs only from the side and rear.' },
   { text: 'A light tank with 45 mm of front armour and a 45 mm gun. Tanks halt to fire: hitting them while they aim is your chance.', counter: 'Flak 38 through the sides, any anti-tank gun from any side.' },
   { text: 'The T-34: sloped 90 mm front, much thinner sides. Leaking one costs 2 lives.', counter: 'PaK 40 into the sides at the turns of your maze; Panzerschreck, Tiger and 88 from any side.' },
   { text: 'The up-gunned T-34 of 1944, with a tougher turret and sides.', counter: 'Tiger, 88 and Panzerschreck; PaK 40 into the sides.' },
@@ -129,5 +129,8 @@ export const SOVIET_HELP: UnitHelp[] = [
   { text: 'The Katyusha — "Stalin\'s organ": sixteen rockets rippled off a truck, howling down on your positions from long range. The blasts hit sandbagged positions from above.', counter: 'It is a soft truck: anything kills it if it reaches it. Long-range guns (88, Flak 38) or artillery spotted by an observation post; concrete bunkers shrug off the rockets.' },
 ];
 
-export const towerHelp = (def: TowerDef): string => (WW2 ? WW2_TOWER_HELP[def.kind] : TOWER_HELP[def.kind as TowerKind]) ?? def.desc;
+const CAMO_HELP = ' <i>Camouflaged:</i> the enemy only finds it close up (recon jeeps and armoured cars from further off), or for a few seconds after it fires. Its first shot from hiding hits harder; in <b>Ambush</b> mode it waits for a flank or point-blank shot.';
+
+export const towerHelp = (def: TowerDef): string =>
+  (WW2 ? (WW2_TOWER_HELP[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
 export const enemyHelp = (kind: number): UnitHelp => (WW2 ? SOVIET_HELP : ENEMY_HELP)[kind];

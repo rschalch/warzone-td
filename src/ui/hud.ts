@@ -95,6 +95,7 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
   if (lv.charge) rows.push(['Recharge', `${lv.charge}s`]);
   if (lv.drones) rows.push(['Drones', `${lv.drones}`]);
   if (WW2 && lv.hp) rows.push(['Strength', `${lv.hp} HP`], ['Cover', fortName(lv.fort ?? 0)]);
+  if (WW2 && def.camo && !eff) rows.push(['Camouflage', pct(def.camo)]);
   return rows;
 }
 
@@ -119,6 +120,7 @@ function threatTip(e: EnemyDef): string {
   if (e.shield) return 'shields — jam them';
   if (e.heal) return 'heals — focus it';
   if (e.air) return WW2 ? (e.arm ? 'armoured aircraft — flak' : 'aircraft — flies over the maze') : 'air — flies over the maze';
+  if (WW2 && e.spot && e.spot >= 200) return 'recon — spots hidden guns';
   if (WW2 && e.arm && e.arm[0] >= 40) return `armour ${e.arm[0]}/${e.arm[1]}/${e.arm[2]} mm`;
   return '';
 }
@@ -419,7 +421,7 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
       const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
-      key = `tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
+      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -469,7 +471,11 @@ export class Hud {
       const rows = stats(def, lv, sim.stats(t))
         .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1] : ''}</td></tr>`)
         .join('');
-      const modes = !def.targeted ? '' : `<div class="row modes">${TARGET_MODES.map((m, i) => `<button data-mode="${i}" class="${t.mode === i ? 'on' : ''}" ${ro}>${m}</button>`).join('')}</div>`;
+      // WW2: camouflaged guns can also wait in ambush
+      const modeNames: string[] = [...TARGET_MODES, ...(WW2 && def.camo ? ['Ambush'] : [])];
+      const modes = !def.targeted ? '' : `<div class="row modes">${modeNames.map((m, i) => `<button data-mode="${i}" class="${t.mode === i ? 'on' : ''}" ${ro}${m === 'Ambush' ? ' title="Hold fire until a tank shows its flank or comes point-blank; the first shot hits 50% harder"' : ''}>${m}</button>`).join('')}</div>`;
+      const camo = sim.camoOf(t);
+      const camoRow = WW2 && camo ? `<tr><td>Camouflage</td><td>${pct(camo)} · ${t.seenT > 0 ? 'revealed by its fire' : t.knownT > 0 ? '<span class="bad">spotted</span>' : 'hidden'}</td><td></td></tr>` : '';
       const combos = t.combos.map((name) => {
         const c = COMBOS.find((o) => o.name === name)!;
         return `<div class="combo"><b>${c.name}</b> ${c.desc}</div>`;
@@ -503,7 +509,7 @@ export class Hud {
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
         <div class="help">${towerHelp(def)}</div>
-        <table>${condition}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
+        <table>${condition}${camoRow}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${penRows(lv)}
         ${combos}
         ${special}

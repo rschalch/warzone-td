@@ -125,6 +125,9 @@ export interface Tower {
   /** WW2 barracks / motor pool: the unit being trained (-1 none) and s left. */
   trainKind: number;
   trainT: number;
+  /** WW2 stealth: s it stays revealed after firing, and s the enemy still knows where it is after spotting it. */
+  seenT: number;
+  knownT: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -248,6 +251,11 @@ const GUARD_LEASH = 150;
 const HUNT_RANGE = 420;
 /** Defender ids for units: -(UNIT_ID0 + slot). */
 const UNIT_ID0 = 10;
+/** WW2: the tower targeting mode that holds fire for a flank or point-blank shot. */
+export const MODE_AMBUSH = 4;
+/** s an emplacement or unit stays revealed after firing, and stays known after being spotted. */
+const REVEAL_T = 3;
+const KNOWN_T = 4;
 
 function angleDiff(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -411,6 +419,7 @@ export class Sim {
   readonly uSupp = new Float32Array(MAX_UNITS);
   readonly uLife = new Float32Array(MAX_UNITS); // aircraft: s of patrol left
   readonly uSeenT = new Float32Array(MAX_UNITS); // s it stays revealed after firing
+  readonly uKnownT = new Float32Array(MAX_UNITS); // s the enemy keeps track of it after spotting it
   readonly uKills = new Int32Array(MAX_UNITS);
   readonly uTask = new Int32Array(MAX_UNITS).fill(-1); // engineers: tower id; medics: unit slot (-2 the commander)
   nextUnitUid = 1;
@@ -484,7 +493,7 @@ export class Sim {
     return {
       id, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x: 0, y: 0, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0,
     };
   }
 
@@ -611,6 +620,8 @@ export class Sim {
       t.supp ??= 0;
       t.trainKind ??= -1;
       t.trainT ??= 0;
+      t.seenT ??= 0;
+      t.knownT ??= 0;
       sim.towers.push(t);
       sim.towerById.set(t.id, t);
     }
@@ -898,7 +909,7 @@ export class Sim {
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
-      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
+      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -959,6 +970,61 @@ export class Sim {
   /** Fortification in mm of armour equivalent: sandbags, then timber and earth, then concrete. */
   fortOf(t: Tower): number {
     return TOWERS[t.type].levels[t.level].fort ?? 0;
+  }
+
+  /** Camouflage 0..1: nets and scrub from level 4, more at level 7. */
+  camoOf(t: Tower): number {
+    const c = TOWERS[t.type].camo ?? 0;
+    return c ? Math.min(0.95, c + (t.level >= 3 ? 0.1 : 0) + (t.level >= 6 ? 0.05 : 0)) : 0;
+  }
+
+  /** Does the enemy not know this emplacement is there (camouflaged, not spotted, not just fired)? */
+  towerHidden(t: Tower): boolean {
+    return WW2 && t.seenT <= 0 && t.knownT <= 0 && this.camoOf(t) > 0;
+  }
+
+  /** How far an attacker sees: infantry look around, buttoned-up tanks see little, recon sees far. */
+  private spotRange(k: number): number {
+    const e = ENEMIES[k];
+    return e.spot ?? (e.inf ? 110 : e.air ? 170 : 75);
+  }
+
+  /**
+   * WW2 spotting, a few times a second: any attacker close enough to a camouflaged emplacement or
+   * hidden unit (nearer the better the camouflage) gives it away to the whole column for a while.
+   */
+  private updateSpotting(): void {
+    for (const t of this.towers) {
+      if (t.seenT > 0) t.seenT = Math.max(0, t.seenT - DT * 10);
+      if (t.knownT > 0) t.knownT = Math.max(0, t.knownT - DT * 10);
+      const camo = this.camoOf(t);
+      if (!camo || t.wreck || t.knownT > 0) continue;
+      const f = 1 - 0.7 * camo;
+      const n = this.hash.query(t.x, t.y, 230 * f + t.size * 10, this.qbuf);
+      for (let k = 0; k < n; k++) {
+        const i = this.qbuf[k];
+        if (!this.eAlive[i]) continue;
+        const r = this.spotRange(this.eKind[i]) * f + t.size * 10;
+        if ((this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2 <= r * r) {
+          t.knownT = KNOWN_T;
+          break;
+        }
+      }
+    }
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u] || this.uAir[u] || !this.unitHidden(u)) continue;
+      // a hidden unit is only found close up
+      const n = this.hash.query(this.uX[u], this.uY[u], 80, this.qbuf);
+      for (let k = 0; k < n; k++) {
+        const i = this.qbuf[k];
+        if (!this.eAlive[i]) continue;
+        const r = this.spotRange(this.eKind[i]) * 0.3;
+        if ((this.eX[i] - this.uX[u]) ** 2 + (this.eY[i] - this.uY[u]) ** 2 <= r * r) {
+          this.uKnownT[u] = KNOWN_T * 0.5;
+          break;
+        }
+      }
+    }
   }
 
   /** What patching it up (or rebuilding the rubble) costs right now; 0 if it needs nothing. */
@@ -1073,7 +1139,7 @@ export class Sim {
     let best = 0;
     let bestScore = -Infinity;
     for (const t of this.towers) {
-      if (t.wreck || t.hp <= 0 || g.air) continue;
+      if (t.wreck || t.hp <= 0 || g.air || this.towerHidden(t)) continue;
       const d2 = (t.x - x) ** 2 + (t.y - y) ** 2;
       const reach = g.range + t.size * TILE * 0.5;
       if (d2 > reach * reach) continue;
@@ -1490,7 +1556,7 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0,
     };
     level = Math.min(HERO_MAX_LEVEL, level);
     this.hero = {
@@ -1738,7 +1804,7 @@ export class Sim {
   /** Is unit u hidden from the enemy: camouflaged or in ambush, standing still and not just fired? */
   unitHidden(u: number): boolean {
     const d = UNITS[this.uKind[u]];
-    return (!!d.camo || this.uStance[u] === ST_AMBUSH) && this.uSeenT[u] <= 0 && this.uPathI[u] >= this.uPathLen[u];
+    return (!!d.camo || this.uStance[u] === ST_AMBUSH) && this.uSeenT[u] <= 0 && this.uKnownT[u] <= 0 && this.uPathI[u] >= this.uPathLen[u];
   }
 
   private spawnUnit(kind: number, x: number, y: number, cell: number): number {
@@ -1763,6 +1829,7 @@ export class Sim {
     this.uSupp[u] = 0;
     this.uLife[u] = 0;
     this.uSeenT[u] = 0;
+    this.uKnownT[u] = 0;
     this.uKills[u] = 0;
     this.uTask[u] = -1;
     this.unitVersion++;
@@ -1892,6 +1959,7 @@ export class Sim {
       this.uPy[u] = this.uY[u];
       this.uPang[u] = this.uAng[u];
       if (this.uSeenT[u] > 0) this.uSeenT[u] -= DT;
+      if (this.uKnownT[u] > 0) this.uKnownT[u] -= DT;
       if (this.uSupp[u] > 0) this.uSupp[u] = Math.max(0, this.uSupp[u] - 0.45 * DT);
       if (this.uCd[u] > 0) this.uCd[u] -= DT * (1 - 0.5 * this.uSupp[u]);
       if (this.uAir[u]) this.updatePlane(u);
@@ -2246,7 +2314,10 @@ export class Sim {
     this.updateEnemies();
     this.hash.build(this.live, this.liveCount, this.eX, this.eY);
     this.updateTowers();
-    if (WW2) this.updateUnits();
+    if (WW2) {
+      this.updateUnits();
+      if (this.ticks % 10 === 0) this.updateSpotting();
+    }
     this.updateHero();
     this.updateStrikes();
     if (this.rkCount) this.updateRockets();
@@ -2788,7 +2859,7 @@ export class Sim {
     const h = this.hero;
     const rallied = h !== null && h.rallyT > 0 && (t.x - h.x) ** 2 + (t.y - h.y) ** 2 < 160 * 160;
     const rate = lv.rate * t.rateMult * (rallied ? 1.4 : 1);
-    const dmg = lv.damage * t.dmgMult;
+    let dmg = lv.damage * t.dmgMult;
     const airMult = def.airMult * t.airBonus;
     const ca = Math.cos(t.angle);
     const sa = Math.sin(t.angle);
@@ -2934,7 +3005,8 @@ export class Sim {
     const spot = t.kind === 'arty' ? 140 : 0;
     // WW2: crews don't waste rounds on armour they can't get through (blasts count against the top)
     const pen = WW2 ? lv.pen ?? 0 : 0;
-    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at');
+    const ambush = t.mode === MODE_AMBUSH;
+    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, ambush ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at');
     if (tgt < 0) {
       if (t.kind === 'gatling') t.spin = Math.max(0, t.spin - DT * 0.5);
       if (t.kind === 'gatling') t.heat = Math.max(0, t.heat - DT * 0.4);
@@ -2969,6 +3041,7 @@ export class Sim {
     }
     if (t.kind === 'flame') {
       if (t.firing <= 0) this.ev(EV_SHOT, t.x, t.y, t.type);
+      if (WW2) t.seenT = REVEAL_T;
       t.firing = 0.12;
       const mx = t.x + ca * 16;
       const my = t.y + sa * 16;
@@ -2993,6 +3066,15 @@ export class Sim {
       if (t.cd > 0) return;
     } else if (t.cd > 0) return;
 
+    if (this.towerHidden(t)) {
+      // from hiding: an ambush waits for a flank or point-blank shot; the first round of a hidden gun hits harder
+      if (ambush) {
+        const e = ENEMIES[this.eKind[tgt]];
+        const flank = !!e.arm && Math.abs(angleDiff(this.eAng[tgt], Math.atan2(t.y - ty, t.x - tx))) > Math.PI / 4;
+        if (!flank && (tx - t.x) ** 2 + (ty - t.y) ** 2 > (range * 0.6) ** 2) return;
+      }
+      dmg *= ambush ? 1.5 : 1.25;
+    }
     t.recoil = 1;
     const mx = t.x + ca * 17;
     const my = t.y + sa * 17;
@@ -3145,6 +3227,8 @@ export class Sim {
     }
     t.cd = cd;
     this.ev(EV_SHOT, t.x, t.y, t.type);
+    // the muzzle flash gives it away (a sniper's less)
+    if (WW2) t.seenT = Math.max(t.seenT, t.kind === 'sniper' ? 1.2 : REVEAL_T);
   }
 
   /** Calls fn for every unit within r. Callbacks may query again: each nesting level gets its own buffer. */

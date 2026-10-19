@@ -56,6 +56,8 @@ export interface EnemyDef {
   heal?: number; // medic: hp healed per pulse, as a fraction of the target's max hp
   /** WW2: the weapon it fires back with at emplacements and defenders. */
   gun?: EnemyGun;
+  /** WW2: how far it spots camouflaged positions (px); recon units see far. */
+  spot?: number;
 }
 
 /** A WW2 attacker's weapon. Same ballistics as the defence: `pen` against fortification / armour. */
@@ -179,6 +181,8 @@ export interface TowerDef {
   decal?: string; // atlas decal for floor traps (default by role)
   /** Mines: what sets it off. */
   trigger?: 'vehicle' | 'infantry';
+  /** WW2: camouflage 0..1 — the enemy must come this much closer to spot it. */
+  camo?: number;
 }
 
 type TowerInit = Omit<TowerDef, 'size' | 'aim' | 'targeted' | 'role' | 'kind'> & Partial<Pick<TowerDef, 'size' | 'aim' | 'targeted'>>;

@@ -153,6 +153,10 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   fields), stances Hold/Guard/Hunt/Ambush (`ST_*`), engineers repair and raise rubble, medics heal. Their fire
   goes through `damage()` with the proxy source `unitSrc` (id -2); enemies aim at them as defender id
   -(10 + slot). Commands `unitMove`, `unitStance`.
+- Stealth: `TowerDef.camo` (grows with level, `camoOf`). The enemy only shoots what it knows: `towerHidden()`
+  is false after firing (`seenT`) or once spotted (`knownT`, set in `updateSpotting()` by any attacker within
+  its `spotRange` × (1 − 0.7·camo); recon has a long `EnemyDef.spot`). Hidden guns hit harder; tower mode
+  `MODE_AMBUSH` (4) waits for a flank or point-blank shot. Units: `unitHidden()` / `uKnownT`.
 - Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
 
 ## Balance notes

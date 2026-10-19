@@ -23,6 +23,7 @@ const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'mg42', role: 'gun', cat: 'basic', name: 'MG-42 Nest', short: 'MG-42', desc: '1,200 rounds a minute: shreds and pins infantry. Bounces off armour.',
     hitsGround: true, hitsAir: true, airMult: 0.6, color: 0xc9b26a, turret: 'w_mg42', sfx: 'mg42',
+    camo: 0.3,
     levels: [{ cost: 15, damage: 3.2, range: 100, rate: 10, pen: 8, supp: 0.07, hp: 170, fort: 15 }],
   }),
   RT({
@@ -33,16 +34,19 @@ const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'schreck', role: 'at', cat: 'basic', name: 'Panzerschreck Team', short: 'Schreck', desc: 'Rocket launcher team. Very short range, goes through any tank.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a7a50, turret: 'w_schreck', sfx: 'schreck',
+    camo: 0.7,
     levels: [{ cost: 30, damage: 85, range: 70, rate: 0.3, pen: 170, hp: 100, fort: 12 }],
   }),
   RT({
     kind: 'sniper', role: 'sniper', cat: 'basic', name: 'Scharfschütze', short: 'Sniper', desc: 'Kills a soldier per shot from far away. Useless against armour.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x6a7a4a, turret: 'w_sniper', sfx: 'sniper',
+    camo: 0.85,
     levels: [{ cost: 45, damage: 60, range: 280, rate: 0.4, pen: 10, hp: 80, fort: 12 }],
   }),
   RT({
     kind: 'flamer', role: 'flame', cat: 'basic', name: 'Flammenwerfer', short: 'Flamer', desc: 'Burns infantry and soft vehicles at point-blank range. Tanks are sealed.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xff7a1a, turret: 'w_flamer', sfx: 'flame',
+    camo: 0.5,
     levels: [{ cost: 40, damage: 22, range: 60, rate: 0, burn: 9, pen: 12, hp: 110, fort: 12 }],
   }),
 
@@ -50,6 +54,7 @@ const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'pak40', role: 'at', cat: 'precision', name: '7.5 cm PaK 40', short: 'PaK 40', desc: 'Anti-tank gun: slow, decisive shots. Kills T-34s from the side.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x7a8a5a, turret: 'w_pak40', sfx: 'pak40',
+    camo: 0.6,
     levels: [{ cost: 55, damage: 75, range: 170, rate: 0.45, pen: 115, hp: 210, fort: 22 }],
   }),
   RT({
@@ -60,11 +65,13 @@ const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'tiger', role: 'at', cat: 'precision', name: 'Tiger I (dug in)', short: 'Tiger', desc: 'A hull-down Tiger: the 8.8 cm KwK 36 outranges every Soviet tank.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x9a8c60, turret: 'w_tiger', sfx: 'tiger',
+    camo: 0.4,
     levels: [{ cost: 200, damage: 130, range: 210, rate: 0.28, pen: 140, hp: 730, fort: 100 }],
   }),
   RT({
     kind: 'bunker', role: 'bunker', cat: 'precision', name: 'MG Bunker', short: 'Bunker', desc: 'Concrete pillbox with two MGs firing at two targets at once.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a8a7a, turret: 'w_bunker', sfx: 'mg42',
+    camo: 0.3,
     levels: [{ cost: 45, damage: 3.5, range: 75, rate: 8, pen: 8, supp: 0.05, hp: 590, fort: 80 }],
   }),
 
@@ -72,6 +79,7 @@ const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'mortar', role: 'cannon', cat: 'fire', name: '8 cm Mortar', short: 'Mortar', desc: 'High-explosive bombs on infantry groups. Pins them down.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xa08a5a, turret: 'w_mortar', sfx: 'mortar',
+    camo: 0.5,
     levels: [{ cost: 40, damage: 26, range: 180, rate: 0.5, splash: 38, pen: 12, supp: 0.25, hp: 130, fort: 12 }],
   }),
   RT({
@@ -183,10 +191,10 @@ export const SU_KATYUSHA = 13;
 const SOVIET: EnemyDef[] = [
   { name: 'Rifle Squad', hp: 30, speed: 44, reward: 2, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_rifle', bio: 2, inf: true, gun: { dmg: 2.5, range: 110, rate: 0.7, pen: 7, supp: 0.03, fx: 'rifle' } },
   { name: 'SMG Assault', hp: 40, speed: 54, reward: 3, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_smg', bio: 2, inf: true, gun: { dmg: 4, range: 70, rate: 1.1, pen: 6, supp: 0.05, fx: 'smg' } },
-  { name: 'Sniper', hp: 26, speed: 46, reward: 4, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_sniper', bio: 2, inf: true, stealth: true, gun: { dmg: 14, range: 230, rate: 0.25, pen: 10, supp: 0.15, fx: 'rifle' } },
+  { name: 'Sniper', hp: 26, speed: 46, reward: 4, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_sniper', bio: 2, inf: true, stealth: true, spot: 150, gun: { dmg: 14, range: 230, rate: 0.25, pen: 10, supp: 0.15, fx: 'rifle' } },
   { name: 'Medic', hp: 40, speed: 44, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_medic', bio: 2, inf: true, heal: 0.08 },
-  { name: 'GAZ-67 Jeep', hp: 50, speed: 95, reward: 3, armor: 0, air: false, radius: 8, lives: 1, tex: 'su_gaz', bio: 1 },
-  { name: 'BA-64 Armoured Car', hp: 70, speed: 80, reward: 4, armor: 0, air: false, radius: 9, lives: 1, tex: 'su_ba64', bio: 0.6, arm: [10, 7, 7, 6], gun: { dmg: 3, range: 110, rate: 2, pen: 8, supp: 0.04, fx: 'mg' } },
+  { name: 'GAZ-67 Jeep', hp: 50, speed: 95, reward: 3, armor: 0, air: false, radius: 8, lives: 1, tex: 'su_gaz', bio: 1, spot: 220 },
+  { name: 'BA-64 Armoured Car', hp: 70, speed: 80, reward: 4, armor: 0, air: false, radius: 9, lives: 1, tex: 'su_ba64', bio: 0.6, spot: 200, arm: [10, 7, 7, 6], gun: { dmg: 3, range: 110, rate: 2, pen: 8, supp: 0.04, fx: 'mg' } },
   { name: 'T-70 Light Tank', hp: 120, speed: 50, reward: 6, armor: 0, air: false, radius: 11, lives: 1, tex: 'su_t70', bio: 0.4, arm: [45, 25, 25, 10], gun: { dmg: 20, range: 160, rate: 0.3, pen: 50, supp: 0.2, halt: 0.5, fx: 'tank' } },
   { name: 'T-34/76', hp: 190, speed: 42, reward: 8, armor: 0, air: false, radius: 13, lives: 2, tex: 'su_t34', bio: 0.35, arm: [90, 50, 40, 20], gun: { dmg: 36, range: 180, rate: 0.22, pen: 70, supp: 0.3, halt: 0.6, splash: 16, fx: 'tank' } },
   { name: 'T-34/85', hp: 230, speed: 42, reward: 10, armor: 0, air: false, radius: 13, lives: 2, tex: 'su_t3485', bio: 0.35, arm: [90, 60, 45, 20], gun: { dmg: 48, range: 190, rate: 0.2, pen: 100, supp: 0.3, halt: 0.6, splash: 18, fx: 'tank' } },
