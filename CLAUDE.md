@@ -142,6 +142,11 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `canHurt()` keeps crews from targeting armour they can't penetrate. Infantry get suppression (`eSupp`).
 - Models: `src/render/models_ww2.ts` (set `ww2`), baked lazily the first time a WW2 game starts
   (`buildAtlas(['classic','ww2'])` in `startGame`), so the boot stays as fast as before.
+- Return fire: attackers with an `EnemyDef.gun` pick a defender (`pickDefender`: towers with `hp`, or the
+  commander as id -1; `eTgt`), tanks halt to aim (`eAimT`), and `hitDefender()` applies pen against the
+  emplacement's `fort` (mm, rises with level like the base visuals). Small arms mostly suppress crews
+  (`Tower.supp` slows their fire). At 0 HP a tower becomes rubble (`wreck`: walkable, slow, rebuilt with the
+  `repair` command); the Workshop role heals towers in range. Katyusha salvos are typed arrays (`rk*`).
 - Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
 
 ## Balance notes

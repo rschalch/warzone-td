@@ -1,7 +1,7 @@
 import {
   COLS, COMBOS, DT, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
   START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_BONUS, WAVE_GAP, WW2, buildWave, hpScale, rewardScale, towerIndex,
-  type Role, type SpawnGroup, type TowerLevel,
+  type EnemyDef, type EnemyGun, type Role, type SpawnGroup, type TowerLevel,
 } from './defs';
 import { setRuleset } from './rules';
 import { DIFFICULTIES, perk, type GameConfig } from './config';
@@ -118,6 +118,10 @@ export interface Tower {
   combos: string[];
   /** Who built it: 0 the player(s), PARTNER (1) the AI partner. */
   owner: number;
+  /** WW2: hit points left (0 for things the enemy can't shoot at), a destroyed emplacement's rubble, crew suppression 0..1. */
+  hp: number;
+  wreck: boolean;
+  supp: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -154,6 +158,9 @@ export const EV_LEVEL = 11; // hero level up, a = level
 export const EV_ITEM = 12; // a = item
 export const EV_ABILITY = 13; // a = ability
 export const EV_DENY = 14;
+export const EV_ESHOT = 15; // an attacker fires; a = weapon (ENEMY_FX index)
+export const EV_WRECK = 16; // an emplacement destroyed; a = tower type
+export const EV_DOWN = 17; // the commander is wounded
 export const EV_SIZE = 5;
 
 export const ITEMS = [
@@ -183,6 +190,11 @@ export interface Hero {
   cd: number[]; // ability cooldowns (s)
   fireCd: number;
   rallyT: number;
+  /** WW2: the commander can be wounded: hit points, s until back in the fight, and where he comes back. */
+  hp: number;
+  downT: number;
+  homeX: number;
+  homeY: number;
   /** Stands in for the hero as the damage source, so kills can be credited. */
   src: Tower;
 }
@@ -206,6 +218,14 @@ const HERO_PEN = 8;
 export const AIR_Z = 34;
 export const MUZZLE_Z = 16;
 const TWO_PI = Math.PI * 2;
+/** WW2: how the attackers' weapons sound (EV_ESHOT), indexed like EnemyGun.fx. */
+export const ENEMY_FX = ['rifle', 'smg', 'mg', 'tank', 'rocket', 'katyusha'] as const;
+/** WW2: Katyusha rockets in flight at once. */
+export const MAX_ROCKETS = 512;
+/** WW2: what a wrecked emplacement costs to rebuild, and what a repair costs, as a share of what went into it. */
+const REPAIR_SHARE = 0.4;
+/** s the wounded commander is out of action. */
+const HERO_DOWN = 20;
 
 function angleDiff(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -297,6 +317,10 @@ export class Sim {
   readonly eStunT = new Float32Array(MAX_ENEMIES);
   /** WW2: suppression 0..1 — pinned infantry crawl and keep their heads down. */
   readonly eSupp = new Float32Array(MAX_ENEMIES);
+  /** WW2 return fire: the defender aimed at (0 none, -1 the commander, else a tower id), reload, s left of the halt to aim. */
+  readonly eTgt = new Int32Array(MAX_ENEMIES);
+  private readonly eGunCd = new Float32Array(MAX_ENEMIES);
+  readonly eAimT = new Float32Array(MAX_ENEMIES);
   private readonly eHackDps = new Float32Array(MAX_ENEMIES);
   private readonly eFree = new Int32Array(MAX_ENEMIES);
   private eFreeTop = 0;
@@ -327,6 +351,17 @@ export class Sim {
   private readonly pExtra2 = new Float32Array(MAX_PROJECTILES);
   private readonly pSrc: (Tower | null)[] = new Array(MAX_PROJECTILES).fill(null);
   pCount = 0;
+
+  // ------------------------------------------------------------ WW2: enemy rockets in flight (swap-remove)
+  readonly rkSx = new Float32Array(MAX_ROCKETS);
+  readonly rkSy = new Float32Array(MAX_ROCKETS);
+  readonly rkTx = new Float32Array(MAX_ROCKETS);
+  readonly rkTy = new Float32Array(MAX_ROCKETS);
+  readonly rkWait = new Float32Array(MAX_ROCKETS); // s until it leaves the rail
+  readonly rkT = new Float32Array(MAX_ROCKETS); // s of flight left
+  readonly rkT0 = new Float32Array(MAX_ROCKETS);
+  private readonly rkDmg = new Float32Array(MAX_ROCKETS);
+  rkCount = 0;
 
   // ------------------------------------------------------------ visual effects (swap-remove)
   readonly fTex = new Uint8Array(MAX_FX);
@@ -501,6 +536,10 @@ export class Sim {
     (sim.rng as unknown as { s: number }).s = snap.rng as number;
     (sim.vr as unknown as { s: number }).s = snap.vr as number;
     for (const t of snap.towers as Tower[]) {
+      // saves from before WW2 emplacements could be shot at
+      t.hp ??= 0;
+      t.wreck ??= false;
+      t.supp ??= 0;
       sim.towers.push(t);
       sim.towerById.set(t.id, t);
     }
@@ -539,6 +578,7 @@ export class Sim {
     mix(this.lives);
     mix(this.liveCount);
     mix(this.towers.length);
+    for (const t of this.towers) mix(t.hp);
     for (let n = 0; n < this.liveCount; n++) {
       const i = this.live[n];
       mix(this.eX[i]);
@@ -613,11 +653,19 @@ export class Sim {
       }
       case 'gate': {
         const t = this.towerById.get(cmd.id);
-        return !!t && this.toggleGate(t) === 'ok';
+        return !!t && !t.wreck && this.toggleGate(t) === 'ok';
+      }
+      case 'repair': {
+        let any = false;
+        for (const id of cmd.ids) {
+          const t = this.towerById.get(id);
+          if (t && this.repair(t)) any = true;
+        }
+        return any;
       }
       case 'fire': {
         const t = this.towerById.get(cmd.id);
-        return !!t && this.fireSuper(t, cmd.x, cmd.y);
+        return !!t && !t.wreck && this.fireSuper(t, cmd.x, cmd.y);
       }
       case 'wave':
         if (!this.canCallWave) return false;
@@ -755,6 +803,7 @@ export class Sim {
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
+      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -775,7 +824,7 @@ export class Sim {
   }
 
   private setFootprint(t: Tower, id: number): void {
-    const wall = !TOWERS[t.type].walkable && !t.open;
+    const wall = !TOWERS[t.type].walkable && !t.open && !t.wreck;
     for (const i of this.cellsOf(t)) {
       this.towerAt[i] = id;
       this.blocked[i] = id >= 0 && wall ? 1 : 0;
@@ -788,10 +837,12 @@ export class Sim {
 
   upgrade(t: Tower): boolean {
     const cost = this.upgradeCost(t);
-    if (!cost || this.money < cost) return false;
+    if (!cost || this.money < cost || t.wreck) return false;
     this.money -= cost;
     t.spent += cost;
+    const was = this.maxHp(t);
     t.level++;
+    if (t.hp > 0) t.hp += this.maxHp(t) - was; // the new works add to what is still standing
     this.towerVersion++;
     this.burst(t.x, t.y, 0xffe28a, 10, FX_SPARK, 1);
     this.ev(EV_UPGRADE, t.x, t.y, t.level);
@@ -799,7 +850,236 @@ export class Sim {
   }
 
   sellValue(t: Tower): number {
-    return Math.floor(t.spent * (SELL_RATIO + 0.1 * perk(this.config, 'salvage')));
+    // rubble is worth only the scrap
+    return Math.floor(t.spent * (SELL_RATIO + 0.1 * perk(this.config, 'salvage')) * (t.wreck ? 0.25 : 1));
+  }
+
+  // ============================================================ WW2: damage to the defence
+
+  /** Hit points of a tower at full strength (0: the enemy doesn't shoot at it). */
+  maxHp(t: Tower): number {
+    return WW2 ? TOWERS[t.type].levels[t.level].hp ?? 0 : 0;
+  }
+
+  /** Fortification in mm of armour equivalent: sandbags, then timber and earth, then concrete. */
+  fortOf(t: Tower): number {
+    return TOWERS[t.type].levels[t.level].fort ?? 0;
+  }
+
+  /** What patching it up (or rebuilding the rubble) costs right now; 0 if it needs nothing. */
+  repairCost(t: Tower): number {
+    const max = this.maxHp(t);
+    if (!max || t.hp >= max) return 0;
+    return Math.max(1, Math.ceil(t.spent * REPAIR_SHARE * (1 - t.hp / max)));
+  }
+
+  /** Repairs a damaged emplacement, or rebuilds a destroyed one if nothing stands in the rubble. */
+  repair(t: Tower): boolean {
+    const cost = this.repairCost(t);
+    if (!cost || this.money < cost) return false;
+    if (t.wreck) {
+      const def = TOWERS[t.type];
+      const reroutes = !def.walkable && !t.open;
+      if (reroutes && this.wallStatus(this.cellsOf(t)) !== 'ok') return false;
+      t.wreck = false;
+      this.setFootprint(t, t.id);
+      if (reroutes) for (let k = 0; k < this.fields.length; k++) this.fields[k].copyFrom(this.scratch[k]);
+      t.charge = TOWERS[t.type].levels[t.level].charge ?? 0;
+      this.towerVersion++;
+      this.burst(t.x, t.y, 0x9a8f78, t.size * 4, FX_SMOKE, 0);
+      this.ev(EV_BUILD, t.x, t.y, t.type);
+    } else {
+      this.burst(t.x, t.y, 0xffe28a, 8, FX_SPARK, 1);
+      this.ev(EV_UPGRADE, t.x, t.y, t.level);
+    }
+    this.money -= cost;
+    t.hp = this.maxHp(t);
+    t.supp = 0;
+    return true;
+  }
+
+  /** The emplacement is knocked out: it becomes rubble that units can climb through (slowly). */
+  private wreckTower(t: Tower): void {
+    t.hp = 0;
+    t.wreck = true;
+    t.supp = 0;
+    t.beam = -1;
+    t.firing = 0;
+    this.setFootprint(t, t.id);
+    for (let d = this.drones.length - 1; d >= 0; d--) if (this.drones[d].hive === t) this.drones.splice(d, 1);
+    for (const f of this.fields) f.compute(this.blocked);
+    this.towerVersion++;
+    this.explosion(t.x, t.y, 1.2 + t.size * 0.5, 4);
+    for (let k = 0; k < 10; k++) this.fx(FX_DEBRIS, 0, t.x, t.y, this.vr.range(-110, 110), this.vr.range(-110, 110), 0.9, 4, 3, 1, 0x7a6a50, 3, 8);
+    this.ev(EV_WRECK, t.x, t.y, t.type);
+  }
+
+  /**
+   * A shot from the attackers lands on a defender: the same rule as our guns against their armour
+   * (penetration against fortification; blasts and bombs from above find the open top). The crew is
+   * suppressed either way; concrete keeps most of that off.
+   */
+  private hitDefender(id: number, dmg: number, pen: number, supp: number, top: boolean): void {
+    if (id === -1) {
+      const h = this.hero;
+      if (!h || h.downT > 0) return;
+      h.hp -= dmg;
+      if (h.hp <= 0) {
+        // wounded: carried back to the rear, back in the fight later
+        h.hp = 0;
+        h.downT = HERO_DOWN;
+        h.path = [];
+        h.rallyT = 0;
+        this.burst(h.x, h.y, 0xd04a3a, 8, FX_GLOW, 1);
+        this.ev(EV_DOWN, h.x, h.y);
+      }
+      return;
+    }
+    const t = this.towerById.get(id);
+    if (!t || t.wreck || t.hp <= 0) return;
+    let fort = this.fortOf(t);
+    if (top) fort *= 0.5;
+    const r = fort > 0 ? pen / fort : 9;
+    const a = r >= 1 ? dmg : r < 0.7 ? 0 : dmg * 0.25 * ((r - 0.7) / 0.3);
+    t.supp = Math.min(1, t.supp + supp * (fort >= 60 ? 0.25 : 1));
+    if (a <= 0) return;
+    t.hp -= a;
+    if (t.hp <= 0) this.wreckTower(t);
+  }
+
+  /** Where defender `id` stands (the commander or a tower), or null if it's gone or can't be shot at. */
+  private defenderAt(id: number): Tower | null {
+    if (id === -1) return this.hero && this.hero.downT <= 0 ? this.hero.src : null;
+    const t = this.towerById.get(id);
+    return t && !t.wreck && t.hp > 0 ? t : null;
+  }
+
+  /**
+   * The defender attacker `i` shoots at: within range, the most threatening. Tanks go for the guns
+   * that can kill them, infantry for the machine guns pinning them down, snipers for the officer.
+   */
+  private pickDefender(i: number, def: EnemyDef, g: EnemyGun): number {
+    const x = this.eX[i];
+    const y = this.eY[i];
+    const r2 = g.range * g.range;
+    let best = 0;
+    let bestScore = -Infinity;
+    for (const t of this.towers) {
+      if (t.wreck || t.hp <= 0) continue;
+      const d2 = (t.x - x) ** 2 + (t.y - y) ** 2;
+      const reach = g.range + t.size * TILE * 0.5;
+      if (d2 > reach * reach) continue;
+      const lv = TOWERS[t.type].levels[t.level];
+      let s = -Math.sqrt(d2);
+      if (g.fx === 'tank') s += (lv.pen ?? 0) >= 40 ? 90 : 0;
+      else if (def.inf) s += lv.supp ? 50 : 0;
+      if (g.fx === 'rocket') s += t.size * 20;
+      if (s > bestScore) {
+        bestScore = s;
+        best = t.id;
+      }
+    }
+    const h = this.hero;
+    if (h && h.downT <= 0) {
+      const d2 = (h.x - x) ** 2 + (h.y - y) ** 2;
+      if (d2 <= r2) {
+        const s = -Math.sqrt(d2) + (def.stealth ? 200 : def.inf ? 30 : 0);
+        if (s > bestScore) best = -1;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * WW2: attacker i fires back. It picks a defender every few ticks; tanks halt to aim (returns true
+   * while halted), infantry fire on the move and less often while suppressed.
+   */
+  private enemyFire(i: number, def: EnemyDef, g: EnemyGun): boolean {
+    if (this.eGunCd[i] > 0) this.eGunCd[i] -= DT * (def.inf ? 1 - 0.6 * this.eSupp[i] : 1);
+    if ((this.ticks + i) % 12 === 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.pickDefender(i, def, g);
+    const id = this.eTgt[i];
+    if (!id) return false;
+    const t = this.defenderAt(id);
+    if (!t) {
+      this.eTgt[i] = 0;
+      this.eAimT[i] = 0;
+      return false;
+    }
+    if (this.eAimT[i] > 0) {
+      if ((this.eAimT[i] -= DT) <= 0) this.enemyShot(i, def, g, t);
+      return true;
+    }
+    if (this.eGunCd[i] > 0) return false;
+    const reach = g.range + t.size * TILE * 0.5 + 8;
+    if ((t.x - this.eX[i]) ** 2 + (t.y - this.eY[i]) ** 2 > reach * reach) {
+      this.eTgt[i] = 0;
+      return false;
+    }
+    if (g.halt && !this.eAir[i]) {
+      this.eAimT[i] = g.halt;
+      return true;
+    }
+    this.enemyShot(i, def, g, t);
+    return false;
+  }
+
+  private enemyShot(i: number, def: EnemyDef, g: EnemyGun, t: Tower): void {
+    this.eGunCd[i] = (1 / g.rate) * this.rng.range(0.85, 1.15);
+    const air = this.eAir[i] === 1;
+    const x = this.eX[i];
+    const y = this.eY[i];
+    const z = air ? AIR_Z : def.inf ? 6 : 10;
+    // aim somewhere on the emplacement, not always its centre
+    const spread = t.size * TILE * 0.3;
+    const tx = t.x + this.rng.range(-spread, spread);
+    const ty = t.y + this.rng.range(-spread, spread);
+    const dmg = g.dmg * (0.6 + 0.4 * this.hpMult);
+    if (g.salvo) {
+      // a ripple of rockets off the rails, landing scattered around the target a few seconds later
+      for (let k = 0; k < g.salvo && this.rkCount < MAX_ROCKETS; k++) {
+        const r = this.rkCount++;
+        const a = this.rng.next() * TWO_PI;
+        const d = Math.sqrt(this.rng.next()) * 75;
+        this.rkSx[r] = x;
+        this.rkSy[r] = y;
+        this.rkTx[r] = tx + Math.cos(a) * d;
+        this.rkTy[r] = ty + Math.sin(a) * d;
+        this.rkWait[r] = k * 0.16;
+        this.rkT[r] = this.rkT0[r] = 1.4 + Math.hypot(tx - x, ty - y) / 400;
+        this.rkDmg[r] = dmg;
+      }
+      for (let k = 0; k < 10; k++) this.fx(FX_SMOKE, 0, x, y, this.vr.range(-50, 50), this.vr.range(-50, 50), 2, 8, 30, 0.5, 0xb8b0a0, 1.5, 6);
+      this.ev(EV_ESHOT, x, y, ENEMY_FX.indexOf(g.fx));
+      return;
+    }
+    const top = air;
+    this.hitDefender(t.id, dmg, g.pen, g.supp, top);
+    if (g.splash) {
+      // HE: whatever stands next to the impact gets a share
+      for (const o of this.towers) {
+        if (o === t || o.wreck || o.hp <= 0) continue;
+        const r = g.splash + o.size * TILE * 0.5;
+        if ((o.x - tx) ** 2 + (o.y - ty) ** 2 <= r * r) this.hitDefender(o.id, dmg * 0.5, g.pen * 0.6, g.supp * 0.5, true);
+      }
+      const h = this.hero;
+      if (t.id !== -1 && h && (h.x - tx) ** 2 + (h.y - ty) ** 2 <= g.splash * g.splash * 2) this.hitDefender(-1, dmg * 0.5, 0, 0, true);
+    }
+    // cosmetic: muzzle flash, tracer, impact
+    const ang = Math.atan2(ty - y, tx - x);
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    const big = g.fx === 'tank';
+    this.fx(FX_GLOW, 1, x + ca * 8, y + sa * 8, 0, 0, 0.07, big ? 16 : 6, big ? 6 : 2, 0.9, 0xffd890, 0, z);
+    if (g.fx === 'rifle') this.streak(x, y, z, tx, ty, 8, 0.1, 0xfff0c0, 0.8);
+    else if (g.fx === 'rocket') this.streak(x, y, z, tx, ty, 4, 0.3, 0xffb060, 1.6);
+    else this.streak(x, y, z, tx, ty, 8, big ? 0.12 : 0.06, big ? 0xffe0a0 : 0xffd070, big ? 2 : 1);
+    if (big || g.fx === 'rocket') {
+      this.explosion(tx, ty, g.splash ? 0.5 + g.splash / 60 : 0.4, 4);
+      for (let k = 0; k < 4; k++) this.fx(FX_SMOKE, 0, x + ca * 12, y + sa * 12, this.vr.range(-30, 30), this.vr.range(-30, 30), 0.8, 6, 18, 0.45, 0xa8a49a, 3, z);
+    } else if (this.vr.next() < 0.5) {
+      this.fx(FX_SPARK, 1, tx, ty, this.vr.range(-60, 60), this.vr.range(-60, 60), 0.15, 3, 1, 1, 0xffe0a0, 4, 8);
+    }
+    this.ev(EV_ESHOT, x, y, ENEMY_FX.indexOf(g.fx));
   }
 
   sell(t: Tower): void {
@@ -920,6 +1200,11 @@ export class Sim {
     for (const t of this.towers) {
       const lv = TOWERS[t.type].levels[t.level];
       const buff = lv.buff ?? 0;
+      if (t.wreck) {
+        // climbing through rubble
+        for (const c of this.cellsOf(t)) this.tarGrid[c] = Math.min(this.tarGrid[c], 0.55);
+        continue;
+      }
       switch (t.kind) {
         case 'radar':
           cover(t, lv.range, (c) => (this.radarGrid[c] = 1));
@@ -958,6 +1243,7 @@ export class Sim {
           if (id < 0 || id === t.id || seen.has(id)) continue;
           seen.add(id);
           const o = this.towerById.get(id)!;
+          if (t.wreck || o.wreck) continue;
           for (const c of COMBOS) {
             if (!((c.a === t.kind && c.b === o.kind) || (c.b === t.kind && c.a === o.kind))) continue;
             if (t.combos.includes(c.name)) continue;
@@ -989,7 +1275,7 @@ export class Sim {
   get depotIncome(): number {
     let sum = 0;
     for (const t of this.towers) {
-      if (t.kind !== 'depot') continue;
+      if (t.kind !== 'depot' || t.wreck) continue;
       const lv = TOWERS[t.type].levels[t.level];
       sum += (lv.income ?? 0) + Math.min(lv.cap ?? 0, Math.floor(this.money * (lv.interest ?? 0)));
     }
@@ -1002,7 +1288,7 @@ export class Sim {
     for (let k = 0; k < 3; k++) this.items[k] = Math.min(this.itemMax, this.items[k] + (this.wave > 0 ? 1 : 0));
     if (this.wave > 0) {
       this.money += Math.round((WAVE_BONUS[0] + WAVE_BONUS[1] * this.wave) * this.routeFactor) + this.depotIncome;
-      for (const t of this.towers) if (t.kind === 'depot') this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
+      for (const t of this.towers) if (t.kind === 'depot' && !t.wreck) this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
     }
     this.wave++;
     this.ev(EV_WAVE, 0, 0, this.wave);
@@ -1066,9 +1352,18 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0,
     };
-    this.hero = { x, y, px: x, py: y, ang: 0, pang: 0, path: [], level: Math.min(HERO_MAX_LEVEL, level), xp: 0, cd: [0, 0, 0], fireCd: 0, rallyT: 0, src };
+    level = Math.min(HERO_MAX_LEVEL, level);
+    this.hero = {
+      x, y, px: x, py: y, ang: 0, pang: 0, path: [], level, xp: 0, cd: [0, 0, 0], fireCd: 0, rallyT: 0,
+      hp: this.heroMaxHp(level), downT: 0, homeX: x, homeY: y, src,
+    };
+  }
+
+  /** WW2: the commander's hit points at a level. */
+  heroMaxHp(level = this.hero?.level ?? 1): number {
+    return 90 + 15 * (level - 1);
   }
 
   /** XP needed to reach the next level. */
@@ -1087,7 +1382,7 @@ export class Sim {
   /** Walk to a point: shortest path over walkable cells (4-way BFS). */
   private heroMove(x: number, y: number): boolean {
     const h = this.hero;
-    if (!h) return false;
+    if (!h || h.downT > 0) return false;
     const goal = Math.floor(y / TILE) * COLS + Math.floor(x / TILE);
     const start = Math.floor(h.y / TILE) * COLS + Math.floor(h.x / TILE);
     if (goal < 0 || goal >= this.blocked.length || this.blocked[goal]) return false;
@@ -1115,7 +1410,7 @@ export class Sim {
 
   private heroAbility(a: number, x: number, y: number): boolean {
     const h = this.hero;
-    if (!h || a < 0 || a > 2 || h.cd[a] > 0) return false;
+    if (!h || h.downT > 0 || a < 0 || a > 2 || h.cd[a] > 0) return false;
     const power = 1 + 0.15 * (h.level - 1);
     if (a === 0) {
       // carpet bombing across the line from the hero to the target
@@ -1153,6 +1448,16 @@ export class Sim {
     h.pang = h.ang;
     for (let k = 0; k < 3; k++) if (h.cd[k] > 0) h.cd[k] = Math.max(0, h.cd[k] - DT);
     if (h.rallyT > 0) h.rallyT -= DT;
+    if (h.downT > 0) {
+      // wounded: back at the command post once patched up
+      if ((h.downT -= DT) > 0) return;
+      h.downT = 0;
+      h.x = h.px = h.src.x = h.homeX;
+      h.y = h.py = h.src.y = h.homeY;
+      h.hp = this.heroMaxHp();
+      this.fx(FX_RING, 1, h.x, h.y, 0, 0, 0.5, 6, 60, 1, 0xffd84a, 0, 0);
+    }
+    if (WW2) h.hp = Math.min(this.heroMaxHp(), h.hp + 1.5 * DT); // field dressing
     // walking
     if (h.path.length) {
       const next = h.path[0];
@@ -1202,6 +1507,7 @@ export class Sim {
     while (h.level < HERO_MAX_LEVEL && h.xp >= this.heroNextXp(h.level)) {
       h.xp -= this.heroNextXp(h.level);
       h.level++;
+      h.hp += 15;
       this.ev(EV_LEVEL, h.x, h.y, h.level);
       this.fx(FX_RING, 1, h.x, h.y, 0, 0, 0.5, 6, 60, 1, 0xffd84a, 0, 0);
     }
@@ -1249,6 +1555,40 @@ export class Sim {
     }
   }
 
+  /** WW2: Katyusha rockets come down on whatever stands around the impact (from above: open tops). */
+  private updateRockets(): void {
+    for (let r = this.rkCount - 1; r >= 0; r--) {
+      if (this.rkWait[r] > 0) {
+        if ((this.rkWait[r] -= DT) <= 0) this.fx(FX_GLOW, 1, this.rkSx[r], this.rkSy[r], 0, 0, 0.1, 14, 6, 0.9, 0xffb060, 0, 14);
+        continue;
+      }
+      if ((this.rkT[r] -= DT) > 0) continue;
+      const x = this.rkTx[r];
+      const y = this.rkTy[r];
+      const dmg = this.rkDmg[r];
+      for (const t of this.towers) {
+        if (t.wreck || t.hp <= 0) continue;
+        const rr = 30 + t.size * TILE * 0.5;
+        if ((t.x - x) ** 2 + (t.y - y) ** 2 <= rr * rr) this.hitDefender(t.id, dmg, 30, 0.35, true);
+      }
+      const h = this.hero;
+      if (h && (h.x - x) ** 2 + (h.y - y) ** 2 <= 30 * 30) this.hitDefender(-1, dmg, 0, 0, true);
+      this.explosion(x, y, 0.8, 0);
+      // swap-remove
+      const last = --this.rkCount;
+      if (r !== last) {
+        this.rkSx[r] = this.rkSx[last];
+        this.rkSy[r] = this.rkSy[last];
+        this.rkTx[r] = this.rkTx[last];
+        this.rkTy[r] = this.rkTy[last];
+        this.rkWait[r] = this.rkWait[last];
+        this.rkT[r] = this.rkT[last];
+        this.rkT0[r] = this.rkT0[last];
+        this.rkDmg[r] = this.rkDmg[last];
+      }
+    }
+  }
+
   /** Strikes still on their way, for the renderer (incoming markers). */
   get pendingStrikes(): readonly { x: number; y: number; t: number }[] {
     return this.strikes;
@@ -1268,6 +1608,7 @@ export class Sim {
     this.updateTowers();
     this.updateHero();
     this.updateStrikes();
+    if (this.rkCount) this.updateRockets();
     this.updateZones();
     this.updateDrones();
     this.updateProjectiles();
@@ -1334,6 +1675,9 @@ export class Sim {
     this.eHackT[i] = 0;
     this.eStunT[i] = 0;
     this.eSupp[i] = 0;
+    this.eTgt[i] = 0;
+    this.eAimT[i] = 0;
+    this.eGunCd[i] = def.gun ? this.rng.range(0.3, 1) / def.gun.rate : 0;
     this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06);
     this.eReward[i] = Math.round(def.reward * rewardScale(wave) * this.bountyMult);
     this.eSlowT[i] = 0;
@@ -1512,6 +1856,7 @@ export class Sim {
         sp = 0;
       }
       if (!air) sp *= this.tarGrid[g];
+      if (WW2 && def.gun && this.enemyFire(i, def, def.gun)) sp = 0; // halted to fire
       if (def.inf) {
         sp *= this.wireGrid[g];
         if (this.eSupp[i] > 0) {
@@ -1782,8 +2127,15 @@ export class Sim {
       t.prevAngle = t.angle;
       if (t.recoil > 0) t.recoil = Math.max(0, t.recoil - DT * 8);
       if (t.firing > 0) t.firing -= DT;
-      t.cd -= DT;
       t.beam = -1;
+      if (t.wreck) {
+        // the rubble smoulders
+        if ((this.ticks + t.id * 7) % 40 === 0) this.fx(FX_SMOKE, 0, t.x + this.vr.range(-6, 6), t.y + this.vr.range(-6, 6), this.vr.range(-6, 6), -18, 2.2, 6, 26, 0.4, 0x4a4640, 1, 6);
+        continue;
+      }
+      if (t.supp > 0) t.supp = Math.max(0, t.supp - 0.35 * DT);
+      // a pinned crew keeps its head down: slower to serve the gun
+      t.cd -= DT * (1 - 0.5 * t.supp);
       this.updateTower(t);
     }
   }
@@ -1805,6 +2157,20 @@ export class Sim {
       case 'jammer': case 'depot': case 'radar': case 'command': case 'salvage':
       case 'barricade': case 'gate': case 'tar': case 'spikes': case 'wire':
         return;
+
+      case 'workshop': {
+        // pioneers go round the emplacements in range, patching them up
+        if (t.cd > 0) return;
+        t.cd = 0.5;
+        for (const o of this.towers) {
+          if (o === t || o.wreck || o.hp <= 0) continue;
+          const max = this.maxHp(o);
+          if (o.hp >= max || (o.x - t.x) ** 2 + (o.y - t.y) ** 2 > range * range) continue;
+          o.hp = Math.min(max, o.hp + max * (lv.buff ?? 0) * 0.5);
+          if (this.vr.next() < 0.5) this.fx(FX_SPARK, 1, o.x + this.vr.range(-8, 8), o.y + this.vr.range(-8, 8), this.vr.range(-40, 40), -40, 0.3, 3, 1, 1, 0xffd070, 4, 10);
+        }
+        return;
+      }
 
       case 'orbital': case 'nuke': case 'stuka':
         if (t.charge > 0) t.charge = Math.max(0, t.charge - DT);

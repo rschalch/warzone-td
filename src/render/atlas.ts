@@ -128,6 +128,25 @@ def('nukeshell', 26, 10, (g) => {
   g.fill();
 });
 
+/** WW2: the V-2 in flight. */
+def('v2shell', 30, 10, (g) => {
+  g.fillStyle = '#2a2a26';
+  g.beginPath();
+  g.moveTo(-14, -5); g.lineTo(-8, -1.8); g.lineTo(-8, 1.8); g.lineTo(-14, 5); g.closePath();
+  g.fill();
+  g.fillStyle = '#e8e6dc';
+  rrect(g, -12, -2.6, 20, 5.2, 2.4);
+  g.fill();
+  g.fillStyle = '#1e1e1c';
+  g.fillRect(-12, -2.6, 6, 2.6);
+  g.fillRect(-6, 0, 6, 2.6);
+  g.fillRect(0, -2.6, 4, 2.6);
+  g.fillStyle = '#e8e6dc';
+  g.beginPath();
+  g.moveTo(8, -2.6); g.lineTo(14, 0); g.lineTo(8, 2.6); g.closePath();
+  g.fill();
+});
+
 // ---------------------------------------------------------------- floor decals (lie on the ground)
 
 def('d_mine', 20, 20, (g) => {

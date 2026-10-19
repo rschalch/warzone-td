@@ -201,6 +201,7 @@ export class GameRenderer {
   private readonly wrecks: Mark[] = [];
   private readonly scorch: Mark[] = [];
   private readonly heroFrames: Texture[];
+  private readonly rubbleTex: Texture | null;
   private routeLabel: BitmapText;
   private readonly boxG = new Graphics();
   /** Selection rectangle being dragged (projected screen space). */
@@ -292,8 +293,9 @@ export class GameRenderer {
     this.droneFrames = this.iso ? frames('drone') : [atlas.drone_t];
     const hero = WW2 ? 'w_officer' : 'hero';
     this.heroFrames = this.iso ? frames(hero) : [atlas[`${hero}_t`]];
+    this.rubbleTex = WW2 ? atlas[`w_rubble_${view}`] : null;
     // indexed by projectile kind
-    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas.nukeshell, atlas.bullet];
+    this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, WW2 ? atlas.v2shell : atlas.nukeshell, atlas.bullet];
     this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff, 0xffd060];
     this.projScale = [1, 1.1, 1, 1.1, 0.9, 1, 0.7, 1.6, 0.9, 1, 1.7];
     this.fxTex = [atlas.glow, atlas.smoke, atlas.spark, atlas.ring, atlas.px];
@@ -499,7 +501,7 @@ export class GameRenderer {
       (s.eAir[i] ? airSorter : sorter).add(this.depth(x, y), C_ENEMY | i);
     }
 
-    if (s.hero) {
+    if (s.hero && s.hero.downT <= 0) {
       const h = s.hero;
       const x = h.px + (h.x - h.px) * alpha;
       const y = h.py + (h.y - h.py) * alpha;
@@ -555,6 +557,26 @@ export class GameRenderer {
         const sx = k === P_BULLET ? 1.4 : sc;
         this.proj.push(tex, this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, rot, sx, sc, this.projTint[k], 1);
         if (k === P_ACID || k === P_CRYO || k === P_AP) this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z * this.p.lift, 0, 0.25, 0.25, this.projTint[k], 0.6, 0.5);
+      }
+    }
+    // WW2: Katyusha rockets on their arc
+    for (let r = 0; r < s.rkCount; r++) {
+      if (s.rkWait[r] > 0) continue;
+      const f = Math.min(1, 1 - Math.max(0, s.rkT[r] - alpha * DT) / s.rkT0[r]);
+      const x = s.rkSx[r] + (s.rkTx[r] - s.rkSx[r]) * f;
+      const y = s.rkSy[r] + (s.rkTy[r] - s.rkSy[r]) * f;
+      if (!this.visible(this.p.x(x, y), this.p.y(x, y))) continue;
+      const arc = Math.sin(f * Math.PI);
+      // the arc is steep: climbing, then diving onto the target
+      const rot = this.p.angle(s.rkTx[r] - s.rkSx[r], s.rkTy[r] - s.rkSy[r]);
+      if (this.iso) {
+        const z = 8 + arc * 130;
+        this.proj.push(this.projTex[P_MISSILE], this.p.x(x, y), this.p.y(x, y) - z, rot, 0.9, 0.9, 0xd8d0b0, 1);
+        this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z, 0, 0.3, 0.3, 0xffa040, 0.7, 0.5);
+      } else {
+        const g = 0.9 + arc * 1.1;
+        this.proj.push(this.projTex[P_MISSILE], x, y, rot, g, g, 0xd8d0b0, 1);
+        this.glow.push(this.fxTex[FX_GLOW], x, y, 0, 0.3 * g, 0.3 * g, 0xffa040, 0.7, 0.5);
       }
     }
     this.proj.end();
@@ -624,6 +646,13 @@ export class GameRenderer {
       const def = TOWERS[t.type];
       const sx = p.x(t.x, t.y);
       const sy = p.y(t.x, t.y);
+      if (t.wreck && this.rubbleTex) {
+        // knocked out: a heap of rubble in place of the emplacement
+        const sc = t.size / 2;
+        if (!this.iso) this.shadows.push(this.rubbleTex, t.x + 2, t.y + 3, 0, sc, sc, 0x000000, 0.3);
+        this.world.push(this.rubbleTex, sx, sy, (t.id % 4) * (this.iso ? 0 : Math.PI / 2), sc, sc, 0xffffff, 1);
+        return;
+      }
       const bases = this.baseTex[t.type];
       const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
@@ -649,6 +678,16 @@ export class GameRenderer {
           this.world.push(tex, tx + 2, ty + 3, a, sc, sc, 0x000000, 0.3);
           this.world.push(tex, tx, ty, a, sc, sc, 0xffffff, 1);
         }
+      }
+      const max = s.maxHp(t);
+      if (max && t.hp < max) {
+        // WW2: damage taken; red when close to being knocked out
+        const f = t.hp / max;
+        const w = t.size * TILE * 0.8;
+        const by = sy - (this.iso ? 26 : t.size * TILE * 0.5 + 3);
+        this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
+        const pal = palette();
+        this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, f)) / 4, 0.5, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
       }
       if (def.manual) {
         // charge gauge; glows when ready to fire
@@ -679,6 +718,12 @@ export class GameRenderer {
       this.bars.push(this.atlas.px, sx - 12, by, 0, 6, 0.9, 0x111111, 0.8, 0);
       const need = s.heroNextXp(h.level);
       this.bars.push(this.atlas.px, sx - 11.5, by, 0, 5.75 * Math.min(1, h.xp / need), 0.5, 0xffd84a, 1, 0);
+      if (WW2 && h.hp < s.heroMaxHp()) {
+        const f = h.hp / s.heroMaxHp();
+        const pal = palette();
+        this.bars.push(this.atlas.px, sx - 12, by - 3, 0, 6, 0.9, 0x111111, 0.8, 0);
+        this.bars.push(this.atlas.px, sx - 11.5, by - 3, 0, 5.75 * f, 0.5, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
+      }
       return;
     }
     if (kind === C_DRONE) {

@@ -155,6 +155,33 @@ model('su_gaz', 13, DIRS, [
   ...crew(-5, 2, 0, 5, KHAKI, '#4e5a2e'),
 ]);
 
+/** BM-13 on a Lend-Lease Studebaker: cab forward, the rocket rails angled up over the bed. */
+model('su_katyusha', 17, DIRS, [
+  P(0, 4, (g) => {
+    for (const [x, y] of [[-12, -7.6], [-6.5, -7.6], [6, -7.6], [-12, 4.6], [-6.5, 4.6], [6, 4.6]]) wheel(g, x, y, 4.6, 3);
+  }),
+  P(4, 7, (g) => {
+    box(g, -15, -5.4, 30, 10.8, 0.8, '#3a3a2c'); // chassis
+    poly(g, [5, -5.2, 12, -5.2, 15, -3.6, 15, 3.6, 12, 5.2, 5, 5.2], grad(g, 5, -5, 15, 5, [[0, SU[0]], [1, SU[2]]])); // bonnet
+    for (let x = 12.5; x < 14.6; x += 0.8) line(g, [x, -2.8, x, 2.8], 'rgba(0,0,0,0.3)');
+  }),
+  P(7, 11, (g) => {
+    box(g, 0.5, -5.4, 5.5, 10.8, 1, grad(g, 0.5, -5, 6, 5, [[0, '#848c52'], [1, SU[2]]])); // cab
+    box(g, 4.4, -4.4, 1.2, 8.8, 0.3, '#9ab0b8', null); // windscreen
+  }),
+  P(7, 12, (g) => {
+    // the rail launcher, raised towards the front
+    for (let k = 0; k < 8; k++) {
+      const y = -4.4 + k * 1.25;
+      box(g, -15, y, 15, 0.9, 0.2, grad(g, -15, y, 0, y + 0.9, [[0, '#5c6034'], [1, '#2e301a']]), null);
+    }
+  }, true),
+  P(12, 13, (g) => {
+    for (let k = 0; k < 8; k += 2) circ(g, -0.8, -4 + k * 1.25, 0.6, '#c8c0a0', null); // rocket noses
+    line(g, [-8, -5, -8, 5], '#22241a', 0.6);
+  }),
+]);
+
 model('su_ba64', 13, DIRS, [
   P(0, 4, (g) => {
     for (const [x, y] of [[-8, -7.6], [3.4, -7.6], [-8, 4.8], [3.4, 4.8]]) wheel(g, x, y, 5, 2.8);
@@ -783,6 +810,103 @@ model('w_stuka', 23, 1, [
     g.fillStyle = 'rgba(40,40,36,0.4)';
     g.fill();
   }),
+]);
+
+model('w_workshop', 21, 1, [
+  P(WD - 1, WD + 1, (g) => {
+    box(g, -13, -12, 26, 24, 1.5, '#5a5440'); // packed-earth yard
+    for (const [x, y] of [[-10, 8], [-6.5, 9]]) circ(g, x, y, 1.8, grad(g, x - 2, y - 2, x + 2, y + 2, [[0, '#6a7052'], [1, '#383c2a']]));
+  }),
+  P(WD + 1, WD + 7, (g) => {
+    // an Opel Blitz with its bonnet open
+    box(g, -11, -9, 15, 9, 1, grad(g, -11, -9, 4, 0, [[0, FG[0]], [1, FG[2]]]));
+    box(g, 4, -8.5, 6, 8, 1, grad(g, 4, -8.5, 10, -0.5, [[0, '#757b6b'], [1, '#4a4e40']]));
+    line(g, [-4, -9, -4, 0], 'rgba(0,0,0,0.35)');
+  }),
+  P(WD + 1, WD + 13, (g) => {
+    // gantry crane lifting an engine
+    line(g, [-2, 3, -2, 11], '#4a4030', 1.4);
+    line(g, [10, 3, 10, 11], '#4a4030', 1.4);
+  }),
+  P(WD + 13, WD + 14, (g) => {
+    line(g, [-2, 7, 10, 7], '#5a4c34', 1.6);
+    line(g, [4, 7, 4, 9], '#222', 0.4);
+  }),
+  P(WD + 5, WD + 8, (g) => box(g, 1.5, 7.5, 5, 4, 0.8, '#3a3a36')), // engine block
+  ...crew(-7, 4, 1.2, WD, FG),
+  P(WD, WD + 1, (g) => {
+    // tool chest
+    box(g, 6, -12, 6, 2.6, 0.4, '#8a2a1e');
+  }),
+]);
+
+/** Rubble of a knocked-out emplacement: burst sandbags, splintered timber, a twisted barrel. */
+model('w_rubble', 20, 1, (() => {
+  const rng = new Rng(17);
+  const bits = Array.from({ length: 22 }, () => ({
+    x: rng.range(-15, 15), y: rng.range(-15, 15), w: rng.range(2.5, 6), h: rng.range(1.8, 3.6), a: rng.range(0, Math.PI), k: rng.int(3),
+  }));
+  return [
+    P(0, 1, (g) => {
+      g.beginPath();
+      g.ellipse(0, 0, 18, 16, 0, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(30,26,22,0.75)'; // scorched ground
+      g.fill();
+    }),
+    P(1, 4, (g) => {
+      for (const b of bits) {
+        g.save();
+        g.translate(b.x, b.y);
+        g.rotate(b.a);
+        const col = b.k === 0 ? ['#a8946a', '#6a5a3e'] : b.k === 1 ? ['#8c8a82', '#56544e'] : ['#6a4a2a', '#3a2814'];
+        box(g, -b.w / 2, -b.h / 2, b.w, b.h, b.k === 0 ? 1 : 0.3, grad(g, 0, -b.h / 2, 0, b.h / 2, [[0, col[0]], [1, col[1]]]));
+        g.restore();
+      }
+    }),
+    P(3, 5, (g) => {
+      line(g, [-6, 4, 3, -1, 9, -6], '#2a2a26', 1.4); // bent barrel
+      line(g, [-10, -6, -2, -10], '#4a3420', 1.2); // splintered beam
+      for (const [x, y] of [[4, 6], [-8, 2], [10, 8]]) circ(g, x, y, 1.1, 'rgba(255,120,40,0.85)', null); // embers
+    }),
+  ];
+})());
+
+/** V-2 on its firing table, the Meillerwagen trailer lowered beside it, a fuel bowser behind. */
+model('w_v2', 23, 1, [
+  P(WD - 1, WD + 1, (g) => {
+    box(g, -15, -15, 30, 30, 2, '#6a665a'); // concrete pad
+    for (let k = -15; k < 15; k += 6) line(g, [k, -15, k, 15], 'rgba(0,0,0,0.15)');
+    circ(g, 0, 0, 7, 'rgba(20,18,16,0.6)', null); // blast scorch
+  }),
+  P(WD + 1, WD + 4, (g) => {
+    box(g, -12, 9, 18, 5, 1, grad(g, -12, 9, 6, 14, [[0, FG[0]], [1, FG[2]]])); // fuel bowser
+    line(g, [-12, -9, 10, -9], '#3a3a32', 1.6); // Meillerwagen
+    line(g, [-12, -6, 10, -6], '#3a3a32', 1.6);
+  }),
+  P(WD + 1, WD + 3, (g) => {
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+      poly(g, [Math.cos(a) * 2, Math.sin(a) * 2, Math.cos(a) * 6.5, Math.sin(a) * 6.5, Math.cos(a + 0.35) * 5, Math.sin(a + 0.35) * 5], '#2a2a26'); // fins on the table
+    }
+  }),
+  P(WD + 3, WD + 30, (g, z) => {
+    // the rocket standing upright: black and white quarters, tapering to the warhead
+    const f = (z - WD - 3) / 27;
+    const r = f < 0.75 ? 3.4 : 3.4 * (1 - (f - 0.75) / 0.25) + 0.3;
+    g.beginPath();
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    finish(g, '#e8e6dc', null);
+    for (let k = 0; k < 4; k += 2) {
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.arc(0, 0, r, (k * Math.PI) / 2 + (f > 0.4 ? Math.PI / 2 : 0), ((k + 1) * Math.PI) / 2 + (f > 0.4 ? Math.PI / 2 : 0));
+      g.closePath();
+      g.fillStyle = '#1e1e1c';
+      g.fill();
+    }
+  }, true),
+  ...crew(9, 3, 3, WD, FG),
+  ...crew(-9, 2, 0.4, WD, FG),
 ]);
 
 // ---------------------------------------------------------------- obstacles

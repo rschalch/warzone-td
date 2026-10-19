@@ -297,6 +297,15 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
   flak88: { variants: 3, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.12, bodyF: 4000, thumpF: 48, thump: 1.4, tail: 0.8, tailLp: 550, drive: 3.2, echo: [[0.4, 0.35], [1.0, 0.18]], mech: 0.12 }) },
   tiger: { variants: 2, render: () => firearm({ dur: 2.8, crack: 0.005, body: 0.13, bodyF: 3600, thumpF: 44, thump: 1.5, tail: 0.85, tailLp: 520, drive: 3.4, echo: [[0.42, 0.33], [1.05, 0.16]], mech: 0.14 }) },
   schreck: { variants: 3, render: () => rocket(0.9, 800, 2200, 0.25, 70) },
+  // ---- Soviet return fire
+  /** Mosin-Nagant: a single flat crack from further off. */
+  mosin: { variants: 3, render: () => firearm({ dur: 0.9, crack: 0.006, body: 0.03, bodyF: 6500, thumpF: 110, thump: 0.6, tail: 0.18, tailLp: 1200, drive: 2.2, echo: [[0.16, 0.2], [0.36, 0.08]], mech: 0.06 }) },
+  /** PPSh-41 and the DT machine gun: fast, light bursts. */
+  ppsh: { variants: 4, render: () => firearm({ dur: 0.22, crack: 0.002, body: 0.007, bodyF: 7000, thumpF: 180, thump: 0.3, tail: 0.04, tailLp: 2200, drive: 3, echo: [[0.07, 0.07]] }) },
+  dt: { variants: 3, render: () => firearm({ dur: 0.3, crack: 0.003, body: 0.01, bodyF: 6000, thumpF: 140, thump: 0.45, tail: 0.06, tailLp: 1700, drive: 3, echo: [[0.09, 0.09]] }) },
+  /** 76 mm F-34 / 85 mm tank guns: a heavy, lower bark than the German high-velocity guns. */
+  f34: { variants: 3, render: () => firearm({ dur: 2.4, crack: 0.004, body: 0.11, bodyF: 3200, thumpF: 50, thump: 1.4, tail: 0.7, tailLp: 560, drive: 3.2, echo: [[0.38, 0.3], [0.9, 0.14]], mech: 0.12 }) },
+  rs82: { variants: 2, render: () => rocket(1.1, 600, 1800, 0.3, 60) },
   /** Mortar: the hollow "thoonk" of a bomb leaving the tube. */
   mortar: {
     variants: 3,
@@ -325,6 +334,38 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
       return finish(echoes(sat(mix(2.8, ...layers), 1.6), [[0.3, 0.2], [0.7, 0.1]]));
     },
   },
+  /**
+   * Katyusha ("Stalin's organ"): sixteen rockets rippling off the rails in under three seconds, each
+   * a rushing roar with a howl that drops as it climbs away; together a long, organ-like moan.
+   */
+  katyusha: {
+    variants: 2,
+    render: () => {
+      const layers: [Buf, number?, number?][] = [];
+      for (let k = 0; k < 16; k++) {
+        const at = k * 0.16 + rnd(0, 0.04);
+        const f = rnd(300, 420);
+        layers.push([tone(1.3, {
+          wave: 'saw', lp: 1900, gain: 0.32,
+          freq: (t) => f + 520 * Math.exp(-t / 0.5) + 40 * Math.sin(2 * Math.PI * 9 * t),
+          env: (t) => Math.min(1, t / 0.04) * Math.exp(-t / 0.55),
+        }), at]);
+        layers.push([noise(1.1, { attack: 0.01, decay: 0.35, shape: 'bp', f0: 2600, f1: 700, fTau: 0.4, q: 1, gain: 0.8, flutter: [36, 0.45] }), at]);
+        layers.push([tone(0.12, { f0: 140, f1: 60, fTau: 0.03, decay: 0.05, gain: 0.5 }), at]);
+      }
+      layers.push([noise(3.6, { color: 'brown', attack: 0.1, decay: 1.4, f0: 600, gain: 0.9, flutter: [22, 0.4] })]);
+      return finish(echoes(sat(mix(4.2, ...layers), 1.5), [[0.35, 0.22], [0.8, 0.12]]));
+    },
+  },
+  /** V-2 lift-off: ignition bang, then a long tearing roar that climbs and fades into the sky. */
+  v2: {
+    variants: 1,
+    render: () => finish(sat(mix(5,
+      [tone(0.3, { f0: 90, f1: 40, fTau: 0.08, decay: 0.12, gain: 1 })],
+      [noise(4.6, { attack: 0.4, decay: 1.6, shape: 'bp', f0: 400, f1: 1600, fTau: 2.5, q: 0.7, gain: 1, flutter: [45, 0.5] }), 0.1],
+      [noise(4.8, { color: 'brown', attack: 0.3, decay: 1.8, f0: 300, gain: 1.4, flutter: [30, 0.5] }), 0.05],
+    ), 1.8)),
+  },
   /** Ju 87 dive: the "Jericho trumpet" siren wailing up as it dives, over the engine. */
   stuka: {
     variants: 1,
@@ -349,6 +390,8 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
   boom1: { variants: 3, render: () => explosion(1.5) },
   boom2: { variants: 3, render: () => explosion(2.3) },
   bigboom: { variants: 3, render: () => explosion(3.4) },
+  /** An emplacement blown apart: a long, heavy blast. */
+  wreck: { variants: 2, render: () => explosion(4.2) },
   nuke: {
     variants: 1,
     render: () => finish(echoes(sat(mix(7,

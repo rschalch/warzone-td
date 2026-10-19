@@ -6,7 +6,7 @@ import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
 import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, type Sim, type Tower, type TowerStats } from '../game/sim';
-import { ABILITY_HELP, FOREST_HELP, HERO_HELP, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
+import { ABILITY_HELP, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 
 /** Something to explain in the side panel (hovered button, or a target being aimed). */
@@ -20,6 +20,7 @@ export interface HudActions {
   mode(m: number): void;
   gate(): void;
   fire(): void;
+  repair(): void;
   next(): void;
   speed(s: number): void;
   menu(): void;
@@ -58,7 +59,7 @@ const num = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n
 const pct = (f: number) => `${Math.round(f * 100)}%`;
 /** Kinds whose damage figure is per second rather than per shot. */
 const DPS_KINDS = new Set(['laser', 'flame', 'napalm', 'gas', 'gravity', 'spikes', 'hacker', 'orbital', 'blackhole']);
-const AURA_KINDS = new Set(['jammer', 'radar', 'command', 'salvage']);
+const AURA_KINDS = new Set(['jammer', 'radar', 'command', 'salvage', 'workshop']);
 
 /** Stat rows for a tower level; `eff` overrides damage/range/rate with buffed values. */
 function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string][] {
@@ -83,13 +84,28 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
   if (lv.knock) rows.push(['Knockback', `${lv.knock}px`]);
   if (lv.duration) rows.push([role === 'hacker' ? 'Hack time' : 'Lasts', `${lv.duration}s`]);
   if (lv.buff) {
-    const label = { radar: 'Range bonus', command: 'Fire-rate bonus', salvage: 'Bounty bonus', jammer: 'Extra damage taken' }[role as string] ?? 'Bonus';
+    const label = { radar: 'Range bonus', command: 'Fire-rate bonus', salvage: 'Bounty bonus', jammer: 'Extra damage taken', workshop: 'Repairs per s' }[role as string] ?? 'Bonus';
     rows.push([label, `+${pct(lv.buff)}`]);
   }
   if (lv.income) rows.push(['Per wave', `$${lv.income} + ${pct(lv.interest ?? 0)} (max $${lv.cap})`]);
   if (lv.charge) rows.push(['Recharge', `${lv.charge}s`]);
   if (lv.drones) rows.push(['Drones', `${lv.drones}`]);
+  if (WW2 && lv.hp) rows.push(['Strength', `${lv.hp} HP`], ['Cover', fortName(lv.fort ?? 0)]);
   return rows;
+}
+
+/** WW2: what an emplacement's fortification is made of. */
+function fortName(mm: number): string {
+  const what = mm >= 90 ? 'tank armour' : mm >= 60 ? 'concrete' : mm >= 25 ? 'timber & earth' : mm >= 12 ? 'sandbags' : 'gun shield';
+  return `${what} (${mm} mm)`;
+}
+
+/** WW2: what an attacker fires back with. */
+function weaponLine(e: EnemyDef): string {
+  const g = e.gun;
+  if (!g) return 'unarmed';
+  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo` }[g.fx];
+  return `${what} · ${g.pen} mm · range ${g.range}${g.halt ? ' · halts to fire' : ''}`;
 }
 
 /** Counters for specific threats, shown in the wave preview. */
@@ -229,6 +245,7 @@ export class Hud {
       else if (a === 'sell') act.sell();
       else if (a === 'uptype') act.upgradeAllOfType();
       else if (a === 'gate') act.gate();
+      else if (a === 'repair') act.repair();
       else if (a === 'fire') act.fire();
       else if (a === 'mup') act.multiUpgrade();
       else if (a === 'msell') act.multiSell();
@@ -352,12 +369,13 @@ export class Hud {
     const h = sim.hero;
     this.tactical.style.display = h ? '' : 'none';
     if (!h) return;
-    this.set(this.heroBtn, `<b>Commander</b><span>Lv ${h.level}${h.level < HERO_MAX_LEVEL ? ` · ${Math.floor((h.xp / sim.heroNextXp(h.level)) * 100)}%` : ' · max'}</span><span class="k">H</span>`, true);
+    const state = h.downT > 0 ? `wounded ${Math.ceil(h.downT)}s` : h.level < HERO_MAX_LEVEL ? `${Math.floor((h.xp / sim.heroNextXp(h.level)) * 100)}%` : 'max';
+    this.set(this.heroBtn, `<b>Commander</b><span>Lv ${h.level} · ${state}</span><span class="k">H</span>`, true);
     this.heroBtn.classList.toggle('on', ui.heroSelected);
     HERO_ABILITIES.forEach((a, k) => {
       const cd = h.cd[k];
       this.set(this.abilityBtns[k], `<b>${a.name}</b><span>${cd > 0 ? `${Math.ceil(cd)}s` : 'ready'}</span><span class="k">${a.key}</span>`, true);
-      this.abilityBtns[k].disabled = cd > 0 || ui.mode === 'replay';
+      this.abilityBtns[k].disabled = cd > 0 || h.downT > 0 || ui.mode === 'replay';
     });
     ITEMS.forEach((it, k) => {
       this.set(this.itemBtns[k], `<b>${it.name}</b><span>×${sim.items[k]}</span><span class="k">${it.key}</span>`, true);
@@ -388,11 +406,12 @@ export class Hud {
     if (what) key = `i${what.kind}:${what.index}:${what === ui.aiming}:${sim.money >= (what.kind === 'tower' ? sim.cost(what.index) : 0)}:${sim.items.join()}:${sim.hero?.cd.map(Math.ceil).join()}`;
     else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}`;
     else if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
-    else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}`;
+    else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}:${Math.ceil(sim.hero.hp)}:${Math.ceil(sim.hero.downT)}`;
     else if (t) {
       const up = sim.upgradeCost(t);
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
-      key = `t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}`;
+      const fix = sim.repairCost(t);
+      key = `t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -422,8 +441,9 @@ export class Hud {
       const abil = HERO_ABILITIES.map((a, k) => `<button data-ab="${k}" ${h.cd[k] > 0 || ro ? 'disabled' : ''}>${a.name}${h.cd[k] > 0 ? ` ${Math.ceil(h.cd[k])}s` : ''}</button>`).join('');
       this.info.innerHTML = `
         <div class="title">Commander<span class="lvl">Lv ${h.level}/${HERO_MAX_LEVEL}</span></div>
-        <div class="help">${HERO_HELP}</div>
+        <div class="help">${WW2 ? HERO_HELP_WW2 : HERO_HELP}</div>
         <table>
+          ${WW2 ? `<tr><td>Health</td><td>${h.downT > 0 ? `<span class="bad">wounded — back in ${Math.ceil(h.downT)}s</span>` : `${Math.ceil(h.hp)} / ${sim.heroMaxHp()}`}</td></tr>` : ''}
           <tr><td>Damage</td><td>${num(sim.heroDamage())}</td></tr>
           <tr><td>Range</td><td>${num(sim.heroRange())}</td></tr>
           <tr><td>XP</td><td>${h.level < HERO_MAX_LEVEL ? `${Math.floor(h.xp)} / ${sim.heroNextXp(h.level)}` : 'max'}</td></tr>
@@ -451,6 +471,17 @@ export class Hud {
         special = `<div class="row"><button data-act="fire" class="primary" ${c < 1 || ro ? 'disabled' : ''}>${c < 1 ? `Charging ${Math.floor(c * 100)}%` : 'Fire! (R)'}</button></div>`;
       }
       if (def.role === 'depot') special = `<div class="desc">All depots pay <b>$${sim.depotIncome}</b> at the next wave.</div>`;
+      const max = sim.maxHp(t);
+      const fix = sim.repairCost(t);
+      let condition = '';
+      if (max) {
+        const f = t.hp / max;
+        condition = `<tr><td>Condition</td><td>${t.wreck ? '<span class="bad">destroyed</span>' : `<span class="${f < 0.35 ? 'bad' : ''}">${Math.ceil(t.hp)} / ${max}</span>${t.supp > 0.3 ? ' · crew pinned' : ''}`}</td><td></td></tr>`;
+      }
+      if (t.wreck) {
+        special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
+      }
+      const repair = fix ? `<button data-act="repair" class="primary" ${sim.money >= fix && !ro ? '' : 'disabled'}>${t.wreck ? 'Rebuild' : 'Repair'} $${fix} (B)</button>` : '';
       const record = def.hitsGround || def.hitsAir ? `
           <tr><td>Live DPS</td><td>${Math.round(this.dps(t))}</td><td></td></tr>
           <tr><td>Kills</td><td>${t.kills}</td><td></td></tr>
@@ -461,14 +492,15 @@ export class Hud {
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
         <div class="help">${towerHelp(def)}</div>
-        <table>${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
+        <table>${condition}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${penRows(lv)}
         ${combos}
         ${special}
         ${modes}
+        ${repair ? `<div class="row">${repair}</div>` : ''}
         <div class="row">
-          <button data-act="up" ${up && sim.money >= up && !ro ? '' : 'disabled'}>${up ? `Upgrade $${up}` : 'Max level'}</button>
-          <button data-act="sell" ${sim.canSell && !ro ? '' : 'disabled'}>Sell $${sim.sellValue(t)}</button>
+          ${t.wreck ? '' : `<button data-act="up" ${up && sim.money >= up && !ro ? '' : 'disabled'}>${up ? `Upgrade $${up}` : 'Max level'}</button>`}
+          <button data-act="sell" ${sim.canSell && !ro ? '' : 'disabled'}>${t.wreck ? 'Clear' : 'Sell'} $${sim.sellValue(t)}</button>
         </div>
         ${sameType > 1 ? `<div class="row"><button data-act="uptype" ${ro}>Upgrade every ${def.short} (${sameType})</button></div>` : ''}`;
     } else if (ui.placing >= 0) {
@@ -530,7 +562,7 @@ export class Hud {
         <div class="desc">Commander ability · cooldown ${a.cd}s.</div>`;
     }
     const h = sim.hero;
-    return `<div class="title">Commander<span class="lvl">${h ? `Lv ${h.level}` : ''} · key H</span></div><div class="help">${HERO_HELP}</div>`;
+    return `<div class="title">Commander<span class="lvl">${h ? `Lv ${h.level}` : ''} · key H</span></div><div class="help">${WW2 ? HERO_HELP_WW2 : HERO_HELP}</div>`;
   }
 
   private enemyStatus(sim: Sim, i: number): string {
@@ -558,6 +590,7 @@ export class Hud {
         <tr><td>HP</td><td>${Math.ceil(sim.eHp[i])} / ${Math.ceil(sim.eMaxHp[i])}</td></tr>
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
         <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
+        ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def)}</td></tr>` : ''}
         <tr><td>Speed</td><td>${def.speed}</td></tr>
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
         <tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>

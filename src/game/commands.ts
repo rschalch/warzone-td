@@ -9,6 +9,8 @@ export type Command =
   | { t: 'upgrade'; ids: number[] }
   | { t: 'mode'; id: number; mode: number }
   | { t: 'gate'; id: number }
+  /** WW2: patch up damaged emplacements or rebuild destroyed ones. */
+  | { t: 'repair'; ids: number[] }
   | { t: 'fire'; id: number; x: number; y: number }
   | { t: 'wave' }
   | { t: 'undo' }

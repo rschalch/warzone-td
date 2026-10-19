@@ -8,14 +8,14 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS } from './game/defs';
+import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS, WW2 } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import { PARTNER } from './game/partner';
 import {
   Sim as SimClass,
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
-  AIR_Z, EV_UPGRADE, EV_WAVE, HERO_ABILITIES, type Sim, type Tower,
+  AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_WAVE, EV_WRECK, HERO_ABILITIES, type Sim, type Tower,
 } from './game/sim';
 import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
@@ -96,6 +96,7 @@ function handleResults(): void {
     }
     if (!ok && cmd.t === 'gate') flash('The gate can’t close: units in the way or it would seal the route');
     if (!ok && cmd.t === 'sell' && !session.sim.canSell) flash('Ironman: no selling');
+    if (!ok && cmd.t === 'repair') flash('Can’t repair: not enough money, or units are standing in the rubble');
   }
   session.results.length = 0;
   // the AI partner talks over the radio
@@ -117,6 +118,7 @@ const hud = new Hud({
   },
   mode: (m) => selected && issue({ t: 'mode', id: selected.id, mode: m }),
   gate: () => toggleGate(),
+  repair: () => repairSelected(),
   fire: () => startSuper(),
   next: () => issue({ t: 'wave' }),
   speed: (s) => setSpeed(s),
@@ -210,6 +212,14 @@ function stepTower(dir: number): void {
 
 function toggleGate(): void {
   if (selected?.kind === 'gate') issue({ t: 'gate', id: selected.id });
+}
+
+/** WW2: repair or rebuild the selected emplacement(s). */
+function repairSelected(): void {
+  const s = sim();
+  if (!s) return;
+  const list = (multi.length ? multi : selected ? [selected] : []).filter((t) => s.repairCost(t) > 0);
+  if (list.length) issue({ t: 'repair', ids: list.map((t) => t.id) });
 }
 
 function startSuper(): void {
@@ -816,6 +826,7 @@ function bindInput(): void {
     if (k === 'q' || k === 'e') return stepTower(k === 'e' ? 1 : -1);
     if (k >= '0' && k <= '9') return pick(k === '0' ? 9 : Number(k) - 1);
     if (k === 'g') return toggleGate();
+    if (k === 'b' && WW2) return repairSelected();
     if (k === 'r') return startSuper();
     if (k === 'h') return selectHero();
     if (k === 'z') return startItem(0);
@@ -860,6 +871,8 @@ const SHOT_SOUND: Record<string, string> = {
   nuke: 'nukeLaunch', mine: '',
 };
 const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom'];
+/** WW2: the attackers' weapons, by ENEMY_FX index. */
+const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha'];
 
 function handleEvents(s: Sim): void {
   const ev = s.events;
@@ -921,6 +934,20 @@ function handleEvents(s: Sim): void {
         break;
       case EV_DENY:
         sound.play('deny');
+        break;
+      case EV_ESHOT:
+        sound.play(ENEMY_SOUND[a], x, y);
+        break;
+      case EV_WRECK:
+        sound.play('wreck', x, y);
+        if (settings.shake) {
+          const [g] = spatial(x, y);
+          shake = Math.min(18, shake + 6 * g);
+        }
+        break;
+      case EV_DOWN:
+        sound.play('deny');
+        flash('The commander is wounded: back in 20 s');
         break;
     }
   }

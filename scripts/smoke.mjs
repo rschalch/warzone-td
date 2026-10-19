@@ -115,10 +115,20 @@ try {
     const mgHurt = hp - s.eHp[t34];
     s.damage(t34, 50, false, schreck);
     const atHurt = hp - mgHurt - s.eHp[t34];
+    // return fire: a T-34 in range shells an MG nest; a repair restores it
+    const f = Sim.create(cfg);
+    const nest = f.place(0, 20, 20, true);
+    const tank = f.spawnEnemy(7, 1);
+    f.eX[tank] = nest.x + 120; f.eY[tank] = nest.y; f.eSpeed[tank] = 0;
+    for (let n = 0; n < 900 && !nest.wreck; n++) f.step();
+    const shelled = nest.hp < f.maxHp(nest);
+    f.money = 1000;
+    f.freeEnemy?.(tank);
+    const repaired = f.exec({ t: 'repair', ids: [nest.id] }) && nest.hp === f.maxHp(nest) && !nest.wreck;
     // replay and restore through tanks, aircraft and suppression
     const a = new Session(cfg);
     a.speed = 4;
-    const plan = [[0, { t: 'place', type: 0, col: 20, row: 30 }], [2, { t: 'place', type: 5, col: 24, row: 30 }], [4, { t: 'place', type: 9, col: 20, row: 34 }], [6, { t: 'place', type: 16, col: 28, row: 31 }]];
+    const plan = [[0, { t: 'place', type: 0, col: 20, row: 30 }], [2, { t: 'place', type: 5, col: 24, row: 30 }], [4, { t: 'place', type: 9, col: 20, row: 34 }], [6, { t: 'place', type: 17, col: 28, row: 31 }]];
     for (let w = 0; w < 6; w++) plan.push([10 + w * 700, { t: 'wave' }]);
     plan.push([1500, { t: 'upgrade', ids: [2] }]);
     let k = 0;
@@ -135,9 +145,10 @@ try {
       a.sim.step();
       c.step();
     }
-    return { mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
+    return { shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
   });
   check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
+  check(ww2.shelled && ww2.repaired, `WW2 return fire: a T-34 shells an MG nest (${ww2.shelled}), repair restores it (${ww2.repaired})`);
   check(ww2.wave >= 6 && ww2.kills > 0, `WW2 waves run (wave ${ww2.wave}, ${ww2.kills} kills)`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly');
 

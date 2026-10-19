@@ -54,6 +54,24 @@ export interface EnemyDef {
   stealth?: boolean; // untargetable unless inside a radar's range or right next to a tower
   shield?: number; // regenerating shield, as a fraction of max hp
   heal?: number; // medic: hp healed per pulse, as a fraction of the target's max hp
+  /** WW2: the weapon it fires back with at emplacements and defenders. */
+  gun?: EnemyGun;
+}
+
+/** A WW2 attacker's weapon. Same ballistics as the defence: `pen` against fortification / armour. */
+export interface EnemyGun {
+  dmg: number;
+  range: number; // px
+  rate: number; // shots/s
+  pen: number; // mm
+  supp: number; // suppression added to the crew hit
+  /** s the vehicle halts to aim before each shot (tanks fire from the short halt). */
+  halt?: number;
+  splash?: number; // px: HE shells and bombs also hit what stands next to the target
+  /** Rocket artillery: rockets per salvo, scattered over the target area, in flight for a while. */
+  salvo?: number;
+  /** Sound and tracer: small arms, automatic fire, tank gun, aircraft rockets, rocket artillery. */
+  fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha';
 }
 
 export const EN_INFANTRY = 0;
@@ -93,7 +111,7 @@ export type TowerKind =
  * What a tower does in the simulation. Classic towers are their own role; WW2 emplacements reuse
  * these behaviours (an MG-42 is a 'gun', a mortar a 'cannon') plus a few of their own.
  */
-export type Role = TowerKind | 'at' | 'wire' | 'stuka';
+export type Role = TowerKind | 'at' | 'wire' | 'stuka' | 'workshop';
 
 export interface TowerLevel {
   cost: number; // build cost (level 0) or upgrade cost
@@ -119,6 +137,8 @@ export interface TowerLevel {
   pen?: number; // WW2: armour penetration in mm (at mid range)
   supp?: number; // WW2: suppression added to infantry per hit
   salvo?: number; // rounds per volley (rocket artillery)
+  hp?: number; // WW2: hit points of the emplacement (undefined: can't be shot at)
+  fort?: number; // WW2: fortification in mm of armour equivalent (sandbags < timber < concrete)
 }
 
 export type TowerCat = 'basic' | 'fire' | 'precision' | 'control' | 'support' | 'maze' | 'super';
@@ -393,6 +413,9 @@ function grow(b: TowerLevel, n: number): TowerLevel {
   if (b.pen) lv.pen = Math.round(b.pen * (1 + 0.035 * n)); // better ammunition: ×1.3 at level 10
   if (b.supp) lv.supp = r2(b.supp * (1 + 0.06 * n));
   if (b.salvo) lv.salvo = b.salvo + Math.floor(n / 3);
+  if (b.hp) lv.hp = Math.round(b.hp * (1 + 0.15 * n));
+  // the base shows it: sandbags, then logs and earth from level 4, concrete from level 7
+  if (b.fort) lv.fort = b.fort + (n >= 3 ? 12 : 0) + (n >= 6 ? 25 : 0);
   return lv;
 }
 

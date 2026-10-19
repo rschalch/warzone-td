@@ -1,7 +1,7 @@
 # WW2 mode — design
 
 A second ruleset inside the same game (same maps, menus, saves, replays, co-op). The player picks a side
-(**Germany**, **Western Allies**, **Soviet Union**) and defends against an opposing faction. Realism is in the
+(**Germany**, **Western Allies**, **Soviet Union**, **Japan**) and defends against an opposing faction. Realism is in the
 **ratios** (time is compressed, numbers are not literal): small arms can't hurt tanks, tanks reload slowly,
 armour has a facing, the attacker shoots back and thinks.
 
@@ -87,11 +87,47 @@ the flow fields, so mazes stay valid.
 |---|---|---|---|
 | Strength | few, expensive, long-range high-pen guns; best MG | economy, artillery and air call-ins | cheap and numerous, extra mines, manpower |
 | Weakness | expensive, low manpower | weaker AT individually | lower accuracy, thin armour early |
-| Super | Stuka / FW-190 strike, Nebelwerfer | P-47 rockets, time-on-target barrage | Il-2, Katyusha |
+| Super | Stuka / FW-190 strike, Nebelwerfer, **V-2** (done) | P-47 rockets, time-on-target barrage, **Little Boy** (B-29, last-tier, very long charge) | Il-2, **Katyusha** (as an attacker: done) |
 | Commander | Tiger | Pershing | IS-2 |
 
 Maps: Kursk (open steppe), Normandy bocage (hedgerows = forests), Stalingrad ruins, Bastogne (snow),
 Seelow Heights.
+
+### 5a. Historical campaign
+A WW2 campaign of famous battles, each a hand-made map with its own side, enemy, briefing, a fixed
+arsenal (what that army had then) and objectives beyond "survive 30 waves" (hold until relieved, keep
+a bridge, keep the HQ alive):
+
+| Battle | Year | You defend as | Notes |
+|---|---|---|---|
+| Moscow | 1941 | Soviet Union | winter, T-34s and KVs appear late; Germans freeze (slower) |
+| Stalingrad | 1942 | Soviet Union | city ruins (rubble cells, narrow streets), Volga crossing as the exit, snipers |
+| El Alamein | 1942 | Western Allies | desert, minefields ("Devil's gardens"), Afrika Korps |
+| Kursk (Prokhorovka) | 1943 | Soviet Union | Pakfront in reverse: deep belts of AT guns and mines vs Tigers and Panthers |
+| Omaha Beach | 1944 | Germany | the Atlantic Wall: bunkers, hedgehogs, MG-42s over the beach; landing craft waves |
+| Normandy bocage | 1944 | Germany | hedgerows as forests, Shermans and Fireflies, Allied air superiority |
+| Arnhem (Market Garden) | 1944 | Western Allies | hold the bridge until XXX Corps arrives |
+| Battle of the Bulge (Bastogne) | 1944 | Western Allies | snow, encircled, King Tigers; air support only when the weather clears |
+| Seelow Heights / Berlin | 1945 | Germany | last stand against massed IS-2s and Katyushas |
+
+Medals per battle on the campaign map, as in the classic campaign.
+
+### 5b. Japan (Imperial Japanese Army and Navy air arm)
+| | Japan |
+|---|---|
+| Strength | infantry in numbers and at night, fortified caves and spider holes (camo), banzai charges, light and fast |
+| Weakness | thin armour (Type 95 Ha-Go 12 mm, Type 97 Chi-Ha 25 mm), weak AT (Type 1 47 mm, 50 mm pen) |
+| Weapons | Arisaka rifle, Type 99 LMG, Type 92 "woodpecker" HMG, Type 89 knee mortar, Type 1 47 mm AT gun, Type 41 75 mm mountain gun, Type 4 Ha-To rocket, lunge mines; Type 97 Chi-Ha, Type 95 Ha-Go, Type 1 Chi-He |
+| Air | A6M Zero, Ki-43 Oscar, D3A Val dive bomber, kamikaze (as an attacker: a plane that dives on an emplacement) |
+| Super | Kamikaze strike, Type 4 rocket barrage |
+| Commander | Type 97 Chi-Ha command tank |
+
+As defender: cave networks (bunkers revealed only when they fire), spider holes (AT teams in ambush),
+interlocking Type 92 nests. As attacker: banzai charges (fast infantry rushes that ignore suppression
+for a few seconds), night infiltration (stealth), kamikazes against the strongest emplacement.
+Pacific battles for the campaign: Guadalcanal (1942, Allies defend Henderson Field), Tarawa (1943, Japan
+defends the atoll), Saipan (1944), Iwo Jima (1945, Japan: caves and tunnels on Mount Suribachi),
+Okinawa (1945, Japan: Shuri Line).
 
 ## 6. Engineering
 
@@ -106,7 +142,7 @@ Seelow Heights.
 
 ## 7. Phases
 
-Status: phases 0 and 1 are done (Germany vs Soviet Union).
+Status: phases 0–1 done (Germany vs Soviet Union); phase 2 (return fire) done, with the Katyusha and the V-2.
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs
@@ -116,4 +152,5 @@ Status: phases 0 and 1 are done (Germany vs Soviet Union).
    medics, sorties.
 4. **Stealth & spotting:** camo, reveal-on-fire, ambush, recon both ways.
 5. **Enemy intelligence:** breach fields, threat facing, smoke, artillery preparation, adaptive waves.
-6. **Other two factions**, historical maps, music and sound, balance (gauntlet + bot).
+6. **Other factions**: Western Allies (super-weapon: Little Boy), Soviet Union as defender, Japan (§5b); music and sound, balance (gauntlet + bot).
+7. **Historical campaign** (§5a): battle maps, briefings, period arsenals, objectives.

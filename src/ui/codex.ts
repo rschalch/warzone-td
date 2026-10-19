@@ -72,6 +72,8 @@ export const ABILITY_HELP = [
 
 export const HERO_HELP = 'Your commander: a unit you move around the battlefield. Select it (H or click it), then click the ground to walk there. It shoots anything in range, earns XP from its kills and gains damage and range with every level. It cannot be hurt.';
 
+export const HERO_HELP_WW2 = 'Your commander: an officer you move around the battlefield. Select it (H or click it), then click the ground to walk there. It shoots anything in range and earns XP. The enemy shoots back, and snipers hunt officers. When wounded it is out of action for 20 s and comes back at its command post. Wounds heal slowly.';
+
 export const RIVER_HELP = 'Ground units wade through water at 55% speed, so a river is a natural slow zone — and they would rather walk around it when a dry way is about as quick. Aircraft fly over. Nothing can be built in the water.';
 
 export const MOUNTAIN_HELP = 'Impassable high ground: ground units must find a way around it, and nothing can be built on it. Mountains never close a route completely; the passes between peaks are natural choke points. Aircraft fly over.';
@@ -101,24 +103,27 @@ export const WW2_TOWER_HELP: Record<string, string> = {
   teller: 'Anti-tank mines buried in the path. Only a vehicle sets them off; the blast tears through the thin belly armour. They re-arm after a while.',
   smine: 'Bounding mines that leap up and burst at waist height. Only infantry set them off. They pin down whoever survives.',
   roadblock: 'A barrier you can open and close (G) to switch the route mid-wave. Closing is refused if units stand in it or if it would seal every route.',
+  workshop: 'Pioneers with a crane truck and spare parts. They go round every emplacement in range and patch up the damage, even in the middle of a fight. They can\'t raise rubble: rebuilding a destroyed emplacement (B) costs money.',
+  v2: 'The V-2 ballistic missile. When it is ready, press R and click anywhere on the map: a minute later... in this game a few seconds later, a tonne of explosive falls at three times the speed of sound. There is no warning, then the roar. It hits from straight above, so even the IS-2 is thin there.',
   stuka: 'An airfield of Ju 87 dive bombers. When it is ready, press R and click: three Stukas dive one after another and drop their bombs on the target. The bombs hit the top armour, where even a KV-1 is thin.',
 };
 
 /** Indexed like the Soviet ENEMIES in ww2.ts. */
 export const SOVIET_HELP: UnitHelp[] = [
-  { text: 'Riflemen with Mosin-Nagants, coming in great numbers.', counter: 'MG-42s, mortars, S-mines; wire slows them under your guns.' },
-  { text: 'Assault troops with PPSh submachine guns: faster and tougher than riflemen.', counter: 'MG-42s and flamethrowers; suppression slows them down.' },
-  { text: 'A sniper in camouflage: invisible to your guns unless spotted.', counter: 'Observation posts reveal snipers; any emplacement spots one point-blank.' },
+  { text: 'Riflemen with Mosin-Nagants, coming in great numbers. Their fire pins your crews, who then shoot slower; it only chips away at sandbags.', counter: 'MG-42s, mortars, S-mines; wire slows them under your guns. Pinned infantry fire less.' },
+  { text: 'Assault troops with PPSh submachine guns: faster and tougher than riflemen, deadly up close.', counter: 'MG-42s and flamethrowers; suppression slows them down.' },
+  { text: 'A sniper in camouflage: invisible to your guns unless spotted. Picks off your commander from far away.', counter: 'Observation posts reveal snipers; any emplacement spots one point-blank.' },
   { text: 'A field medic who patches up everyone around.', counter: 'Kill medics first (Strong targeting), with snipers or MGs.' },
   { text: 'A fast, unarmoured jeep.', counter: 'Anything hits it: MGs, flak, mortars. Keep the maze long.' },
   { text: 'A light armoured car: rifle bullets bounce off its front.', counter: 'Flak 38 and anything heavier; MGs only from the side and rear.' },
-  { text: 'A light tank with 45 mm of front armour.', counter: 'Flak 38 through the sides, any anti-tank gun from any side.' },
+  { text: 'A light tank with 45 mm of front armour and a 45 mm gun. Tanks halt to fire: hitting them while they aim is your chance.', counter: 'Flak 38 through the sides, any anti-tank gun from any side.' },
   { text: 'The T-34: sloped 90 mm front, much thinner sides. Leaking one costs 2 lives.', counter: 'PaK 40 into the sides at the turns of your maze; Panzerschreck, Tiger and 88 from any side.' },
   { text: 'The up-gunned T-34 of 1944, with a tougher turret and sides.', counter: 'Tiger, 88 and Panzerschreck; PaK 40 into the sides.' },
   { text: 'The KV-1 heavy tank: slow, with armour that defeats most guns from the front. Costs 3 lives.', counter: 'Tiger, Panzerschreck, 88 from the side; Teller mines and Stukas hit it from below and above.' },
   { text: 'A boss: the IS-2 heavy tank with 160 mm of front armour and a 122 mm gun. Costs 4 lives.', counter: 'Only the Panzerschreck goes through the front. Flank it with Tigers and 88s; mines and Stukas.' },
   { text: 'The Il-2 Sturmovik ground-attack plane, armoured underneath: MG bullets bounce off.', counter: 'Flak 38 and the 88.' },
   { text: 'A fast, unarmoured fighter.', counter: 'Flak 38, the 88, and MG-42s.' },
+  { text: 'The Katyusha — "Stalin\'s organ": sixteen rockets rippled off a truck, howling down on your positions from long range. The blasts hit sandbagged positions from above.', counter: 'It is a soft truck: anything kills it if it reaches it. Long-range guns (88, Flak 38) or artillery spotted by an observation post; concrete bunkers shrug off the rockets.' },
 ];
 
 export const towerHelp = (def: TowerDef): string => (WW2 ? WW2_TOWER_HELP[def.kind] : TOWER_HELP[def.kind as TowerKind]) ?? def.desc;

@@ -62,6 +62,7 @@ function chooseWW2(sim: Sim, built: Map<number, number>): number {
     return total % 3 === 0 ? W('schreck') : W('pak40');
   }
   if (n('lefh18') > n('observer')) return W('observer');
+  if (sim.wave >= 5 && n('workshop') < total / 12) return W('workshop');
   if (sim.money >= 120 && total > 6) {
     const opts = ['mortar', 'lefh18', 'nebel', 'mg42', 'bunker'];
     return W(opts[total % opts.length]);
@@ -86,6 +87,16 @@ function chooseType(sim: Sim, built: Map<number, number>): number {
 }
 
 function decide(sim: Sim, built: Map<number, number>): void {
+  if (WW2) {
+    // keep the line standing: rebuild rubble and patch up badly damaged emplacements first
+    const hurt = sim.towers.filter((t) => sim.repairCost(t) > 0 && (t.wreck || t.hp < sim.maxHp(t) * 0.5)).sort((a, b) => Number(b.wreck) - Number(a.wreck) || b.spent - a.spent);
+    let fixed = false;
+    for (const t of hurt) if (sim.money >= sim.repairCost(t) && sim.exec({ t: 'repair', ids: [t.id] })) fixed = true;
+    if (fixed) return;
+    // one workshop per dozen emplacements once the enemy shoots back in earnest
+    const shops = built.get(towerIndex('workshop')) ?? 0;
+    if (sim.wave >= 5 && shops < sim.towers.length / 12 && sim.money < sim.cost(towerIndex('workshop'))) return;
+  }
   // upgrade the busiest tower when it beats building
   const best = [...sim.towers].filter((t) => sim.upgradeCost(t) > 0).sort((a, b) => b.damage - a.damage)[0];
   const needs = WW2 && chooseWW2(sim, built) !== towerIndex('mg42') && chooseWW2(sim, built) !== towerIndex('mortar');
@@ -151,7 +162,7 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
       lastWave = sim.wave;
       const kinds = new Map<string, number>();
       for (const t of sim.towers) kinds.set(TOWERS[t.type].kind, (kinds.get(TOWERS[t.type].kind) ?? 0) + 1);
-      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
+      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} wrecks ${sim.towers.filter((t) => t.wreck).length} hurt ${sim.towers.filter((t) => t.hp < sim.maxHp(t)).length} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
     }
     if (tick % 30 === 0 && !solo) decide(sim, built);
     if (partner && tick % PARTNER_EVERY === 0) {
