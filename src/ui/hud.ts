@@ -165,6 +165,7 @@ export class Hud {
   private readonly heroBtn: HTMLButtonElement;
   private cache = new Map<HTMLElement, string>();
   private infoKey = '';
+  private infoSubject = '';
   private reportTimer = 0;
   /** Recent damage totals per tower, sampled once a second, for live DPS. */
   private dmgSamples = new Map<number, number[]>();
@@ -437,12 +438,19 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
       const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
-      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
+      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
     if (key === this.infoKey) return;
     this.infoKey = key;
+    // something else selected: start its panel at the top, where its buttons are
+    const subject = what ? `i${what.kind}:${what.index}` : ui.units.length ? `u${ui.units.join()}` : ui.enemy >= 0 ? `e${ui.enemy}`
+      : ui.multi.length ? 'm' : ui.heroSelected ? 'h' : t ? `t${t.id}` : ui.placing >= 0 ? `p${ui.placing}` : 'n';
+    if (subject !== this.infoSubject) {
+      this.infoSubject = subject;
+      this.info.scrollTop = 0;
+    }
     const ro = ui.mode === 'replay' ? 'disabled' : '';
 
     if (what) {
@@ -469,7 +477,7 @@ export class Hud {
       const abil = heroAbilities().map((a, k) => `<button data-ab="${k}" ${h.cd[k] > 0 || ro ? 'disabled' : ''}>${a.name}${h.cd[k] > 0 ? ` ${Math.ceil(h.cd[k])}s` : ''}</button>`).join('');
       this.info.innerHTML = `
         <div class="title">Commander<span class="lvl">Lv ${h.level}/${HERO_MAX_LEVEL}</span></div>
-        <div class="help">${WW2 ? HERO_HELP_WW2 : HERO_HELP}</div>
+        <div class="row abil">${abil}</div>
         <table>
           ${WW2 ? `<tr><td>Health</td><td>${h.downT > 0 ? `<span class="bad">wounded — back in ${Math.ceil(h.downT)}s</span>` : `${Math.ceil(h.hp)} / ${sim.heroMaxHp()}`}</td></tr>` : ''}
           <tr><td>Damage</td><td>${num(sim.heroDamage())}</td></tr>
@@ -477,7 +485,7 @@ export class Hud {
           <tr><td>XP</td><td>${h.level < HERO_MAX_LEVEL ? `${Math.floor(h.xp)} / ${sim.heroNextXp(h.level)}` : 'max'}</td></tr>
           <tr><td>Kills</td><td>${h.src.kills}</td></tr>
         </table>
-        <div class="row abil">${abil}</div>
+        <div class="help">${WW2 ? HERO_HELP_WW2 : HERO_HELP}</div>
         <div class="desc" style="margin-top:8px">${heroAbilities().map((a) => `<b>${a.key}</b> ${a.name}: ${a.desc}`).join('<br>')}</div>`;
     } else if (t) {
       const def = TOWERS[t.type];
@@ -496,12 +504,15 @@ export class Hud {
         const c = COMBOS.find((o) => o.name === name)!;
         return `<div class="combo"><b>${c.name}</b> ${c.desc}</div>`;
       }).join('');
-      let special = '';
-      if (def.role === 'gate') special = `<div class="row"><button data-act="gate" class="primary" ${ro}>${t.open ? 'Close gate (G)' : 'Open gate (G)'}</button></div>`;
+      // the controls a tower type has (always in the same place for it), then notes that come and go
+      let actions = '';
+      if (def.role === 'gate') actions = `<div class="row"><button data-act="gate" class="primary" ${ro}>${t.open ? 'Close gate (G)' : 'Open gate (G)'}</button></div>`;
       if (def.manual) {
         const c = sim.chargeLevel(t);
-        special = `<div class="row"><button data-act="fire" class="primary" ${c < 1 || ro ? 'disabled' : ''}>${c < 1 ? `Charging ${Math.floor(c * 100)}%` : 'Fire! (R)'}</button></div>`;
+        actions = `<div class="row"><button data-act="fire" class="primary" ${c < 1 || ro || t.wreck ? 'disabled' : ''}>${c < 1 ? `Charging ${Math.floor(c * 100)}%` : 'Fire! (R)'}</button></div>`;
       }
+      if (def.role === 'barracks' || def.role === 'motorpool') actions = this.trainPanel(sim, t, ro || (t.wreck ? 'disabled' : ''));
+      let special = '';
       if (def.role === 'depot') special = `<div class="desc">All depots pay <b>$${sim.depotIncome}</b> at the next wave.</div>`;
       const max = sim.maxHp(t);
       const fix = sim.repairCost(t);
@@ -516,8 +527,8 @@ export class Hud {
       if (t.wreck) {
         special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
       }
-      if (def.role === 'barracks' || def.role === 'motorpool') special = this.trainPanel(sim, t, ro);
-      const repair = fix ? `<button data-act="repair" class="primary" ${sim.money >= fix && !ro ? '' : 'disabled'}>${t.wreck ? 'Rebuild' : 'Repair'} $${fix} (B)</button>` : '';
+      // WW2: always there (greyed out when there is nothing to fix), so the buttons never move
+      const repair = max ? `<button data-act="repair" class="${fix ? 'primary' : ''}" title="B" ${fix && sim.money >= fix && !ro ? '' : 'disabled'}>${t.wreck ? 'Rebuild' : 'Repair'}${fix ? ` $${fix}` : ''}</button>` : '';
       const record = def.hitsGround || def.hitsAir ? `
           <tr><td>Live DPS</td><td>${Math.round(this.dps(t))}</td><td></td></tr>
           <tr><td>Kills</td><td>${t.kills}</td><td></td></tr>
@@ -526,19 +537,20 @@ export class Hud {
       const hits = [def.hitsGround && 'ground', def.hitsAir && 'air'].filter(Boolean).join(' + ');
       this.info.innerHTML = `
         <div class="title">${def.name}<span class="lvl">${def.levels.length > 1 ? `Lv ${t.level + 1}/${def.levels.length} · ${RANKS[t.level]}` : ''}</span></div>
+        <div class="row">
+          <button data-act="up" ${up && sim.money >= up && !ro && !t.wreck ? '' : 'disabled'}>${up ? `Upgrade $${up}` : 'Max level'}</button>
+          ${repair}
+          <button data-act="sell" ${sim.canSell && !ro && t.id !== sim.objectiveId && !t.base ? '' : 'disabled'}>${t.wreck ? 'Clear' : 'Sell'} $${sim.sellValue(t)}</button>
+        </div>
+        ${def.levels.length > 1 ? `<div class="row"><button data-act="uptype" ${sameType > 1 && !ro ? '' : 'disabled'}>Upgrade every ${def.short}${sameType > 1 ? ` (${sameType})` : ''}</button></div>` : ''}
+        ${modes}
+        ${actions}
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
-        <div class="help">${towerHelp(def)}</div>
+        ${special}
         <table>${condition}${camoRow}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${penRows(lv)}
         ${combos}
-        ${special}
-        ${modes}
-        ${repair ? `<div class="row">${repair}</div>` : ''}
-        <div class="row">
-          ${t.wreck ? '' : `<button data-act="up" ${up && sim.money >= up && !ro ? '' : 'disabled'}>${up ? `Upgrade $${up}` : 'Max level'}</button>`}
-          <button data-act="sell" ${sim.canSell && !ro && t.id !== sim.objectiveId ? '' : 'disabled'}>${t.wreck ? 'Clear' : 'Sell'} $${sim.sellValue(t)}</button>
-        </div>
-        ${sameType > 1 ? `<div class="row"><button data-act="uptype" ${ro}>Upgrade every ${def.short} (${sameType})</button></div>` : ''}`;
+        <div class="help">${towerHelp(def)}</div>`;
     } else if (ui.placing >= 0) {
       const def = TOWERS[ui.placing];
       const rows = stats(def, def.levels[0]).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
@@ -648,7 +660,7 @@ export class Hud {
       return `<button data-train="${k}" title="${d.desc}" ${block || ro ? 'disabled' : ''}>${d.short} $${d.cost}${d.manpower > 1 ? ` · ${d.manpower} men` : ''}${why[block] ? ` (${why[block]})` : ''}</button>`;
     }).join('');
     const now = t.trainKind >= 0 ? `<div class="desc">Training <b>${UNITS[t.trainKind].name}</b>: ready in ${Math.ceil(t.trainT)}s</div>` : '';
-    return `${now}<div class="row train">${rows}</div><div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.</div>`;
+    return `<div class="row train">${rows}</div>${now}<div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.</div>`;
   }
 
   /** WW2: the selected units: health, stance, record. */
@@ -671,8 +683,7 @@ export class Hud {
     let body: string;
     if (one >= 0) {
       const g = d.gun;
-      body = `<div class="help">${d.desc}</div>
-        <table>
+      body = `<table>
           <tr><td>Health</td><td>${Math.ceil(sim.uHp[one])} / ${d.hp}</td></tr>
           ${d.arm ? `<tr><td>Armour</td><td>${d.arm[0]} front · ${d.arm[1]} side · ${d.arm[2]} rear (mm)</td></tr>` : ''}
           ${g ? `<tr><td>Weapon</td><td>${num(g.dmg)} dmg · ${g.pen} mm · range ${g.range}${g.still ? ' · stops to fire' : ''}</td></tr>` : ''}
@@ -683,10 +694,11 @@ export class Hud {
           ${sim.uDig[one] > 0 ? `<tr><td>Cover</td><td>${sim.uDig[one] >= 1 ? (d.arm ? 'hull-down' : 'in a foxhole') : `digging in ${Math.round(sim.uDig[one] * 100)}%`}</td></tr>` : ''}
           ${sim.uLay[one] >= 0 ? '<tr><td>Task</td><td>laying a mine</td></tr>' : ''}
           ${sim.unitHidden(one) ? '<tr><td>Status</td><td>hidden from the enemy</td></tr>' : ''}
-        </table>`;
+        </table>
+        <div class="help">${d.desc}</div>`;
     } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
     return `<div class="title">${one >= 0 ? d.name : `${units.length} units`}<span class="lvl">${air ? 'aircraft' : 'unit'}</span></div>
-      ${body}${buttons}
+      ${buttons}${body}
       <div class="desc" style="margin-top:8px">${air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
   }
 
