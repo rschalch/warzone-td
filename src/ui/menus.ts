@@ -186,10 +186,10 @@ function showBriefing(b: Battle): void {
           <div>
             <h3>${FACTIONS[b.side].name} against ${FACTIONS[b.foe].name}</h3>
             <p>${esc(b.brief)}</p>
-            <ul class="d">${extras}<li>Hold for ${b.waves} waves.</li></ul>
+            <ul class="d">${extras}<li>The attackers march on your ${b.objective ? esc(b.objective.name) : 'headquarters'}: if it falls, the battle is lost. Hold for ${b.waves} waves, or destroy the enemy's headquarters at their end of the map.</li></ul>
             <h3>Difficulty</h3>
             <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}">${DIFFICULTIES[d].name}</button>`).join('')}</div>
-            <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win${difficulty === 'easy' ? ' · the enemy never breaches walls' : ''}</p>
+            <p class="d">headquarters ×${DIFFICULTIES[difficulty].lives / 20} · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win${difficulty === 'easy' ? ' · the enemy never breaches walls' : ''}</p>
             ${coopLink ? '' : `<h3>AI partner</h3>
             <div class="seg wide"><button data-partner="0" class="${partner ? '' : 'on'}">Off</button>${PARTNER_ROLES.map((r) => `<button data-partner="${r.share}" class="${partner === r.share ? 'on' : ''}">${r.name}</button>`).join('')}</div>
             <p class="d">${partner ? `A second commander shares your bank and ${PARTNER_ROLES.find((r) => r.share === partner)!.desc}: it reads the next wave, digs in what the line lacks and keeps its own positions repaired.` : 'Fight alone, or bring in an AI commander to build alongside you.'}</p>`}
@@ -308,10 +308,10 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
               return `<button data-era="${f.id}" class="${on ? 'on' : ''}" ${opts.daily || !f.ready ? 'disabled' : ''} title="${f.ready ? '' : 'Coming later'}">${label}</button>`;
             }).join('')}</div>
             ${foes.length > 1 ? `<h3>Against</h3><div class="seg wide">${foes.map((o) => `<button data-foe="${o}" class="${era?.foe === o ? 'on' : ''}">${FACTIONS[o].name}</button>`).join('')}</div>` : ''}
-            <p class="d">${era ? `${matchup(era.side, era.foe)} Realistic armour: small arms bounce off tanks, anti-tank guns kill from the side.` : 'The original game: lasers, railguns and superweapons.'}</p>
+            <p class="d">${era ? `${matchup(era.side, era.foe)} Both sides have a headquarters: theirs at the entry, yours where the routes end. The attackers march on yours and the waves never stop: destroy theirs to win. Realistic armour: small arms bounce off tanks, anti-tank guns kill from the side.` : 'The original game: lasers, railguns and superweapons.'}</p>
             <h3>Difficulty</h3>
             <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}" ${opts.daily ? 'disabled' : ''}>${DIFFICULTIES[d].name}</button>`).join('')}</div>
-            <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win</p>
+            <p class="d">${era ? `headquarters ×${DIFFICULTIES[difficulty].lives / 20}` : `${DIFFICULTIES[difficulty].lives} lives`} · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win</p>
             <h3>Challenges</h3>
             ${MODIFIERS.map((m) => `<label class="mod"><input type="checkbox" data-mod="${m.id}" ${mods.has(m.id) ? 'checked' : ''} ${opts.daily ? 'disabled' : ''}> <b>${m.name}</b> <span class="d">${m.desc} Score ×${m.score}.</span></label>`).join('')}
             ${mods.has('limited') ? `<p class="d">Arsenal: ${limitedSet(seed, era).map((i) => rulesetFor(era).towers[i].short).join(', ')}</p>` : ''}

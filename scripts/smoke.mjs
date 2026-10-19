@@ -146,14 +146,16 @@ try {
     let bc = 32, br = 22;
     for (let k = 0; k < 400 && !s.canPlace(barracks, bc, br); k++) { bc = 30 + (k % 20); br = 18 + Math.floor(k / 20); }
     plan.unshift([0, { t: 'place', type: barracks, col: bc, row: br }]);
-    plan.push([12, { t: 'train', id: 1, unit: window.game.unitIndex('grenadier') }]);
+    // the headquarters stand already (ids from 1): the barracks is the next tower
+    const B = a.sim.towers.length + 1;
+    plan.push([12, { t: 'train', id: B, unit: window.game.unitIndex('grenadier') }]);
     plan.push([900, { t: 'unitMove', ids: [1], x: 500, y: 600 }], [1300, { t: 'unitStance', ids: [1], stance: 2 }]);
     // and the newer orders: pioneers laying mines, digging in, a recon flight
-    plan.push([1000, { t: 'train', id: 1, unit: window.game.unitIndex('pioneer') }], [1700, { t: 'unitMines', ids: [2], x: 520, y: 640 }]);
+    plan.push([1000, { t: 'train', id: B, unit: window.game.unitIndex('pioneer') }], [1700, { t: 'unitMines', ids: [2], x: 520, y: 640 }]);
     plan.push([2000, { t: 'unitDig', ids: [1] }], [2600, { t: 'heroAbility', ability: 2, x: 600, y: 500 }], [2700, { t: 'heroAbility', ability: 0, x: 600, y: 500 }]);
     for (let w = 0; w < 6; w++) plan.push([10 + w * 700, { t: 'wave' }]);
     plan.sort((p, q) => p[0] - q[0]);
-    plan.push([1500, { t: 'upgrade', ids: [2] }]);
+    plan.push([1500, { t: 'upgrade', ids: [B + 1] }]);
     let k = 0;
     while (a.sim.ticks < 4800 && !a.sim.gameOver) {
       while (k < plan.length && plan[k][0] <= a.sim.ticks) a.issue(plan[k++][1]);
@@ -272,6 +274,36 @@ try {
   });
   check(ai2.built >= 3 && ai2.replay && ai2.restore, `WW2 AI partner builds (${ai2.built} positions), replays (${ai2.replay}) and restores (${ai2.restore})`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');
+
+  // WW2 bases: both headquarters stand, the attackers march on ours and stay, building takes time, theirs falls for a win
+  const bases = await page.evaluate(() => {
+    const { Sim, session } = window.game;
+    const s = Sim.create({ ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' } });
+    const hq = s.towers.find((t) => t.base > 0);
+    const theirs = s.gSlot[0] >= 0 && s.garrisonAlive >= 3;
+    s.money = 5000;
+    let mg = null;
+    for (let k = 0; k < 400 && !mg; k++) mg = s.place(0, 30 + (k % 20), 10 + Math.floor(k / 20));
+    const building = !!mg && mg.buildT > 0;
+    const zone = !s.canPlace(0, Math.floor(s.gX[0] / 20), Math.floor(s.gY[0] / 20) + 2);
+    s.exec({ t: 'wave' });
+    let leaked = 0;
+    for (let n = 0; n < 60 * 90; n++) {
+      s.step();
+      for (let k = 0; k < s.events.length; k += 5) if (s.events[k] === 3) leaked++;
+      s.events.length = 0;
+    }
+    const hurt = hq.hp < s.maxHp(hq);
+    const fieldOk = s.attackers === s.liveCount - s.garrisonAlive;
+    const i = s.gSlot[0];
+    s.damage(i, 1e9, true, null, false, 999);
+    s.step();
+    return { hq: !!hq, theirs, building, built: !!mg && mg.buildT === 0, zone, leaked, hurt, fieldOk, won: s.victory };
+  });
+  check(bases.hq && bases.theirs, `WW2 bases: our headquarters (${bases.hq}) and theirs with its guns (${bases.theirs})`);
+  check(bases.leaked === 0 && bases.hurt && bases.fieldOk, `WW2 bases: attackers march on the HQ and fight it (hurt ${bases.hurt}, ${bases.leaked} leaked)`);
+  check(bases.building && bases.built && bases.zone, `WW2 bases: emplacements take time to build (${bases.building} → ${bases.built}), none on the enemy's ground (${bases.zone})`);
+  check(bases.won, 'WW2 bases: destroying the enemy headquarters wins');
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {

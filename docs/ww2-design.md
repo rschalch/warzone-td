@@ -155,6 +155,11 @@ Germany vs Soviet Union, Soviet Union vs Germany, Germany vs Allies (Normandy), 
 Bulge), Allies vs Japan (Guadalcanal), Japan vs Allies (Iwo Jima). Phase 7 (the campaign) is done: twelve battles in `src/game/battles.ts`.
 Since then: units dig in, gain veterancy and lay mines; infantry climb dragon's teeth; WW2 commander abilities
 (fire mission, hold the line, recon flight); faction music from public-domain period tunes; the AI partner plays WW2.
+Then: **bases**. Both sides have a headquarters: ours where the routes end (the attackers march on it and stay to
+fight it, nothing leaks), theirs with gun positions at the entry. Skirmish: the waves never stop, only an HQ's fall
+ends the game; battles can also be won by holding out. Fortified targets take damage by (pen/armour)², the enemy
+rebuilds lost guns and repairs its HQ when left alone, emplacements take time to build, infantry throw grenades.
+German marching songs (Erika, Westerwaldlied, Horst-Wessel-Lied) transcribed from the scores on Wikipedia.
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs

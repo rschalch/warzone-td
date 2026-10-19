@@ -162,6 +162,44 @@ function decide(sim: Sim, built: Map<number, number>): void {
   if (bestPos && sim.exec({ t: 'place', type, col: bestPos[0], row: bestPos[1] })) built.set(type, (built.get(type) ?? 0) + 1);
 }
 
+/** Tries `type` on cells around (x, y) at distance `d`; true if it was built. */
+function placeAround(sim: Sim, type: number, x: number, y: number, d: number, built: Map<number, number>): boolean {
+  for (let k = 0; k < 24; k++) {
+    const a = (k * 2 * Math.PI) / 24 + 0.13 * sim.wave;
+    const c = Math.floor((x + Math.cos(a) * d) / TILE) - 1;
+    const row = Math.floor((y + Math.sin(a) * d) / TILE) - 1;
+    if (sim.placeStatus(type, c, row) !== 'ok') continue;
+    if (sim.exec({ t: 'place', type, col: c, row })) {
+      built.set(type, (built.get(type) ?? 0) + 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * WW2: the waves only stop when a headquarters falls, so the bot takes the enemy's: Fire Missions
+ * and the super-weapon on it, and a few howitzers within reach once the defence can spare them.
+ */
+function offensive(sim: Sim, built: Map<number, number>): void {
+  if (sim.gSlot[0] < 0) return;
+  const hx = sim.gX[0];
+  const hy = sim.gY[0];
+  const h = sim.hero;
+  if (sim.wave >= 6 && h && h.downT <= 0 && h.cd[0] <= 0) sim.exec({ t: 'heroAbility', ability: 0, x: hx, y: hy });
+  for (const t of sim.towers) if (TOWERS[t.type].manual && !t.wreck && t.buildT <= 0 && sim.chargeLevel(t) >= 1) sim.exec({ t: 'fire', id: t.id, x: hx, y: hy });
+  if (sim.wave < 8) return;
+  const how = slot('lefh18');
+  const range = TOWERS[how].levels[0].range;
+  const near = sim.towers.filter((t) => t.type === how && Math.hypot(t.x - hx, t.y - hy) < range).length;
+  if (near < Math.min(5, 1 + (sim.wave - 8) / 3) && sim.money >= sim.cost(how) + 60 && placeAround(sim, how, hx, hy, range * 0.85, built)) return;
+  const sup = TOWERS.findIndex((t) => t.slot === 'super');
+  if (sim.wave >= 12 && sim.allowed(sup) && !sim.airLocked(sup) && !sim.towers.some((t) => t.type === sup) && sim.money >= sim.cost(sup) + 100) {
+    const base = sim.towers.find((t) => t.base);
+    if (base) placeAround(sim, sup, base.x, base.y, 120, built);
+  }
+}
+
 function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle): { wave: number; win: boolean; lives: number; towers: number } {
   const ww2 = battle ? { side: battle.side, foe: battle.foe, battle: battle.id } : WW2 ? { side: SIDE, foe: FOE } : undefined;
   const allowed = battle?.banned ? rulesetFor(ww2).towers.map((t, i) => (battle.banned!.includes(t.slot as never) ? -1 : i)).filter((i) => i >= 0) : undefined;
@@ -185,6 +223,7 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
       console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} wrecks ${sim.towers.filter((t) => t.wreck).length} hurt ${sim.towers.filter((t) => t.hp < sim.maxHp(t)).length} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
     }
     if (tick % 30 === 0 && !solo) decide(sim, built);
+    if (WW2 && tick % 30 === 15 && !solo) offensive(sim, built);
     if (partner && tick % PARTNER_EVERY === 0) {
       const t0 = performance.now();
       const cmd = partner.think(sim);
@@ -208,6 +247,7 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
   }
   if (thinks && process.env.VERBOSE) console.log(`  partner think: avg ${(thinkMs / thinks).toFixed(2)} ms, max ${thinkMax.toFixed(1)} ms, ${slow} over 16 ms, of ${thinks}`);
   if (process.env.VERBOSE) console.log('  leaks by kind', JSON.stringify([...leaks].map(([k, n]) => `${k}:${n}`)));
+  if (process.env.VERBOSE && WW2) console.log(`  enemy HQ ${Math.round(100 * sim.enemyHqHealth)}% at ${(sim.time | 0)}s`);
   return { wave: sim.wave, win: sim.victory, lives: sim.lives, towers: sim.towers.length };
 }
 

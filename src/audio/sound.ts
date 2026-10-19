@@ -229,12 +229,14 @@ export class Sound {
   constructor() {
     onSettings(() => this.applyVolumes());
     // browsers only start audio after a user gesture
+    // (and again whenever the system suspended or interrupted it: device changes, sleep, other apps)
     const unlock = () => {
       this.ensure();
-      if (this.ctx?.state === 'suspended') void this.ctx.resume();
+      this.wake();
     };
     window.addEventListener('pointerdown', unlock, { capture: true });
     window.addEventListener('keydown', unlock, { capture: true });
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && this.wake());
     // render the sample banks once startup (model baking) is out of the way
     setTimeout(() => this.renderBanks(), 1500);
   }
@@ -254,6 +256,11 @@ export class Sound {
       }));
     };
     this.worker.postMessage(0);
+  }
+
+  private wake(): void {
+    const st = this.ctx?.state as string | undefined;
+    if (st && st !== 'running' && st !== 'closed') void this.ctx!.resume().catch(() => undefined);
   }
 
   private ensure(): AudioContext | null {
@@ -560,6 +567,8 @@ export class Sound {
       return;
     }
     const bus = this.musicIn;
+    // after a stall (busy main thread, throttled timer) carry on from now instead of firing every missed note at once
+    if (this.nextStep < ctx.currentTime - 0.1) this.nextStep = ctx.currentTime + 0.05;
     while (this.nextStep < ctx.currentTime + 0.25) {
       const tr = this.playlist[this.track];
       const STEP = 60 / tr.bpm / 4;

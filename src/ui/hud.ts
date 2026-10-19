@@ -145,6 +145,7 @@ function penRows(lv: TowerLevel): string {
 export class Hud {
   private readonly money = $('money');
   private readonly lives = $('lives');
+  private readonly livesLabel = this.lives.previousElementSibling as HTMLElement;
   private readonly wave = $('wave');
   private readonly kills = $('kills');
   private readonly next = $<HTMLButtonElement>('next');
@@ -313,9 +314,11 @@ export class Hud {
 
   update(sim: Sim, ui: UiState): void {
     this.set(this.money, `$${Math.floor(sim.money)}`);
-    this.set(this.lives, `${sim.lives}`);
-    this.lives.classList.toggle('low', sim.lives <= 5);
-    this.set(this.wave, sim.endless ? `${sim.wave}` : `${sim.wave}/${sim.totalWaves}`);
+    // WW2: our headquarters' state (and the enemy's) in place of lives
+    this.set(this.lives, WW2 ? `${sim.lives}%<small> · enemy ${Math.ceil(100 * sim.enemyHqHealth)}%</small>` : `${sim.lives}`, WW2);
+    this.lives.classList.toggle('low', WW2 ? sim.lives <= 30 : sim.lives <= 5);
+    this.livesLabel.textContent = WW2 ? 'HQ' : 'Lives';
+    this.set(this.wave, sim.endless || sim.siege ? `${sim.wave}` : `${sim.wave}/${sim.totalWaves}`);
     this.set(this.kills, `${sim.totalKills}`);
 
     let label: string;
@@ -505,9 +508,11 @@ export class Hud {
       let condition = '';
       if (max) {
         const f = t.hp / max;
-        condition = `<tr><td>Condition</td><td>${t.wreck ? '<span class="bad">destroyed</span>' : `<span class="${f < 0.35 ? 'bad' : ''}">${Math.ceil(t.hp)} / ${max}</span>${t.supp > 0.3 ? ' · crew pinned' : ''}`}</td><td></td></tr>`;
+        condition = `<tr><td>Condition</td><td>${t.buildT > 0 ? `being built ${Math.floor(100 * (1 - t.buildT / t.build0))}%` : t.wreck ? '<span class="bad">destroyed</span>' : `<span class="${f < 0.35 ? 'bad' : ''}">${Math.ceil(t.hp)} / ${max}</span>${t.supp > 0.3 ? ' · crew pinned' : ''}`}</td><td></td></tr>`;
       }
       if (t.id === sim.objectiveId) special += `<div class="desc bad"><b>Objective: ${sim.battle?.objective?.name}.</b> If it falls, the battle is lost.</div>`;
+      else if (t.base) special += `<div class="desc bad"><b>Your headquarters.</b> The attackers march on it; if it falls, the battle is lost. Its garrison machine-guns anything close; upgrade it for more concrete.</div>`;
+      if (t.buildT > 0) special += `<div class="desc">Under construction: ready in <b>${Math.ceil(t.buildT)} s</b>. It can't fire until then.</div>`;
       if (t.wreck) {
         special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
       }
@@ -626,9 +631,9 @@ export class Hud {
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
         <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
         ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def)}</td></tr>` : ''}
-        <tr><td>Speed</td><td>${def.speed}</td></tr>
+        ${def.fixed ? (sim.eBuild[i] > 0 ? `<tr><td>Status</td><td>being built (${Math.ceil(sim.eBuild[i])} s)</td></tr>` : '') : `<tr><td>Speed</td><td>${def.speed}</td></tr>`}
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
-        <tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>
+        ${WW2 ? '' : `<tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>`}
         ${status ? `<tr><td>Status</td><td>${status}</td></tr>` : ''}
       </table>
       <div class="combo"><b>Counter</b> ${help.counter}</div>`;

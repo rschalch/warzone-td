@@ -5,6 +5,7 @@ import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
   MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, P_SHELL, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
+  ENEMY_ZONE,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
@@ -234,6 +235,8 @@ export class GameRenderer {
   private readonly enemyFrames: Texture[][];
   private readonly enemyTopTex: Texture[];
   private readonly enemyTop: number[];
+  /** WW2: emplacement bases under the positions of the enemy's base. */
+  private readonly enemyBaseTex: (Texture | null)[];
   private readonly turretFrames: Texture[][];
   private readonly turretTopTex: Texture[];
   /** Per tower type, per level (bases show the tower's rank). */
@@ -284,6 +287,7 @@ export class GameRenderer {
     this.enemyFrames = ENEMIES.map((e) => frames(e.tex));
     this.enemyTopTex = ENEMIES.map((e) => atlas[`${e.tex}_t`]);
     this.enemyTop = ENEMIES.map((e) => MODEL_TOP[e.tex]);
+    this.enemyBaseTex = ENEMIES.map((e) => (e.base ? atlas[`${e.base}_${view}`] : null));
     this.turretFrames = TOWERS.map((t) => (t.turret ? frames(t.turret) : []));
     this.turretTopTex = TOWERS.map((t) => (t.turret ? atlas[`${t.turret}_t`] : atlas.px));
     this.cornerTex = atlas[`basecorners_${view}`];
@@ -433,7 +437,7 @@ export class GameRenderer {
       const sy = this.p.y(m.x, m.y);
       if (!this.visible(sx, sy)) continue;
       const a = Math.min(1, m.t / 5) * 0.85;
-      if (iso) this.wreckLayer.push(this.enemyFrames[m.kind][dirIndex(m.a)], sx, sy, 0, 0.95, 0.85, 0x2e2a26, a);
+      if (iso) this.wreckLayer.push(this.enemyFrames[m.kind][dirIndex(m.a) % this.enemyFrames[m.kind].length], sx, sy, 0, 0.95, 0.85, 0x2e2a26, a);
       else this.wreckLayer.push(this.enemyTopTex[m.kind], sx, sy, m.a, 0.95, 0.95, 0x2e2a26, a);
     }
     this.wreckLayer.end();
@@ -687,7 +691,7 @@ export class GameRenderer {
       const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
       // a battle's objective: a pulsing red ring, so it is never lost from sight
-      if (t.id === s.objectiveId) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, time, (t.size * TILE * 1.6) / 128, (t.size * TILE * 1.6) / 128, 0xff5a3a, 0.55 + 0.3 * Math.sin(time * 3), 0.5);
+      if (t.id === s.objectiveId || t.base) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, time, (t.size * TILE * 1.6) / 128, (t.size * TILE * 1.6) / 128, 0xff5a3a, 0.55 + 0.3 * Math.sin(time * 3), 0.5);
       // the AI partner's towers stand in a cyan ring, like the commander's gold one
       if (t.owner) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, 0, (t.size * TILE * 1.25) / 128, (t.size * TILE * 1.25) / 128, 0x3ad8ff, 0.55, 0.5);
       if (def.turret && !WW2) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);
@@ -705,7 +709,8 @@ export class GameRenderer {
         // WW2: a camouflaged emplacement the enemy hasn't found yet is drawn under a green veil
         const hid = WW2 && s.towerHidden(t);
         const tint = hid ? 0xb8d0a0 : 0xffffff;
-        const ta = hid ? 0.8 : 1;
+        // under construction: the gun isn't in yet
+        const ta = t.buildT > 0 ? 0.35 : hid ? 0.8 : 1;
         if (this.iso) {
           const fr = this.turretFrames[t.type];
           this.world.push(fr[dirIndex(a) % fr.length], p.x(tx, ty), p.y(tx, ty), 0, sc, sc, tint, ta);
@@ -716,7 +721,14 @@ export class GameRenderer {
         }
       }
       const max = s.maxHp(t);
-      if (max && t.hp < max) {
+      if (t.buildT > 0) {
+        // construction progress
+        const f = 1 - t.buildT / t.build0;
+        const w = t.size * TILE * 0.8;
+        const by = sy - (this.iso ? 26 : t.size * TILE * 0.5 + 3);
+        this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
+        this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * f) / 4, 0.5, 0xffb040, 1, 0);
+      } else if (max && t.hp < max) {
         // WW2: damage taken; red when close to being knocked out
         const f = t.hp / max;
         const w = t.size * TILE * 0.8;
@@ -805,7 +817,17 @@ export class GameRenderer {
         this.groundFx.push(this.fxTex[FX_RING], x, y, 0, sc, sc, 0xd8f4ff, 0.45 * (1 - k), 0.5);
       }
     }
-    if (this.iso) {
+    const eb = this.enemyBaseTex[type];
+    if (eb) {
+      // a position of the enemy's base: dug in on its emplacement (see-through while it is being built)
+      const building = s.eBuild[i] > 0;
+      if (!this.iso) this.shadows.push(eb, x + 3, y + 4, 0, 1, 1, 0x000000, 0.35);
+      this.world.push(eb, sx, sy, 0, 1, 1, 0xffffff, 1);
+      if (ENEMIES[type].fixed === 'hq') this.groundFx.push(this.fxTex[FX_RING], x, y, time, (r * 3.2) / 128, (r * 3.2) / 128, 0xff5a3a, 0.55 + 0.3 * Math.sin(time * 3), 0.5);
+      const fr = this.enemyFrames[type];
+      const tex = this.iso ? fr[dirIndex(ang) % fr.length] : this.enemyTopTex[type];
+      this.world.push(tex, sx, sy, this.iso ? 0 : ang, 1, 1, tint, building ? 0.35 : 1);
+    } else if (this.iso) {
       const tex = this.enemyFrames[type][dirIndex(ang)];
       if (air) {
         // shadow on the ground, body at altitude with a gentle bob
@@ -1135,6 +1157,12 @@ export class GameRenderer {
     if (ov.placing >= 0 && ov.hoverCol > -2) {
       const def = TOWERS[ov.placing];
       const box = TILE * def.size;
+      // WW2: the enemy's base, where nothing can be built
+      if (WW2) {
+        for (let k = 0; k < s.gKind.length; k++) {
+          if (s.gKind[k] >= 0) g.circle(s.gX[k], s.gY[k], ENEMY_ZONE).fill({ color: 0xff3a3a, alpha: 0.05 }).stroke({ width: 1.5, color: 0xff5a5a, alpha: 0.35 });
+        }
+      }
       const status = s.placeStatus(ov.placing, ov.hoverCol, ov.hoverRow);
       const ok = status === 'ok' && s.money >= def.levels[0].cost;
       const preview = s.preview(ov.placing, ov.hoverCol, ov.hoverRow);

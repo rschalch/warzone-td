@@ -183,8 +183,19 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   (`unitVet()`, `VET_KILLS`), and engineers lay AT mines (`unitMines`, `uLay`, paid like a placed mine).
 - Commander abilities in WW2 are `WW2_ABILITIES` (read them through `heroAbilities()`): Fire Mission (shells as
   `strikes`), Hold the Line (rally + clears suppression), Recon Flight (`eMarkT`: revealed, +20% damage taken).
+- The bot attacks the enemy HQ (`offensive()` in bot.ts: Fire Missions, the super-weapon, howitzers within reach).
 - AI partner: `Partner.chooseWW2()` picks arsenal slots by the next waves' armour / aircraft / infantry share, and
   rebuilds its own rubble first.
+- Bases (all WW2 games): `Sim.setUpBases()` puts our headquarters (the `hq` slot, `Tower.base` = its hp multiplier,
+  `bases[route]` = its id; a battle's objective serves instead) near each exit and makes the cells round it the
+  route's goal (`route.exit` is rewritten in place, so the flow fields march on it); attackers that get there hold
+  and fight, aircraft bomb it and fly home (`overBase`), nothing leaks. `lives` shows its health in %. The enemy's
+  base is fixed attackers (`EnemyDef.fixed`: 'hq' | 'mg' | 'at', appended to every army by `garrison()` in ww2.ts)
+  at the entries, tracked in the `g*` arrays (slot 0 = their HQ) and excluded from wave-clear checks (`attackers`,
+  `garrisonAlive`); lost guns are rebuilt (`GARRISON_REBUILD`, then `eBuild`), positions left alone repair
+  themselves, and fortified targets take damage by (pen/armour)² (`ballistics`). Skirmish (`siege`): waves never stop
+  and only their HQ's fall wins; a battle can also be won by holding out. New and rebuilt emplacements take
+  `buildTime(cost)` to finish (`Tower.buildT`, no firing meanwhile); infantry throw grenades at emplacements next to them.
 - Music: each faction's public-domain tunes (`src/audio/anthems.ts`, `ANTHEMS`) replace the score in its games
   (`sound.setFaction(side)`). Tunes are bars of `note:length` in 16ths with chord symbols; `Track.steps` sets the
   metre (12 for 3/4 and 6/8, 18 for 9/8).

@@ -110,6 +110,41 @@ const VALKYRIES = piece('Walkürenritt (Wagner)', 108, 0, NINE,
    E5:3 C#5:1 E5:2 G5:9 E5:3 | C#5:3 A4:1 C#5:2 E5:9 C#5:3 | B4:3 F#4:1 B4:2 D5:9 F#5:3 | F#5:12 F#4:6`,
   'Bm | Bm | D | D | A7 | A7 | Bm | F#', TROMBONES, { leadShift: -12, battleLead: HORNS, loops: 4 });
 
+/**
+ * Herms Niel, "Erika" (1938), the Wehrmacht's marching song, for a men's choir: the rests are where
+ * the drums answer. Transcribed from the score in the German Wikipedia article.
+ */
+const ERIKA = piece('Erika (Niel)', 116, 0, COMMON,
+  `B3:6 C4:2 D4:4 D4:4 | D4:4 G4:4 G4:4 B4:4 | B4:6 A4:2 G4:4 r:4 | r:8 F#4:4 G4:4 | A4:4 r:12 |
+   B4:6 A4:2 G4:4 r:4 | r:8 B3:6 C4:2 | D4:4 D4:4 D4:4 G4:4 | G4:4 B4:4 B4:6 A4:2 | G4:4 r:12 |
+   F#4:4 G4:4 A4:4 r:4 | r:8 B4:6 A4:2 | G4:4 r:12 |
+   D4:6 G4:2 F#4:4 F#4:4 | F#4:4 F#4:4 E4:4 F#4:4 | G4:4 r:12 | F#4:6 G4:2 A4:4 A4:4 | A4:4 A4:4 D5:6 C5:2 | B4:4 r:12`,
+  'G | G | G | G D7 | D7 | G | G | G | G | G | D7 | D7 G | G | G D7 | D7 | G | D7 | D7 | G', MEN,
+  { battleLead: TRUMPET });
+
+/** "Westerwaldlied" (Neuhäuser, 1932), a marching song of the Wehrmacht, for the brass band. From the score on Wikipedia. */
+const WESTERWALD = piece('Westerwaldlied', 116, 0, COMMON,
+  `C4:6 C4:2 D4:4 C4:4 | F4:4 G4:4 A4:8 | D4:6 D4:2 G4:4 A4:4 | Bb4:4 D4:4 D4:8 |
+   G4:6 G4:2 G4:4 G4:4 | F4:4 A4:4 A4:6 A4:2 | C5:4 C5:4 C5:4 Bb4:4 | A4:12 r:4 |
+   C4:12 F4:4 | A4:12 F4:4 | Bb4:4 D5:4 F5:4 D5:4 | C5:4 C5:3 C5:1 F5:2 C5:2 A4:2 F4:2 |
+   A4:3 A4:1 A4:3 A4:1 A4:4 A4:2 A4:2 | C5:6 Bb4:2 Bb4:6 G4:2 | G4:4 A4:4 Bb4:4 G4:4 | F4:6 E4:2 E4:4 C4:4 |
+   C4:6 F4:2 A4:6 G4:2 | F4:12 r:4`,
+  'F | F | Gm D7 | Gm C7 | C7 | F | F C7 | F | F | F | Bb | F | F | F C7 | D7 Gm | F C7 | F C7 | F', TRUMPET,
+  { battleLead: TROMBONES });
+
+/**
+ * "Horst-Wessel-Lied" (1929, to an older folk tune), the Nazi party's anthem, for the brass band:
+ * the verse, then the repeated second half. From the score in the German Wikipedia article.
+ * (Banned from public performance in Germany and Austria.)
+ */
+const HORST_WESSEL = piece('Horst-Wessel-Lied', 80, 0, COMMON,
+  `r:4 G4:4 G4:4 F4:4 | E4:12 G4:4 | C5:6 B4:2 A4:4 E4:4 | G4:8 F4:4 r:4 | r:4 F4:4 F4:4 E4:4 | D4:12 G4:4 | G4:6 G4:2 A4:4 G4:4 |
+   E4:4 r:8 G4:4 | E4:4 G4:4 C5:6 E5:2 | E5:4 E5:4 D5:4 C5:4 | B4:4 C5:4 A4:8 | A4:4 r:8 D5:4 | D5:4 C5:4 G4:8 | G4:4 C5:4 B4:6 B4:2 |
+   A4:4 B4:4 C5:4 r:4 | r:4 G4:4 E4:4 G4:4 | C5:6 E5:2 E5:4 E5:4 | D5:4 C5:4 B4:4 C5:4 | A4:8 A4:4 r:4 | r:4 D5:4 D5:4 C5:4 |
+   G4:12 C5:4 | B4:6 B4:2 A4:4 B4:4 | C5:4 r:12`,
+  'C G7 | C | Am A7 | Dm | F Am | G | G | C | C | C G7 | C F | F Dm | D7 C | C G7 | G7 C | C | C | G7 C | F | Dm D7 | C | G7 | C',
+  TRUMPET, { battleLead: HORNS });
+
 /** Degeyter, "L'Internationale" (1888): the anthem of the Soviet Union until 1944, for a men's choir. */
 const INTERNATIONALE = piece('The Internationale (Degeyter)', 84, -2, COMMON,
   `C5:6 B4:2 D5:2 C5:2 G4:2 E4:2 | A4:8 F4:4 F4:4 | D5:6 C5:2 B4:2 A4:2 G4:2 F4:2 | E4:12 G4:4 |
@@ -153,7 +188,7 @@ const SAKURA = piece('Sakura Sakura (folk)', 76, 0, COMMON,
 
 /** The music of each WW2 faction (the side the player defends with). */
 export const ANTHEMS: Record<string, Track[]> = {
-  de: [DEUTSCHLAND, VALKYRIES],
+  de: [DEUTSCHLAND, ERIKA, WESTERWALD, HORST_WESSEL, VALKYRIES],
   su: [INTERNATIONALE, KOROBEINIKI],
   us: [BANNER, YANKEE],
   jp: [KOJO, SAKURA],

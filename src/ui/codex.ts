@@ -2,7 +2,7 @@
 // and how to use or counter it.
 
 import { ENEMIES, WW2, WW2_FOE, WW2_SIDE, type TowerDef, type TowerKind } from '../game/defs';
-import { ARMIES, ARSENALS, type Faction } from '../game/ww2';
+import { ARMIES, ARSENALS, GARRISON_HELP, type Faction } from '../game/ww2';
 
 export const TOWER_HELP: Record<TowerKind, string> = {
   gun: 'Fires a fast stream of bullets at one unit. Cheap enough to double as maze walls, but armour soaks most of each small bullet, so it struggles against tanks and the Mammoth. Hits air.',
@@ -94,4 +94,8 @@ const CAMO_HELP = ' <i>Camouflaged:</i> the enemy only finds it close up (recon 
 export const towerHelp = (def: TowerDef): string =>
   (WW2 ? (ARSENALS[WW2_SIDE as Faction]?.help[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
 export const enemyHelp = (kind: number): UnitHelp =>
-  (WW2 ? ARMIES[WW2_FOE as Faction]?.help[kind] : ENEMY_HELP[kind]) ?? { text: ENEMIES[kind]?.name ?? '', counter: '' };
+  (WW2 ? ww2Help(kind) : ENEMY_HELP[kind]) ?? { text: ENEMIES[kind]?.name ?? '', counter: '' };
+const ww2Help = (kind: number): UnitHelp | undefined => {
+  const army = ARMIES[WW2_FOE as Faction];
+  return army && (army.help[kind] ?? GARRISON_HELP[kind - army.enemies.length]);
+};

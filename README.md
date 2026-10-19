@@ -27,9 +27,13 @@ either; aircraft ignore both.
 
 ## WW2 mode (branch `ww2`)
 The same game with the Second World War's weapons and realistic ratios. Pick a side — **Germany**, the **Soviet
-Union**, the **Western Allies** or **Japan** — and hold the line against another side's army, or fight the
+Union**, the **Western Allies** or **Japan** — and fight another side's army, or fight the
 **WW2 Campaign**: twelve historical battles from Moscow 1941 to the Seelow Heights 1945, each on its own map.
 
+- **Two bases**: your headquarters stands where the routes end and theirs where their columns enter. Attackers
+  march on your HQ and fight there (nothing slips past); the waves only stop when one headquarters falls. Their
+  base has machine-gun nests and anti-tank guns, rebuilds what you destroy, and repairs its HQ if you let up.
+  Emplacements take time to build and rebuild. In the campaign, holding out to the last wave also wins.
 - **Armour and penetration**: every gun has penetration in mm that drops with range, every vehicle has front,
   side, rear and top armour. Rifles and MGs bounce off tanks; an anti-tank gun kills a T-34 from the side and
   bounces off its front. Shots can break a track or blow the ammunition. Machine guns pin infantry down.
@@ -45,8 +49,8 @@ Union**, the **Western Allies** or **Japan** — and hold the line against anoth
   assault, waves adapt to your defence. Banzai charges and kamikazes for Japan.
 - **Super-weapons**: Stuka and V-2, Il-2 regiment and the B-4 howitzer, P-47s and Little Boy, Vals and the
   Type 98 spigot mortar.
-- **Music** of each side, arranged from period tunes in the public domain: Haydn's *Lied der Deutschen* and the
-  *Ride of the Valkyries*; *The Internationale* and *Korobeiniki*; *The Star-Spangled Banner* and *Yankee
+- **Music** of each side, arranged from period tunes: Haydn's *Lied der Deutschen*, *Erika*, the
+  *Westerwaldlied*, the *Horst-Wessel-Lied* and the *Ride of the Valkyries*; *The Internationale* and *Korobeiniki*; *The Star-Spangled Banner* and *Yankee
   Doodle*; *Kōjō no Tsuki* and *Sakura Sakura*.
 - **Co-op with AI** works in WW2 and in the campaign.
 

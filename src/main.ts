@@ -518,9 +518,17 @@ const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 /** "Pavlov's House has fallen" when a battle was lost with its objective. */
 function objectiveLost(s: Sim): string | null {
   const o = s.battle?.objective;
-  if (!o || !s.objectiveId) return null;
-  const t = s.tower(s.objectiveId);
-  return t?.wreck ? `${o.name} has fallen (wave ${s.wave})` : null;
+  if (o && s.objectiveId) {
+    const t = s.tower(s.objectiveId);
+    if (t?.wreck) return `${o.name} has fallen (wave ${s.wave})`;
+  }
+  return s.towers.some((t) => t.base > 0 && t.wreck) ? `Your headquarters has fallen (wave ${s.wave})` : null;
+}
+
+/** How a WW2 game was won: their headquarters taken, or held until the end. */
+function winLine(s: Sim): string {
+  if (s.config.ww2 && s.enemyHqHealth <= 0) return `The enemy headquarters is destroyed (wave ${s.wave})`;
+  return `${s.battle ? `${s.battle.name} held! ` : ''}All ${s.totalWaves} waves repelled`;
 }
 
 async function showEnd(win: boolean): Promise<void> {
@@ -530,7 +538,7 @@ async function showEnd(win: boolean): Promise<void> {
   const replayMode = session!.mode === 'replay';
   sound.play(win ? 'victory' : 'defeat');
   const finalWin = win || endlessFrom > 0;
-  const score = computeScore(cfg, s.wave, s.totalKills, s.lives, finalWin);
+  const score = computeScore(cfg, s.wave, s.totalKills, cfg.ww2 ? s.lives / 5 : s.lives, finalWin);
   let medals = 0;
   if (!replayMode) {
     const entry = { score, wave: s.wave, kills: s.totalKills, win: finalWin, difficulty: cfg.difficulty, modifiers: cfg.modifiers, date: new Date().toISOString().slice(0, 10) };
@@ -544,7 +552,7 @@ async function showEnd(win: boolean): Promise<void> {
     <div class="card" style="max-width:460px;text-align:center">
       <h1>${replayMode ? 'REPLAY ENDED' : win ? 'VICTORY' : endlessFrom ? 'OVERRUN' : 'DEFEAT'}</h1>
       ${s.battle ? `<h2>${esc(s.battle.name)}</h2>` : ''}
-      <p>${win ? `${s.battle ? `${s.battle.name} held! ` : ''}All ${s.totalWaves} waves repelled` : objectiveLost(s) ?? `Wave ${s.wave}`} · ${s.totalKills} kills · ${DIFFICULTIES[cfg.difficulty].name}</p>
+      <p>${win ? winLine(s) : objectiveLost(s) ?? `Wave ${s.wave}`} · ${s.totalKills} kills · ${DIFFICULTIES[cfg.difficulty].name}</p>
       <p class="score">Score <b>${score}</b>${rank && !replayMode ? ` · #${rank} on this map` : ''}</p>
       ${medals ? `<p class="medal">+${medals} ★ research medals</p>` : ''}
       <div class="actions" style="justify-content:center;flex-wrap:wrap">

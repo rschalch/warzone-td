@@ -60,6 +60,10 @@ export interface EnemyDef {
   spot?: number;
   /** WW2: a banzai charge — suppression doesn't slow it down. */
   banzai?: boolean;
+  /** WW2: a position of the enemy's base (it never moves): its headquarters, or a gun guarding it. */
+  fixed?: 'hq' | 'mg' | 'at';
+  /** WW2: emplacement base drawn under a fixed position (atlas name without the view suffix). */
+  base?: string;
 }
 
 /** A WW2 attacker's weapon. Same ballistics as the defence: `pen` against fortification / armour. */
