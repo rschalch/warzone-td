@@ -196,9 +196,11 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   themselves, and fortified targets take damage by (pen/armour)² (`ballistics`). Skirmish (`siege`): waves never stop
   and only their HQ's fall wins; a battle can also be won by holding out. New and rebuilt emplacements take
   `buildTime(cost)` to finish (`Tower.buildT`, no firing meanwhile); infantry throw grenades at emplacements next to them.
-- Music: each faction's public-domain tunes (`src/audio/anthems.ts`, `ANTHEMS`) replace the score in its games
-  (`sound.setFaction(side)`). Tunes are bars of `note:length` in 16ths with chord symbols; `Track.steps` sets the
-  metre (12 for 3/4 and 6/8, 18 for 9/8).
+- Music: each faction plays real recordings, public domain on Wikimedia Commons, in `public/music/<faction>/`
+  (MP3, loudness-matched). `node scripts/fetch-music.mjs` downloads and converts them and writes
+  `public/music/credits.json` (the playlist `sound.ts` reads) and `CREDITS.md`; add a track by adding a line there.
+  `sound.setFaction(side)` streams them through an `<audio>` element into the music bus (the service worker leaves
+  `/music/` to the network). If they can't load (offline), the synth arrangements in `src/audio/anthems.ts` play.
 
 ## Balance notes
 

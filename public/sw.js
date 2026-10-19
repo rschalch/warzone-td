@@ -1,6 +1,6 @@
 // Offline support: cache-first for the hashed build assets, network-first for the page itself
 // (so a new deploy shows up on the next online visit).
-const CACHE = 'wztd-v3';
+const CACHE = 'wztd-v4';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './manifest.webmanifest', './icon.svg'])));
@@ -16,6 +16,8 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== location.origin) return;
+  // music is streamed in ranges: leave it to the network and the HTTP cache
+  if (url.pathname.includes('/music/')) return;
   const isPage = req.mode === 'navigate';
   e.respondWith(
     isPage

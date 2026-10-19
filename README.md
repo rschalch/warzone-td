@@ -49,9 +49,9 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
   assault, waves adapt to your defence. Banzai charges and kamikazes for Japan.
 - **Super-weapons**: Stuka and V-2, Il-2 regiment and the B-4 howitzer, P-47s and Little Boy, Vals and the
   Type 98 spigot mortar.
-- **Music** of each side, arranged from period tunes: Haydn's *Lied der Deutschen*, *Erika*, the
-  *Westerwaldlied*, the *Horst-Wessel-Lied* and the *Ride of the Valkyries*; *The Internationale* and *Korobeiniki*; *The Star-Spangled Banner* and *Yankee
-  Doodle*; *Kōjō no Tsuki* and *Sakura Sakura*.
+- **Music** of each side: period recordings in the public domain (Wikimedia Commons, credits in
+  `public/music/CREDITS.md`): German marches and the Horst-Wessel-Lied, Soviet songs and anthems, American
+  military bands, Japanese naval marches.
 - **Co-op with AI** works in WW2 and in the campaign.
 
 ## Modes

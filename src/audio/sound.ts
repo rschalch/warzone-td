@@ -204,13 +204,75 @@ export class Sound {
   private playlist: Track[] = TRACKS;
   private faction = '';
 
-  /** WW2: play the tunes of the faction the player defends with (none: the score). */
+  /** WW2: the recordings of the faction's music (public/music), played instead of the score; empty while none. */
+  private records: Recording[] = [];
+  private record = 0;
+  private recordFails = 0;
+  private player: HTMLAudioElement | null = null;
+
+  /**
+   * WW2: play the music of the faction the player defends with (none: the score). Its recordings
+   * if they load; the synth arrangements of its tunes otherwise (offline).
+   */
   setFaction(f?: string): void {
     if ((f ?? '') === this.faction) return;
     this.faction = f ?? '';
     this.playlist = (f && ANTHEMS[f]) || TRACKS;
     this.track = this.playlist === TRACKS ? this.savedTrack() : 0;
     this.step = 0;
+    this.records = [];
+    this.player?.pause();
+    this.player?.removeAttribute('src');
+    if (f) void this.loadRecords(f);
+  }
+
+  private async loadRecords(f: string): Promise<void> {
+    try {
+      credits ??= fetch('music/credits.json').then((r) => (r.ok ? r.json() : {}));
+      const list = (await credits)[f] ?? [];
+      if (this.faction !== f || !list.length) return;
+      this.records = list;
+      this.recordFails = 0;
+      this.record = (Number(localStorage.getItem(`wz-record-${f}`)) || 0) % list.length;
+      this.playRecord();
+    } catch {
+      // offline: the synth arrangements play
+    }
+  }
+
+  /** Starts the current recording (once audio is unlocked and music is on). */
+  private playRecord(): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicOn || !this.records.length) return;
+    if (!this.player) {
+      const a = new Audio();
+      a.preload = 'auto';
+      // one after another, with a breath in between
+      a.addEventListener('ended', () => this.nextRecord(1.5));
+      a.addEventListener('error', () => {
+        if (!a.getAttribute('src')) return;
+        if (++this.recordFails >= this.records.length) this.records = []; // none load: back to the synth
+        else this.nextRecord(0.5);
+      });
+      ctx.createMediaElementSource(a).connect(this.musicBus);
+      this.player = a;
+    }
+    const r = this.records[this.record];
+    if (!this.player.getAttribute('src')?.endsWith(r.file)) this.player.src = `music/${r.file}`;
+    void this.player.play().catch(() => undefined);
+  }
+
+  private nextRecord(delay: number): void {
+    const f = this.faction;
+    if (!this.records.length) return;
+    this.record = (this.record + 1) % this.records.length;
+    try {
+      localStorage.setItem(`wz-record-${f}`, String(this.record));
+    } catch {
+      /* private mode */
+    }
+    this.player?.removeAttribute('src');
+    setTimeout(() => this.faction === f && this.playRecord(), delay * 1000);
   }
 
   private savedTrack(): number {
@@ -223,6 +285,7 @@ export class Sound {
 
   /** The piece playing now (for the HUD). */
   get trackName(): string {
+    if (this.records.length) return this.records[this.record].name;
     return this.playlist[this.track]?.name ?? '';
   }
 
@@ -300,7 +363,10 @@ export class Sound {
       this.musicIn.connect(this.musicBus);
       this.musicIn.connect(mv).connect(v2).connect(this.musicBus);
       this.applyVolumes();
-      if (this.musicOn) this.startMusic();
+      if (this.musicOn) {
+        this.startMusic();
+        this.playRecord();
+      }
     } catch {
       this.ctx = null;
     }
@@ -495,8 +561,13 @@ export class Sound {
 
   setMusic(on: boolean): void {
     this.musicOn = on;
-    if (on) this.startMusic();
-    else this.stopMusic();
+    if (on) {
+      this.startMusic();
+      this.playRecord();
+    } else {
+      this.stopMusic();
+      this.player?.pause();
+    }
   }
 
   private startMusic(): void {
@@ -564,6 +635,11 @@ export class Sound {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running' || settings.music <= 0 || !this.banks.has('m_taiko')) {
       if (ctx) this.nextStep = ctx.currentTime + 0.1;
+      return;
+    }
+    // a recording is playing instead
+    if (this.records.length) {
+      this.nextStep = ctx.currentTime + 0.1;
       return;
     }
     const bus = this.musicIn;
@@ -640,5 +716,12 @@ export class Sound {
     }
   }
 }
+
+/** A WW2 recording, as listed in public/music/credits.json (written by scripts/fetch-music.mjs). */
+interface Recording {
+  file: string;
+  name: string;
+}
+let credits: Promise<Record<string, Recording[]>> | undefined;
 
 export const sound = new Sound();
