@@ -1,6 +1,6 @@
 import {
   COLS, COMBOS, DT, ENEMIES, MAP_H, MAP_W, MAX_ENEMIES, MAX_FX, MAX_PROJECTILES, ROWS, SELL_RATIO,
-  START_MONEY, TILE, TOTAL_WAVES, TOWERS, WAVE_BONUS, WAVE_GAP, WW2, buildWave, hpScale, rewardScale, towerIndex,
+  START_MONEY, TILE, TOTAL_WAVES, TOWERS, UNITS, WAVE_BONUS, WAVE_GAP, WW2, buildWave, hpScale, rewardScale, towerIndex,
   type EnemyDef, type EnemyGun, type Role, type SpawnGroup, type TowerLevel,
 } from './defs';
 import { setRuleset } from './rules';
@@ -122,6 +122,9 @@ export interface Tower {
   hp: number;
   wreck: boolean;
   supp: number;
+  /** WW2 barracks / motor pool: the unit being trained (-1 none) and s left. */
+  trainKind: number;
+  trainT: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -161,6 +164,7 @@ export const EV_DENY = 14;
 export const EV_ESHOT = 15; // an attacker fires; a = weapon (ENEMY_FX index)
 export const EV_WRECK = 16; // an emplacement destroyed; a = tower type
 export const EV_DOWN = 17; // the commander is wounded
+export const EV_USHOT = 18; // a defender unit fires; a = unit kind
 export const EV_SIZE = 5;
 
 export const ITEMS = [
@@ -226,6 +230,24 @@ export const MAX_ROCKETS = 512;
 const REPAIR_SHARE = 0.4;
 /** s the wounded commander is out of action. */
 const HERO_DOWN = 20;
+/** WW2 defender units: slots, cells of path each can hold, stances. */
+export const MAX_UNITS = 192;
+export const UNIT_PATH = 160;
+export const ST_HOLD = 0;
+export const ST_GUARD = 1;
+export const ST_HUNT = 2;
+export const ST_AMBUSH = 3;
+export const STANCES = [
+  { name: 'Hold', desc: 'Stay put and fire at whatever comes into range.' },
+  { name: 'Guard', desc: 'Engage enemies near its post, then return to it.' },
+  { name: 'Hunt', desc: 'Chase any enemy it can see, anywhere.' },
+  { name: 'Ambush', desc: 'Hidden while still; holds fire until a close or flank shot, which hits harder.' },
+];
+/** How far a Guard leaves its post to chase, and how far a Hunt looks for prey (px). */
+const GUARD_LEASH = 150;
+const HUNT_RANGE = 420;
+/** Defender ids for units: -(UNIT_ID0 + slot). */
+const UNIT_ID0 = 10;
 
 function angleDiff(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -363,6 +385,45 @@ export class Sim {
   private readonly rkDmg = new Float32Array(MAX_ROCKETS);
   rkCount = 0;
 
+  // ------------------------------------------------------------ WW2: defender units (stable slots)
+  readonly uAlive = new Uint8Array(MAX_UNITS);
+  readonly uUid = new Int32Array(MAX_UNITS);
+  readonly uKind = new Uint8Array(MAX_UNITS);
+  readonly uAir = new Uint8Array(MAX_UNITS);
+  readonly uX = new Float32Array(MAX_UNITS);
+  readonly uY = new Float32Array(MAX_UNITS);
+  readonly uPx = new Float32Array(MAX_UNITS);
+  readonly uPy = new Float32Array(MAX_UNITS);
+  readonly uAng = new Float32Array(MAX_UNITS);
+  readonly uPang = new Float32Array(MAX_UNITS);
+  readonly uHp = new Float32Array(MAX_UNITS);
+  private readonly uCd = new Float32Array(MAX_UNITS);
+  readonly uTgt = new Int32Array(MAX_UNITS).fill(-1); // enemy slot
+  private readonly uTuid = new Int32Array(MAX_UNITS);
+  readonly uStance = new Uint8Array(MAX_UNITS);
+  readonly uPostX = new Float32Array(MAX_UNITS);
+  readonly uPostY = new Float32Array(MAX_UNITS);
+  readonly uPath = new Int32Array(MAX_UNITS * UNIT_PATH);
+  readonly uPathLen = new Uint16Array(MAX_UNITS);
+  readonly uPathI = new Uint16Array(MAX_UNITS);
+  private readonly uGoal = new Int32Array(MAX_UNITS).fill(-1);
+  readonly uOrder = new Uint8Array(MAX_UNITS); // walking a player's order
+  readonly uSupp = new Float32Array(MAX_UNITS);
+  readonly uLife = new Float32Array(MAX_UNITS); // aircraft: s of patrol left
+  readonly uSeenT = new Float32Array(MAX_UNITS); // s it stays revealed after firing
+  readonly uKills = new Int32Array(MAX_UNITS);
+  readonly uTask = new Int32Array(MAX_UNITS).fill(-1); // engineers: tower id; medics: unit slot (-2 the commander)
+  nextUnitUid = 1;
+  /** Stands in as the damage source for unit fire (id -2), and as the aim point of shots at a unit. */
+  private readonly unitSrc: Tower = Sim.proxy(-2);
+  private readonly aimProxy: Tower = Sim.proxy(-UNIT_ID0);
+  private proxyRange = 0;
+  private proxySupp = 0;
+  /** Bumped when units appear or die (UI resync). */
+  unitVersion = 0;
+  private readonly bfsPrev = new Int32Array(COLS * ROWS);
+  private readonly bfsQ = new Int32Array(COLS * ROWS);
+
   // ------------------------------------------------------------ visual effects (swap-remove)
   readonly fTex = new Uint8Array(MAX_FX);
   readonly fAdd = new Uint8Array(MAX_FX); // additive blend
@@ -418,6 +479,14 @@ export class Sim {
   private readonly qpool: Int32Array[] = [];
   private qdepth = 0;
   private readonly chainHit = new Int32Array(16);
+
+  private static proxy(id: number): Tower {
+    return {
+      id, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x: 0, y: 0, cd: 0, angle: 0, prevAngle: 0, mode: 3,
+      beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
+    };
+  }
 
   /** Builds the map (which sets the live map size) before any grid-sized arrays exist. */
   static create(config: GameConfig): Sim {
@@ -498,7 +567,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -540,6 +609,8 @@ export class Sim {
       t.hp ??= 0;
       t.wreck ??= false;
       t.supp ??= 0;
+      t.trainKind ??= -1;
+      t.trainT ??= 0;
       sim.towers.push(t);
       sim.towerById.set(t.id, t);
     }
@@ -579,6 +650,12 @@ export class Sim {
     mix(this.liveCount);
     mix(this.towers.length);
     for (const t of this.towers) mix(t.hp);
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u]) continue;
+      mix(this.uX[u]);
+      mix(this.uY[u]);
+      mix(this.uHp[u]);
+    }
     for (let n = 0; n < this.liveCount; n++) {
       const i = this.live[n];
       mix(this.eX[i]);
@@ -654,6 +731,24 @@ export class Sim {
       case 'gate': {
         const t = this.towerById.get(cmd.id);
         return !!t && !t.wreck && this.toggleGate(t) === 'ok';
+      }
+      case 'train': {
+        const t = this.towerById.get(cmd.id);
+        return !!t && this.train(t, cmd.unit);
+      }
+      case 'unitMove':
+        return this.unitMove(cmd.ids, cmd.x, cmd.y);
+      case 'unitStance': {
+        let any = false;
+        for (const id of cmd.ids) {
+          const u = this.unitSlot(id);
+          if (u < 0 || UNITS[this.uKind[u]].air) continue;
+          this.uStance[u] = cmd.stance;
+          this.uPostX[u] = this.uX[u];
+          this.uPostY[u] = this.uY[u];
+          any = true;
+        }
+        return any;
       }
       case 'repair': {
         let any = false;
@@ -803,7 +898,7 @@ export class Sim {
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
-      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0,
+      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -919,7 +1014,11 @@ export class Sim {
    * (penetration against fortification; blasts and bombs from above find the open top). The crew is
    * suppressed either way; concrete keeps most of that off.
    */
-  private hitDefender(id: number, dmg: number, pen: number, supp: number, top: boolean): void {
+  private hitDefender(id: number, dmg: number, pen: number, supp: number, top: boolean, sx = 0, sy = 0): void {
+    if (id <= -UNIT_ID0) {
+      this.hitUnit(-id - UNIT_ID0, dmg, pen, supp, top, sx, sy);
+      return;
+    }
     if (id === -1) {
       const h = this.hero;
       if (!h || h.downT > 0) return;
@@ -950,6 +1049,15 @@ export class Sim {
   /** Where defender `id` stands (the commander or a tower), or null if it's gone or can't be shot at. */
   private defenderAt(id: number): Tower | null {
     if (id === -1) return this.hero && this.hero.downT <= 0 ? this.hero.src : null;
+    if (id <= -UNIT_ID0) {
+      const u = -id - UNIT_ID0;
+      if (u >= MAX_UNITS || !this.uAlive[u]) return null;
+      const a = this.aimProxy;
+      a.id = id;
+      a.x = this.uX[u];
+      a.y = this.uY[u];
+      return a;
+    }
     const t = this.towerById.get(id);
     return t && !t.wreck && t.hp > 0 ? t : null;
   }
@@ -965,7 +1073,7 @@ export class Sim {
     let best = 0;
     let bestScore = -Infinity;
     for (const t of this.towers) {
-      if (t.wreck || t.hp <= 0) continue;
+      if (t.wreck || t.hp <= 0 || g.air) continue;
       const d2 = (t.x - x) ** 2 + (t.y - y) ** 2;
       const reach = g.range + t.size * TILE * 0.5;
       if (d2 > reach * reach) continue;
@@ -979,8 +1087,21 @@ export class Sim {
         best = t.id;
       }
     }
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u] || (this.uAir[u] === 1) !== !!g.air || this.unitHidden(u)) continue;
+      const d2 = (this.uX[u] - x) ** 2 + (this.uY[u] - y) ** 2;
+      if (d2 > r2) continue;
+      const ud = UNITS[this.uKind[u]];
+      let s = -Math.sqrt(d2);
+      if (g.fx === 'tank') s += ud.arm ? 110 : 0;
+      else if (def.inf) s += ud.inf ? 40 : 0;
+      if (s > bestScore) {
+        bestScore = s;
+        best = -u - UNIT_ID0;
+      }
+    }
     const h = this.hero;
-    if (h && h.downT <= 0) {
+    if (h && h.downT <= 0 && !g.air) {
       const d2 = (h.x - x) ** 2 + (h.y - y) ** 2;
       if (d2 <= r2) {
         const s = -Math.sqrt(d2) + (def.stealth ? 200 : def.inf ? 30 : 0);
@@ -1053,8 +1174,12 @@ export class Sim {
       return;
     }
     const top = air;
-    this.hitDefender(t.id, dmg, g.pen, g.supp, top);
+    this.hitDefender(t.id, dmg, g.pen, g.supp, top, x, y);
     if (g.splash) {
+      for (let u = 0; u < MAX_UNITS; u++) {
+        if (!this.uAlive[u] || this.uAir[u] || -u - UNIT_ID0 === t.id) continue;
+        if ((this.uX[u] - tx) ** 2 + (this.uY[u] - ty) ** 2 <= g.splash * g.splash) this.hitUnit(u, dmg * 0.5, g.pen * 0.6, g.supp * 0.5, true, x, y);
+      }
       // HE: whatever stands next to the impact gets a share
       for (const o of this.towers) {
         if (o === t || o.wreck || o.hp <= 0) continue;
@@ -1130,6 +1255,19 @@ export class Sim {
     y = Math.min(MAP_H, Math.max(0, y));
     t.charge = lv.charge ?? 0;
     this.ev(EV_SHOT, t.x, t.y, t.type);
+    if (t.kind === 'airfield') {
+      // a pair of Fw 190s takes off and patrols the point
+      const kind = UNITS.findIndex((d) => d.from === 'airfield');
+      for (let k = 0; k < 2; k++) {
+        const u = this.spawnUnit(kind, t.x + (k ? 12 : -12), t.y, -1);
+        if (u < 0) break;
+        this.uPostX[u] = x;
+        this.uPostY[u] = y;
+        this.uLife[u] = 25;
+        this.uAng[u] = Math.atan2(y - t.y, x - t.x);
+      }
+      return true;
+    }
     if (t.kind === 'stuka') {
       // three Ju 87s dive one after another along the line from the airfield, bombs on the target
       const d = Math.hypot(x - t.x, y - t.y) || 1;
@@ -1352,7 +1490,7 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0,
     };
     level = Math.min(HERO_MAX_LEVEL, level);
     this.hero = {
@@ -1555,6 +1693,505 @@ export class Sim {
     }
   }
 
+
+  // ============================================================ WW2: defender units
+
+  /** Slot of the unit with this uid, or -1. */
+  unitSlot(uid: number): number {
+    for (let u = 0; u < MAX_UNITS; u++) if (this.uAlive[u] && this.uUid[u] === uid) return u;
+    return -1;
+  }
+
+  /** Manpower: what the HQs and depots can field, and what is in use or in training. */
+  get manpowerCap(): number {
+    let n = 6;
+    for (const t of this.towers) if (!t.wreck) n += t.kind === 'command' ? 4 : t.kind === 'depot' ? 2 : 0;
+    return n;
+  }
+
+  get manpowerUsed(): number {
+    let n = 0;
+    for (let u = 0; u < MAX_UNITS; u++) if (this.uAlive[u]) n += UNITS[this.uKind[u]].manpower;
+    for (const t of this.towers) if (t.trainKind >= 0) n += UNITS[t.trainKind].manpower;
+    return n;
+  }
+
+  /** Why unit `kind` can't be trained at tower t right now ('' if it can). */
+  trainBlock(t: Tower, kind: number): string {
+    const d = UNITS[kind];
+    if (!d || d.from !== t.kind || t.wreck) return 'invalid';
+    if (t.trainKind >= 0) return 'busy';
+    if (this.manpowerUsed + d.manpower > this.manpowerCap) return 'manpower';
+    if (this.money < d.cost) return 'money';
+    return '';
+  }
+
+  private train(t: Tower, kind: number): boolean {
+    if (this.trainBlock(t, kind)) return false;
+    const d = UNITS[kind];
+    this.money -= d.cost;
+    t.trainKind = kind;
+    t.trainT = d.train;
+    return true;
+  }
+
+  /** Is unit u hidden from the enemy: camouflaged or in ambush, standing still and not just fired? */
+  unitHidden(u: number): boolean {
+    const d = UNITS[this.uKind[u]];
+    return (!!d.camo || this.uStance[u] === ST_AMBUSH) && this.uSeenT[u] <= 0 && this.uPathI[u] >= this.uPathLen[u];
+  }
+
+  private spawnUnit(kind: number, x: number, y: number, cell: number): number {
+    let u = 0;
+    while (u < MAX_UNITS && this.uAlive[u]) u++;
+    if (u === MAX_UNITS) return -1;
+    const d = UNITS[kind];
+    this.uAlive[u] = 1;
+    this.uUid[u] = this.nextUnitUid++;
+    this.uKind[u] = kind;
+    this.uAir[u] = d.air ? 1 : 0;
+    this.uX[u] = this.uPx[u] = this.uPostX[u] = x;
+    this.uY[u] = this.uPy[u] = this.uPostY[u] = y;
+    this.uAng[u] = this.uPang[u] = -Math.PI / 2;
+    this.uHp[u] = d.hp;
+    this.uCd[u] = 0;
+    this.uTgt[u] = -1;
+    this.uStance[u] = ST_GUARD;
+    this.uPathLen[u] = this.uPathI[u] = 0;
+    this.uGoal[u] = d.air ? -1 : cell;
+    this.uOrder[u] = 0;
+    this.uSupp[u] = 0;
+    this.uLife[u] = 0;
+    this.uSeenT[u] = 0;
+    this.uKills[u] = 0;
+    this.uTask[u] = -1;
+    this.unitVersion++;
+    return u;
+  }
+
+  private killUnit(u: number): void {
+    const d = UNITS[this.uKind[u]];
+    this.uAlive[u] = 0;
+    this.unitVersion++;
+    if (d.arm || d.air) this.explosion(this.uX[u], this.uY[u], 1.4, d.air ? AIR_Z : 4);
+    else this.burst(this.uX[u], this.uY[u], 0x8a3a2a, 5, FX_SMOKE, 0);
+  }
+
+  /** A shot at unit u from (sx, sy): armour by the side facing the shooter, as for our guns against theirs. */
+  private hitUnit(u: number, dmg: number, pen: number, supp: number, top: boolean, sx: number, sy: number): void {
+    if (!this.uAlive[u]) return;
+    const d = UNITS[this.uKind[u]];
+    let a = dmg;
+    if (d.arm) {
+      let armour: number;
+      if (top) armour = d.arm[3];
+      else {
+        const rel = Math.abs(angleDiff(this.uAng[u], Math.atan2(sy - this.uY[u], sx - this.uX[u])));
+        armour = rel < Math.PI / 4 ? d.arm[0] : rel > (Math.PI * 3) / 4 ? d.arm[2] : d.arm[1];
+      }
+      const r = armour > 0 ? pen / armour : 9;
+      a = r >= 1 ? dmg : r < 0.7 ? 0 : dmg * 0.25 * ((r - 0.7) / 0.3);
+      if (a <= 0 && dmg >= 20 && !top) this.fx(FX_SPARK, 1, this.uX[u], this.uY[u], this.vr.range(-120, 120), this.vr.range(-120, 120), 0.25, 6, 1, 1, 0xffe0a0, 4, 8);
+    } else if (d.inf) {
+      this.uSupp[u] = Math.min(1, this.uSupp[u] + supp);
+      a *= 1 - 0.35 * this.uSupp[u];
+    }
+    if (a <= 0) return;
+    this.uHp[u] -= a;
+    if (this.uHp[u] <= 0) this.killUnit(u);
+  }
+
+  /**
+   * Breadth-first path (4-way) from unit u to the first walkable cell inside the rectangle
+   * [c0..c1]×[r0..r1] that is not inside the excluded one (a tower's own footprint). Writes the
+   * path into the unit's buffer; returns false if no cell can be reached.
+   */
+  private unitPathTo(u: number, c0: number, r0: number, c1: number, r1: number, ex0 = -1, ey0 = -1, ex1 = -2, ey1 = -2): boolean {
+    const start = Math.floor(this.uY[u] / TILE) * COLS + Math.floor(this.uX[u] / TILE);
+    if (start < 0 || start >= COLS * ROWS) return false;
+    const prev = this.bfsPrev;
+    const q = this.bfsQ;
+    prev.fill(-1);
+    let head = 0;
+    let tail = 0;
+    q[tail++] = start;
+    prev[start] = start;
+    let goal = -1;
+    const isGoal = (i: number) => {
+      const c = i % COLS;
+      const r = (i / COLS) | 0;
+      return c >= c0 && c <= c1 && r >= r0 && r <= r1 && !(c >= ex0 && c <= ex1 && r >= ey0 && r <= ey1);
+    };
+    while (head < tail) {
+      const i = q[head++];
+      if (isGoal(i) && !this.blocked[i]) {
+        goal = i;
+        break;
+      }
+      const c = i % COLS;
+      const n0 = c > 0 ? i - 1 : -1;
+      const n1 = c < COLS - 1 ? i + 1 : -1;
+      const n2 = i - COLS;
+      const n3 = i + COLS;
+      if (n0 >= 0 && prev[n0] < 0 && !this.blocked[n0]) { prev[n0] = i; q[tail++] = n0; }
+      if (n1 >= 0 && prev[n1] < 0 && !this.blocked[n1]) { prev[n1] = i; q[tail++] = n1; }
+      if (n2 >= 0 && prev[n2] < 0 && !this.blocked[n2]) { prev[n2] = i; q[tail++] = n2; }
+      if (n3 < COLS * ROWS && prev[n3] < 0 && !this.blocked[n3]) { prev[n3] = i; q[tail++] = n3; }
+    }
+    if (goal < 0) return false;
+    // walk back, then keep the first UNIT_PATH cells (the unit re-plans when it gets there)
+    let len = 0;
+    for (let i = goal; i !== start; i = prev[i]) len++;
+    const n = Math.min(len, UNIT_PATH);
+    const base = u * UNIT_PATH;
+    let k = len;
+    for (let i = goal; i !== start; i = prev[i]) {
+      k--;
+      if (k < n) this.uPath[base + k] = i;
+    }
+    this.uPathLen[u] = n;
+    this.uPathI[u] = 0;
+    this.uGoal[u] = goal;
+    return true;
+  }
+
+  /** Walk to the cell under (x, y), or as near as it gets. */
+  private unitGoto(u: number, x: number, y: number, near = 0): boolean {
+    const c = Math.floor(x / TILE);
+    const r = Math.floor(y / TILE);
+    return this.unitPathTo(u, c - near, r - near, c + near, r + near);
+  }
+
+  /** Player order: the selected units walk to (x, y) in a loose formation, and guard there. */
+  private unitMove(ids: number[], x: number, y: number): boolean {
+    x = Math.min(MAP_W - 1, Math.max(0, x));
+    y = Math.min(MAP_H - 1, Math.max(0, y));
+    let k = 0;
+    for (const id of ids) {
+      const u = this.unitSlot(id);
+      if (u < 0) continue;
+      const side = Math.ceil(Math.sqrt(ids.length));
+      const ox = ((k % side) - (side - 1) / 2) * 16;
+      const oy = (Math.floor(k / side) - (side - 1) / 2) * 16;
+      k++;
+      this.uPostX[u] = x + ox;
+      this.uPostY[u] = y + oy;
+      if (this.uAir[u]) continue; // fighters patrol where they were sent
+      if (this.unitGoto(u, x + ox, y + oy, 1)) {
+        this.uOrder[u] = 1;
+        this.uTask[u] = -1;
+      }
+    }
+    return k > 0;
+  }
+
+  private updateUnits(): void {
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u]) continue;
+      this.uPx[u] = this.uX[u];
+      this.uPy[u] = this.uY[u];
+      this.uPang[u] = this.uAng[u];
+      if (this.uSeenT[u] > 0) this.uSeenT[u] -= DT;
+      if (this.uSupp[u] > 0) this.uSupp[u] = Math.max(0, this.uSupp[u] - 0.45 * DT);
+      if (this.uCd[u] > 0) this.uCd[u] -= DT * (1 - 0.5 * this.uSupp[u]);
+      if (this.uAir[u]) this.updatePlane(u);
+      else this.updateGroundUnit(u);
+    }
+  }
+
+  /** Fw 190s: fly to the patrol point, circle it, dive on aircraft first, then soft ground targets. */
+  private updatePlane(u: number): void {
+    const d = UNITS[this.uKind[u]];
+    const g = d.gun!;
+    if ((this.uLife[u] -= DT) <= 0) {
+      this.uAlive[u] = 0;
+      this.unitVersion++;
+      return;
+    }
+    const px = this.uPostX[u];
+    const py = this.uPostY[u];
+    let t = this.uTgt[u];
+    if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = -1;
+    if ((this.ticks + u) % 10 === 0) {
+      t = this.findTarget(px, py, 200, true, false, 3);
+      if (t < 0) {
+        t = this.findTarget(px, py, 160, false, true, 3);
+        if (t >= 0 && ENEMIES[this.eKind[t]].arm && ENEMIES[this.eKind[t]].arm![3] > g.pen) t = -1;
+      }
+      this.uTgt[u] = t;
+      if (t >= 0) this.uTuid[u] = this.eUid[t];
+    }
+    const x = this.uX[u];
+    const y = this.uY[u];
+    let wx: number;
+    let wy: number;
+    if (t >= 0) {
+      wx = this.eX[t];
+      wy = this.eY[t];
+    } else {
+      const a = this.time * 1.4 + u;
+      wx = px + Math.cos(a) * 70;
+      wy = py + Math.sin(a) * 70;
+    }
+    const want = Math.atan2(wy - y, wx - x);
+    const da = angleDiff(this.uAng[u], want);
+    this.uAng[u] += Math.max(-3 * DT, Math.min(3 * DT, da));
+    this.uX[u] = x + Math.cos(this.uAng[u]) * d.speed * DT;
+    this.uY[u] = y + Math.sin(this.uAng[u]) * d.speed * DT;
+    if (t >= 0 && this.uCd[u] <= 0 && Math.abs(da) < 0.35 && (wx - x) ** 2 + (wy - y) ** 2 <= g.range * g.range) this.unitFire(u, t, 1);
+  }
+
+  private updateGroundUnit(u: number): void {
+    const d = UNITS[this.uKind[u]];
+    const g = d.gun;
+    const think = (this.ticks + u * 7) % 15 === 0;
+    let moving = this.uPathI[u] < this.uPathLen[u];
+    const x = this.uX[u];
+    const y = this.uY[u];
+    const stance = this.uStance[u];
+
+    // ---- support roles: engineers repair, medics heal
+    if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
+    if (d.repair && this.uTask[u] >= 0) this.doRepair(u, d.repair);
+    if (d.heal) this.doHeal(u, d.heal);
+
+    // ---- target
+    let t = this.uTgt[u];
+    if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
+    if (g && think) {
+      const look = stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range;
+      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false);
+      this.uTgt[u] = t;
+      if (t >= 0) this.uTuid[u] = this.eUid[t];
+      if (!this.uOrder[u] && this.uTask[u] < 0) {
+        const tx = t >= 0 ? this.eX[t] : 0;
+        const ty = t >= 0 ? this.eY[t] : 0;
+        const d2 = t >= 0 ? (tx - x) ** 2 + (ty - y) ** 2 : 0;
+        const leash = (tx - this.uPostX[u]) ** 2 + (ty - this.uPostY[u]) ** 2 <= (GUARD_LEASH + g.range * 0.5) ** 2;
+        if (t >= 0 && d2 > (g.range * 0.85) ** 2 && (stance === ST_HUNT || (stance === ST_GUARD && leash))) {
+          // close in to firing range
+          this.unitGoto(u, tx, ty, Math.max(1, Math.floor((g.range * 0.6) / TILE)));
+        } else if (t >= 0 && d2 <= g.range * g.range && g.still) {
+          this.uPathLen[u] = this.uPathI[u]; // stop and set up
+        } else if (t < 0 && stance === ST_GUARD && (x - this.uPostX[u]) ** 2 + (y - this.uPostY[u]) ** 2 > 14 * 14 && !moving) {
+          this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
+        }
+      }
+      moving = this.uPathI[u] < this.uPathLen[u];
+    }
+
+    // ---- walk
+    if (moving) {
+      const base = u * UNIT_PATH;
+      const next = this.uPath[base + this.uPathI[u]];
+      if (this.blocked[next]) {
+        // a wall went up in the way: plan again
+        const goal = this.uGoal[u];
+        this.uPathLen[u] = 0;
+        if (goal >= 0) this.unitPathTo(u, goal % COLS, (goal / COLS) | 0, goal % COLS, (goal / COLS) | 0);
+      } else {
+        // a small offset per unit so a squad doesn't stack on one point
+        const jx = ((this.uUid[u] * 37) % 9) - 4;
+        const jy = ((this.uUid[u] * 53) % 9) - 4;
+        const tx = ((next % COLS) + 0.5) * TILE + jx;
+        const ty = (((next / COLS) | 0) + 0.5) * TILE + jy;
+        const dx = tx - x;
+        const dy = ty - y;
+        const dist = Math.hypot(dx, dy);
+        let sp = d.speed * this.groundSlow[Math.min(COLS * ROWS - 1, Math.max(0, Math.floor(y / TILE) * COLS + Math.floor(x / TILE)))];
+        if (d.inf) sp *= 1 - 0.5 * this.uSupp[u];
+        const step = sp * DT;
+        if (dist <= step) {
+          this.uX[u] = tx;
+          this.uY[u] = ty;
+          if (++this.uPathI[u] >= this.uPathLen[u]) {
+            const goal = this.uGoal[u];
+            const here = Math.floor(ty / TILE) * COLS + Math.floor(tx / TILE);
+            if (goal >= 0 && goal !== here && this.uPathLen[u] === UNIT_PATH) this.unitPathTo(u, goal % COLS, (goal / COLS) | 0, goal % COLS, (goal / COLS) | 0);
+            else this.uOrder[u] = 0;
+          }
+        } else {
+          this.uX[u] = x + (dx / dist) * step;
+          this.uY[u] = y + (dy / dist) * step;
+        }
+        const turn = d.arm ? 3 : 10;
+        this.uAng[u] += Math.max(-turn * DT, Math.min(turn * DT, angleDiff(this.uAng[u], Math.atan2(dy, dx))));
+        moving = this.uPathI[u] < this.uPathLen[u];
+      }
+    }
+
+    // ---- fire
+    if (!g || t < 0) return;
+    const tx = this.eX[t];
+    const ty = this.eY[t];
+    const d2 = (tx - x) ** 2 + (ty - y) ** 2;
+    if (d2 > g.range * g.range) return;
+    if (g.still && moving) return;
+    const want = Math.atan2(ty - y, tx - x);
+    if (!moving) {
+      // tanks turn their front (and gun) to the target; soldiers just face it
+      const turn = d.arm ? 1.6 : 10;
+      this.uAng[u] += Math.max(-turn * DT, Math.min(turn * DT, angleDiff(this.uAng[u], want)));
+      if (d.arm && Math.abs(angleDiff(this.uAng[u], want)) > 0.25) return;
+    }
+    if (this.uCd[u] > 0) return;
+    let bonus = 1;
+    if (this.unitHidden(u)) {
+      // an ambush waits for a close shot or one into the flank, and the first round counts double
+      const e = ENEMIES[this.eKind[t]];
+      const flank = !!e.arm && Math.abs(angleDiff(this.eAng[t], Math.atan2(y - ty, x - tx))) > Math.PI / 4;
+      if (stance === ST_AMBUSH && !flank && d2 > (g.range * 0.6) ** 2) return;
+      bonus = 1.5;
+    }
+    this.unitFire(u, t, bonus);
+  }
+
+  private unitFire(u: number, t: number, bonus: number): void {
+    const d = UNITS[this.uKind[u]];
+    const g = d.gun!;
+    const x = this.uX[u];
+    const y = this.uY[u];
+    const tx = this.eX[t];
+    const ty = this.eY[t];
+    this.uCd[u] = 1 / g.rate;
+    this.uSeenT[u] = d.camo ? 2.5 : 1.5;
+    const src = this.unitSrc;
+    src.x = x;
+    src.y = y;
+    this.proxyRange = g.range;
+    this.proxySupp = g.supp ?? 0;
+    const airMult = this.eAir[t] ? (g.hitsAir ? 1 : 0) : 1;
+    if (airMult > 0 && this.damage(t, g.dmg * bonus * airMult, false, src, false, g.pen, false)) this.uKills[u]++;
+    // cosmetic
+    const z = this.uAir[u] ? AIR_Z : d.inf ? 6 : 10;
+    const tz = this.eAir[t] ? AIR_Z + 6 : 6;
+    const big = g.dmg >= 50;
+    const ca = Math.cos(this.uAng[u]);
+    const sa = Math.sin(this.uAng[u]);
+    const r = d.radius;
+    this.fx(FX_GLOW, 1, x + ca * r, y + sa * r, 0, 0, 0.07, big ? 16 : 6, big ? 6 : 2, 0.9, 0xffe7a0, 0, z);
+    this.streak(x + ca * r, y + sa * r, z, tx, ty, tz, big ? 0.12 : 0.07, 0xffe0a0, big ? 2 : 0.9);
+    if (big) for (let k = 0; k < 3; k++) this.fx(FX_SMOKE, 0, x + ca * r, y + sa * r, ca * 40 + this.vr.range(-20, 20), sa * 40 + this.vr.range(-20, 20), 0.8, 6, 18, 0.45, 0xa8a49a, 3, z);
+    this.ev(EV_USHOT, x, y, this.uKind[u]);
+  }
+
+  /** Engineers and medics look for work near their post (Hold: only within reach). */
+  private supportTask(u: number, what: 'repair' | 'heal'): void {
+    const reach = this.uStance[u] === ST_HOLD ? 40 : this.uStance[u] === ST_HUNT ? HUNT_RANGE : GUARD_LEASH + 60;
+    const ox = this.uStance[u] === ST_HUNT ? this.uX[u] : this.uPostX[u];
+    const oy = this.uStance[u] === ST_HUNT ? this.uY[u] : this.uPostY[u];
+    let best = -1;
+    let bestD = reach * reach;
+    if (what === 'repair') {
+      if (this.uTask[u] >= 0) {
+        const cur = this.towerById.get(this.uTask[u]);
+        if (cur && cur.hp < this.maxHp(cur)) return;
+      }
+      let pick: Tower | null = null;
+      for (const t of this.towers) {
+        const max = this.maxHp(t);
+        if (!max || t.hp >= max) continue;
+        const d2 = (t.x - ox) ** 2 + (t.y - oy) ** 2;
+        if (d2 < bestD) {
+          bestD = d2;
+          pick = t;
+        }
+      }
+      this.uTask[u] = pick ? pick.id : -1;
+      if (pick) this.unitPathTo(u, pick.col - 1, pick.row - 1, pick.col + pick.size, pick.row + pick.size, pick.col, pick.row, pick.col + pick.size - 1, pick.row + pick.size - 1);
+      else if (this.uStance[u] !== ST_HUNT && (this.uX[u] - this.uPostX[u]) ** 2 + (this.uY[u] - this.uPostY[u]) ** 2 > 14 * 14 && this.uPathI[u] >= this.uPathLen[u]) this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
+      return;
+    }
+    for (let v = 0; v < MAX_UNITS; v++) {
+      if (v === u || !this.uAlive[v] || !UNITS[this.uKind[v]].inf || this.uHp[v] >= UNITS[this.uKind[v]].hp) continue;
+      const d2 = (this.uX[v] - ox) ** 2 + (this.uY[v] - oy) ** 2;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = v;
+      }
+    }
+    const h = this.hero;
+    if (h && h.downT <= 0 && h.hp < this.heroMaxHp() && (h.x - ox) ** 2 + (h.y - oy) ** 2 < bestD) best = -2;
+    this.uTask[u] = best;
+    if (best === -2) this.unitGoto(u, h!.x, h!.y, 1);
+    else if (best >= 0) this.unitGoto(u, this.uX[best], this.uY[best], 1);
+  }
+
+  /** Engineers at work: hit points back, and rubble raised again once it is a third rebuilt. */
+  private doRepair(u: number, rate: number): void {
+    const t = this.towerById.get(this.uTask[u]);
+    if (!t) {
+      this.uTask[u] = -1;
+      return;
+    }
+    const reach = t.size * TILE * 0.5 + 16;
+    if ((t.x - this.uX[u]) ** 2 + (t.y - this.uY[u]) ** 2 > reach * reach) return;
+    const max = this.maxHp(t);
+    t.hp = Math.min(max, t.hp + rate * DT);
+    if ((this.ticks + u) % 12 === 0) this.fx(FX_SPARK, 1, t.x + this.vr.range(-8, 8), t.y + this.vr.range(-8, 8), this.vr.range(-40, 40), -40, 0.3, 3, 1, 1, 0xffd070, 4, 8);
+    if (t.wreck && t.hp >= max * 0.35) {
+      const def = TOWERS[t.type];
+      const wall = !def.walkable && !t.open;
+      if (wall && this.wallStatus(this.cellsOf(t)) !== 'ok') return; // someone is standing in the rubble
+      t.wreck = false;
+      this.setFootprint(t, t.id);
+      if (wall) for (let k = 0; k < this.fields.length; k++) this.fields[k].copyFrom(this.scratch[k]);
+      this.towerVersion++;
+      this.burst(t.x, t.y, 0x9a8f78, t.size * 4, FX_SMOKE, 0);
+      this.ev(EV_BUILD, t.x, t.y, t.type);
+    }
+    if (t.hp >= max) this.uTask[u] = -1;
+  }
+
+  /** Medics patch up every soldier (and the commander) close by. */
+  private doHeal(u: number, rate: number): void {
+    const x = this.uX[u];
+    const y = this.uY[u];
+    let any = false;
+    for (let v = 0; v < MAX_UNITS; v++) {
+      if (!this.uAlive[v] || !UNITS[this.uKind[v]].inf) continue;
+      const max = UNITS[this.uKind[v]].hp;
+      if (this.uHp[v] >= max || (this.uX[v] - x) ** 2 + (this.uY[v] - y) ** 2 > 30 * 30) continue;
+      this.uHp[v] = Math.min(max, this.uHp[v] + rate * DT);
+      any = true;
+    }
+    const h = this.hero;
+    if (h && h.downT <= 0 && h.hp < this.heroMaxHp() && (h.x - x) ** 2 + (h.y - y) ** 2 <= 30 * 30) {
+      h.hp = Math.min(this.heroMaxHp(), h.hp + rate * DT);
+      any = true;
+    }
+    if (any && (this.ticks + u) % 20 === 0) this.fx(FX_GLOW, 1, x, y, 0, -20, 0.4, 8, 4, 0.8, 0x6aff7a, 0, 10);
+  }
+
+  /** A barracks or motor pool finishing a unit: it walks out next to the building. */
+  private finishTraining(t: Tower): void {
+    if ((t.trainT -= DT) > 0) return;
+    const kind = t.trainKind;
+    // the nearest free cell around the footprint
+    let cell = -1;
+    for (let ring = 1; ring < 4 && cell < 0; ring++) {
+      for (let r = t.row - ring; r <= t.row + t.size - 1 + ring && cell < 0; r++) {
+        for (let c = t.col - ring; c <= t.col + t.size - 1 + ring; c++) {
+          if (c < 0 || r < 0 || c >= COLS || r >= ROWS) continue;
+          const i = r * COLS + c;
+          if (!this.blocked[i] && this.map.grid[i] !== T_WATER) {
+            cell = i;
+            break;
+          }
+        }
+      }
+    }
+    const u = cell < 0 ? -1 : this.spawnUnit(kind, ((cell % COLS) + 0.5) * TILE, (((cell / COLS) | 0) + 0.5) * TILE, cell);
+    if (u < 0) {
+      t.trainT = 1; // no room: try again shortly
+      return;
+    }
+    t.trainKind = -1;
+    t.trainT = 0;
+    this.burst(this.uX[u], this.uY[u], 0x9a8f78, 6, FX_SMOKE, 0);
+    this.ev(EV_BUILD, this.uX[u], this.uY[u], t.type);
+  }
+
   /** WW2: Katyusha rockets come down on whatever stands around the impact (from above: open tops). */
   private updateRockets(): void {
     for (let r = this.rkCount - 1; r >= 0; r--) {
@@ -1573,6 +2210,9 @@ export class Sim {
       }
       const h = this.hero;
       if (h && (h.x - x) ** 2 + (h.y - y) ** 2 <= 30 * 30) this.hitDefender(-1, dmg, 0, 0, true);
+      for (let u = 0; u < MAX_UNITS; u++) {
+        if (this.uAlive[u] && !this.uAir[u] && (this.uX[u] - x) ** 2 + (this.uY[u] - y) ** 2 <= 30 * 30) this.hitUnit(u, dmg, 30, 0.35, true, x, y);
+      }
       this.explosion(x, y, 0.8, 0);
       // swap-remove
       const last = --this.rkCount;
@@ -1606,6 +2246,7 @@ export class Sim {
     this.updateEnemies();
     this.hash.build(this.live, this.liveCount, this.eX, this.eY);
     this.updateTowers();
+    if (WW2) this.updateUnits();
     this.updateHero();
     this.updateStrikes();
     if (this.rkCount) this.updateRockets();
@@ -1984,7 +2625,7 @@ export class Sim {
 
   /** Level stats of a damage source (the commander stands in as a tower with id -1). */
   private levelOf(src: Tower): TowerLevel | null {
-    return src.id === -1 ? null : TOWERS[src.type].levels[src.level];
+    return src.id < 0 ? null : TOWERS[src.type].levels[src.level];
   }
 
   /**
@@ -2005,7 +2646,7 @@ export class Sim {
         const dy = src.y - this.eY[i];
         const rel = Math.abs(angleDiff(this.eAng[i], Math.atan2(dy, dx)));
         armour = rel < Math.PI / 4 ? def.arm[0] : rel > (Math.PI * 3) / 4 ? def.arm[2] : def.arm[1];
-        const range = lv ? lv.range * src.rangeMult : this.heroRange();
+        const range = lv ? lv.range * src.rangeMult : src === this.unitSrc ? this.proxyRange : this.heroRange();
         if (range > 0) pen *= 1.1 - 0.25 * Math.min(1, Math.hypot(dx, dy) / range);
       }
       const r = armour > 0 ? pen / armour : 9;
@@ -2030,7 +2671,7 @@ export class Sim {
       return a;
     }
     if (def.inf) {
-      const supp = lv?.supp ?? 0;
+      const supp = lv ? lv.supp ?? 0 : src === this.unitSrc ? this.proxySupp : 0;
       if (supp > 0) this.eSupp[i] = Math.min(1, this.eSupp[i] + supp);
       a *= 1 - 0.35 * this.eSupp[i];
     }
@@ -2156,6 +2797,14 @@ export class Sim {
       // ------------------------------------------------ passive: auras, walls, floor traps
       case 'jammer': case 'depot': case 'radar': case 'command': case 'salvage':
       case 'barricade': case 'gate': case 'tar': case 'spikes': case 'wire':
+        return;
+
+      case 'barracks': case 'motorpool':
+        if (t.trainKind >= 0) this.finishTraining(t);
+        return;
+
+      case 'airfield':
+        if (t.charge > 0) t.charge = Math.max(0, t.charge - DT);
         return;
 
       case 'workshop': {

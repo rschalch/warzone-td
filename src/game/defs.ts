@@ -70,6 +70,8 @@ export interface EnemyGun {
   splash?: number; // px: HE shells and bombs also hit what stands next to the target
   /** Rocket artillery: rockets per salvo, scattered over the target area, in flight for a while. */
   salvo?: number;
+  /** Fighters: shoots only at the defender's aircraft. */
+  air?: boolean;
   /** Sound and tracer: small arms, automatic fire, tank gun, aircraft rockets, rocket artillery. */
   fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha';
 }
@@ -111,7 +113,7 @@ export type TowerKind =
  * What a tower does in the simulation. Classic towers are their own role; WW2 emplacements reuse
  * these behaviours (an MG-42 is a 'gun', a mortar a 'cannon') plus a few of their own.
  */
-export type Role = TowerKind | 'at' | 'wire' | 'stuka' | 'workshop';
+export type Role = TowerKind | 'at' | 'wire' | 'stuka' | 'workshop' | 'barracks' | 'motorpool' | 'airfield';
 
 export interface TowerLevel {
   cost: number; // build cost (level 0) or upgrade cost
@@ -141,7 +143,7 @@ export interface TowerLevel {
   fort?: number; // WW2: fortification in mm of armour equivalent (sandbags < timber < concrete)
 }
 
-export type TowerCat = 'basic' | 'fire' | 'precision' | 'control' | 'support' | 'maze' | 'super';
+export type TowerCat = 'basic' | 'fire' | 'precision' | 'control' | 'support' | 'units' | 'maze' | 'super';
 
 const CLASSIC_CATEGORIES: { id: TowerCat; name: string }[] = [
   { id: 'basic', name: 'Basic' },
@@ -526,8 +528,47 @@ function classicWave(wave: number): SpawnGroup[] {
 
 export type RulesetId = 'classic' | 'ww2';
 
+/** WW2: a mobile defender unit, trained at a barracks / motor pool or flown from an airfield. */
+export interface UnitDef {
+  kind: string;
+  name: string;
+  short: string;
+  tex: string;
+  /** Where it comes from: the tower role that trains it. */
+  from: 'barracks' | 'motorpool' | 'airfield';
+  cost: number;
+  manpower: number;
+  train: number; // s
+  hp: number;
+  speed: number; // px/s
+  radius: number;
+  inf?: boolean;
+  air?: boolean;
+  /** Armour in mm [front, side, rear, top] for vehicles. */
+  arm?: readonly [number, number, number, number];
+  /** Hidden from the enemy while still and not firing (snipers, ambushers). */
+  camo?: boolean;
+  gun?: {
+    dmg: number;
+    range: number;
+    rate: number;
+    pen: number;
+    supp?: number;
+    splash?: number;
+    /** Must stand still to fire (machine-gun teams set up; tanks fire from the short halt). */
+    still?: boolean;
+    hitsAir?: boolean;
+    sfx: string;
+  };
+  repair?: number; // engineers: hp/s restored to emplacements
+  heal?: number; // medics: hp/s restored to soldiers
+  desc: string;
+}
+
 export interface Ruleset {
   id: RulesetId;
+  /** WW2: the defender's units (none in the classic rules). */
+  units?: UnitDef[];
   towers: TowerDef[];
   enemies: EnemyDef[];
   combos: Combo[];
@@ -551,6 +592,7 @@ export let RANKS = CLASSIC_RANKS;
 export let buildWave: (wave: number) => SpawnGroup[] = classicWave;
 /** True while WW2 rules are in play (armour penetration, suppression…). */
 export let WW2 = false;
+export let UNITS: UnitDef[] = [];
 
 export function installRuleset(r: Ruleset): void {
   RULESET = r.id;
@@ -561,6 +603,7 @@ export function installRuleset(r: Ruleset): void {
   RANKS = r.ranks;
   buildWave = r.wave;
   WW2 = r.id === 'ww2';
+  UNITS = r.units ?? [];
 }
 
 /** Index of the first tower of this kind, or else of this role (-1 if none). */

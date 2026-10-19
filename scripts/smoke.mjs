@@ -106,8 +106,8 @@ try {
     const cfg = { ...session.config, seed: 5, difficulty: 'easy' };
     // ballistics: an MG-42 can't hurt a T-34; a Panzerschreck goes through from any side
     const s = Sim.create(cfg);
-    const mg = s.place(0, 10, 10, true);
-    const schreck = s.place(2, 14, 10, true);
+    const mg = s.place(window.game.towerIndex('mg42'), 10, 10, true);
+    const schreck = s.place(window.game.towerIndex('schreck'), 14, 10, true);
     const t34 = s.spawnEnemy(7, 1);
     s.eX[t34] = 300; s.eY[t34] = 230;
     const hp = s.eHp[t34];
@@ -117,7 +117,7 @@ try {
     const atHurt = hp - mgHurt - s.eHp[t34];
     // return fire: a T-34 in range shells an MG nest; a repair restores it
     const f = Sim.create(cfg);
-    const nest = f.place(0, 20, 20, true);
+    const nest = f.place(window.game.towerIndex('mg42'), 20, 20, true);
     const tank = f.spawnEnemy(7, 1);
     f.eX[tank] = nest.x + 120; f.eY[tank] = nest.y; f.eSpeed[tank] = 0;
     for (let n = 0; n < 900 && !nest.wreck; n++) f.step();
@@ -128,8 +128,17 @@ try {
     // replay and restore through tanks, aircraft and suppression
     const a = new Session(cfg);
     a.speed = 4;
-    const plan = [[0, { t: 'place', type: 0, col: 20, row: 30 }], [2, { t: 'place', type: 5, col: 24, row: 30 }], [4, { t: 'place', type: 9, col: 20, row: 34 }], [6, { t: 'place', type: 17, col: 28, row: 31 }]];
+    const T = window.game.towerIndex;
+    const plan = [[0, { t: 'place', type: T('mg42'), col: 20, row: 30 }], [2, { t: 'place', type: T('pak40'), col: 24, row: 30 }], [4, { t: 'place', type: T('mortar'), col: 20, row: 34 }], [6, { t: 'place', type: T('wire'), col: 28, row: 31 }]];
+    // units: a barracks, a grenadier squad sent forward, then set to hunt
+    const barracks = window.game.towerIndex('barracks');
+    let bc = 32, br = 22;
+    for (let k = 0; k < 400 && !s.canPlace(barracks, bc, br); k++) { bc = 30 + (k % 20); br = 18 + Math.floor(k / 20); }
+    plan.unshift([0, { t: 'place', type: barracks, col: bc, row: br }]);
+    plan.push([12, { t: 'train', id: 1, unit: window.game.unitIndex('grenadier') }]);
+    plan.push([900, { t: 'unitMove', ids: [1], x: 500, y: 600 }], [1300, { t: 'unitStance', ids: [1], stance: 2 }]);
     for (let w = 0; w < 6; w++) plan.push([10 + w * 700, { t: 'wave' }]);
+    plan.sort((p, q) => p[0] - q[0]);
     plan.push([1500, { t: 'upgrade', ids: [2] }]);
     let k = 0;
     while (a.sim.ticks < 4800 && !a.sim.gameOver) {
@@ -145,12 +154,14 @@ try {
       a.sim.step();
       c.step();
     }
-    return { shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
+    const units = a.sim.nextUnitUid - 1;
+    return { units, shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
   });
   check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
   check(ww2.shelled && ww2.repaired, `WW2 return fire: a T-34 shells an MG nest (${ww2.shelled}), repair restores it (${ww2.repaired})`);
   check(ww2.wave >= 6 && ww2.kills > 0, `WW2 waves run (wave ${ww2.wave}, ${ww2.kills} kills)`);
-  check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly');
+  check(ww2.units >= 1, `WW2 units: the barracks trains a squad (${ww2.units})`);
+  check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {

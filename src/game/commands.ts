@@ -11,6 +11,10 @@ export type Command =
   | { t: 'gate'; id: number }
   /** WW2: patch up damaged emplacements or rebuild destroyed ones. */
   | { t: 'repair'; ids: number[] }
+  /** WW2 units: train one at a barracks / motor pool; move or set the stance of units (by uid). */
+  | { t: 'train'; id: number; unit: number }
+  | { t: 'unitMove'; ids: number[]; x: number; y: number }
+  | { t: 'unitStance'; ids: number[]; stance: number }
   | { t: 'fire'; id: number; x: number; y: number }
   | { t: 'wave' }
   | { t: 'undo' }

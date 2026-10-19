@@ -1,10 +1,10 @@
 import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
 import { palette, settings } from '../app/settings';
-import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, WW2 } from '../game/defs';
+import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from '../game/defs';
 import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
-  P_CRYO, P_FLAK, P_MISSILE, P_NUKE, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
+  MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
@@ -106,6 +106,7 @@ const C_ENEMY = 2 << 16;
 const C_DRONE = 3 << 16;
 const C_HERO = 4 << 16;
 const C_SCENERY = 5 << 16;
+const C_UNIT = 6 << 16;
 
 const STATUS_WORDS = [
   ['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff],
@@ -165,6 +166,8 @@ export interface OverlayState {
   box: [number, number, number, number] | null; // selection rect being dragged, in projected screen space
   showAuras: boolean;
   enemy: number; // enemy slot being inspected, or -1
+  /** WW2: selected defender units (slots). */
+  units: number[];
 }
 
 /** Turret spin speeds (rad/s) for towers that rotate on their own. */
@@ -202,6 +205,10 @@ export class GameRenderer {
   private readonly scorch: Mark[] = [];
   private readonly heroFrames: Texture[];
   private readonly rubbleTex: Texture | null;
+  private readonly unitFrames: Texture[][];
+  private readonly unitTopTex: Texture[];
+  private readonly unitTop: number[];
+  private selUnits = new Set<number>();
   private routeLabel: BitmapText;
   private readonly boxG = new Graphics();
   /** Selection rectangle being dragged (projected screen space). */
@@ -294,6 +301,9 @@ export class GameRenderer {
     const hero = WW2 ? 'w_officer' : 'hero';
     this.heroFrames = this.iso ? frames(hero) : [atlas[`${hero}_t`]];
     this.rubbleTex = WW2 ? atlas[`w_rubble_${view}`] : null;
+    this.unitFrames = UNITS.map((u) => frames(u.tex));
+    this.unitTopTex = UNITS.map((u) => atlas[`${u.tex}_t`]);
+    this.unitTop = UNITS.map((u) => MODEL_TOP[u.tex] ?? 10);
     // indexed by projectile kind
     this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, WW2 ? atlas.v2shell : atlas.nukeshell, atlas.bullet];
     this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff, 0xffd060];
@@ -501,6 +511,12 @@ export class GameRenderer {
       (s.eAir[i] ? airSorter : sorter).add(this.depth(x, y), C_ENEMY | i);
     }
 
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!s.uAlive[u]) continue;
+      const x = s.uPx[u] + (s.uX[u] - s.uPx[u]) * alpha;
+      const y = s.uPy[u] + (s.uY[u] - s.uPy[u]) * alpha;
+      if (this.visible(p.x(x, y), p.y(x, y))) (s.uAir[u] ? airSorter : sorter).add(this.depth(x, y), C_UNIT | u);
+    }
     if (s.hero && s.hero.downT <= 0) {
       const h = s.hero;
       const x = h.px + (h.x - h.px) * alpha;
@@ -726,6 +742,10 @@ export class GameRenderer {
       }
       return;
     }
+    if (kind === C_UNIT) {
+      this.drawUnit(idx, alpha, time);
+      return;
+    }
     if (kind === C_DRONE) {
       const d = s.drones[idx];
       const x = d.px + (d.x - d.px) * alpha;
@@ -807,6 +827,48 @@ export class GameRenderer {
       const col = hp > 0.6 ? pal.hpHigh : hp > 0.3 ? pal.hpMid : pal.hpLow;
       this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, hp)) / 4, 0.5, col, 1, 0);
       if (s.eMaxShield[i] > 0) this.bars.push(this.atlas.px, sx - w / 2, by - 2.5, 0, (w * sh) / 4, 0.4, 0x6ac8ff, 1, 0);
+    }
+  }
+
+  /** WW2: one of our units, in a ring that tells it apart from the enemy (bright when selected). */
+  private drawUnit(u: number, alpha: number, time: number): void {
+    const s = this.sim;
+    const p = this.p;
+    const d = UNITS[s.uKind[u]];
+    const x = s.uPx[u] + (s.uX[u] - s.uPx[u]) * alpha;
+    const y = s.uPy[u] + (s.uY[u] - s.uPy[u]) * alpha;
+    const ang = lerpAngle(s.uPang[u], s.uAng[u], alpha);
+    const sx = p.x(x, y);
+    let sy = p.y(x, y);
+    const sel = this.selUnits.has(u);
+    // hidden from the enemy: drawn see-through for us
+    const a = s.unitHidden(u) ? 0.55 : 1;
+    if (s.uAir[u]) {
+      if (this.iso) {
+        this.shadows.push(this.fxTex[FX_GLOW], x, y, 0, (d.radius * 2.4) / 64, (d.radius * 2.4) / 64, 0x000000, 0.45, 0.5);
+        sy -= AIR_Z + Math.sin(time * 3 + u) * 2;
+        this.air.push(this.unitFrames[s.uKind[u]][dirIndex(ang)], sx, sy, 0, 1, 1, 0xffffff, 1);
+      } else {
+        this.shadows.push(this.unitTopTex[s.uKind[u]], x + AIR_Z * 0.3, y + AIR_Z * 0.45, ang, 0.9, 0.9, 0x000000, 0.35);
+        this.air.push(this.unitTopTex[s.uKind[u]], sx, sy, ang, 1.08, 1.08, 0xffffff, 1);
+      }
+      if (sel) this.glow.push(this.fxTex[FX_RING], sx, sy, 0, (d.radius * 2.6) / 128, (d.radius * 2.6) / 128, 0x7ad8ff, 0.9, 0.5);
+      return;
+    }
+    const ring = (d.radius * 2.4) / 128;
+    this.groundFx.push(this.fxTex[FX_RING], x, y, sel ? time * 1.5 : 0, ring, ring, 0x7ad8ff, sel ? 0.9 : 0.35, 0.5);
+    if (this.iso) this.world.push(this.unitFrames[s.uKind[u]][dirIndex(ang)], sx, sy, 0, 1, 1, 0xffffff, a);
+    else {
+      if (a === 1) this.shadows.push(this.unitTopTex[s.uKind[u]], x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
+      this.world.push(this.unitTopTex[s.uKind[u]], sx, sy, ang, 1, 1, 0xffffff, a);
+    }
+    const f = s.uHp[u] / d.hp;
+    if (f < 0.999 || sel) {
+      const w = d.radius * 2 + 4;
+      const by = sy - (this.iso ? this.unitTop[s.uKind[u]] + 6 : d.radius + 7);
+      this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1, 0x111111, 0.85, 0);
+      const pal = palette();
+      this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, f)) / 4, 0.5, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
     }
   }
 
@@ -984,6 +1046,25 @@ export class GameRenderer {
     if (ov.box) {
       const [x0, y0, x1, y1] = ov.box;
       this.boxG.rect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)).fill({ color: 0xffe28a, alpha: 0.08 }).stroke({ width: 1.5, color: 0xffe28a, alpha: 0.8 });
+    }
+    this.selUnits = new Set(ov.units);
+    for (const u of ov.units) {
+      if (!s.uAlive[u]) continue;
+      const d = UNITS[s.uKind[u]];
+      if (d.gun) g.circle(s.uX[u], s.uY[u], d.gun.range).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.35 });
+      if (s.uAir[u]) {
+        g.circle(s.uPostX[u], s.uPostY[u], 70).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.5 });
+        continue;
+      }
+      const n = s.uPathLen[u];
+      if (s.uPathI[u] < n) {
+        g.moveTo(s.uX[u], s.uY[u]);
+        for (let k = s.uPathI[u]; k < n; k++) {
+          const c = s.uPath[u * UNIT_PATH + k];
+          g.lineTo(((c % COLS) + 0.5) * TILE, (((c / COLS) | 0) + 0.5) * TILE);
+        }
+        g.stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.5 });
+      }
     }
     if (ov.heroSelected && s.hero) {
       const h = s.hero;

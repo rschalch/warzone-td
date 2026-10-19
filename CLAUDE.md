@@ -147,6 +147,12 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   emplacement's `fort` (mm, rises with level like the base visuals). Small arms mostly suppress crews
   (`Tower.supp` slows their fire). At 0 HP a tower becomes rubble (`wreck`: walkable, slow, rebuilt with the
   `repair` command); the Workshop role heals towers in range. Katyusha salvos are typed arrays (`rk*`).
+- Units: `UNITS` (live binding, `UnitDef` in defs.ts, German ones in ww2.ts), SoA slots `u*` in `Sim` (stable
+  slots, `uUid` in commands). Barracks / motor pool train them (`train`, manpower from HQs and depots), the
+  airfield launches Fw 190 patrols (manual). Units path with their own BFS (`unitPathTo`, never touch the flow
+  fields), stances Hold/Guard/Hunt/Ambush (`ST_*`), engineers repair and raise rubble, medics heal. Their fire
+  goes through `damage()` with the proxy source `unitSrc` (id -2); enemies aim at them as defender id
+  -(10 + slot). Commands `unitMove`, `unitStance`.
 - Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
 
 ## Balance notes

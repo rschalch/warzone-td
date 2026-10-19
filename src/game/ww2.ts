@@ -6,7 +6,7 @@
 // loosely, keeping their order: an MG-42 can't scratch a T-34 from any side, a PaK 40 kills it
 // from the flank and struggles against a KV-1's front.
 
-import { RT, growAll, type EnemyDef, type Ruleset, type SpawnGroup, type TowerDef } from './defs';
+import { RT, growAll, type EnemyDef, type Ruleset, type SpawnGroup, type TowerDef, type UnitDef } from './defs';
 
 /** The sides of the war. Phase 1 plays Germany against the Soviet Union. */
 export type Faction = 'de' | 'su';
@@ -107,6 +107,22 @@ const GERMAN: TowerDef[] = growAll([
     levels: [{ cost: 70, damage: 0, range: 110, rate: 0, buff: 0.03, hp: 220, fort: 12 }],
   }),
 
+  RT({
+    kind: 'barracks', role: 'barracks', cat: 'units', name: 'Barracks', short: 'Barracks', desc: 'Trains infantry squads, pioneers and medics to fight outside the emplacements.',
+    hitsGround: false, hitsAir: false, airMult: 0, color: 0x8a9a6a, turret: 'w_barracks', aim: 'static', targeted: false, single: true,
+    levels: [{ cost: 80, damage: 0, range: 0, rate: 0, hp: 300, fort: 15 }],
+  }),
+  RT({
+    kind: 'motorpool', role: 'motorpool', cat: 'units', name: 'Motor Pool', short: 'Motor Pool', desc: 'Builds Panzer IVs, Panthers and Tigers that chase the enemy across the field.',
+    hitsGround: false, hitsAir: false, airMult: 0, color: 0x9a8c60, turret: 'w_motorpool', aim: 'static', targeted: false, single: true,
+    levels: [{ cost: 150, damage: 0, range: 0, rate: 0, hp: 400, fort: 20 }],
+  }),
+  RT({
+    kind: 'airfield', role: 'airfield', cat: 'units', name: 'Fighter Airfield', short: 'Airfield', desc: 'Send (R) a pair of Fw 190s to patrol a point: they shoot down aircraft and strafe soft targets.',
+    hitsGround: false, hitsAir: false, airMult: 0, color: 0x9aa0a0, turret: 'w_airfield', aim: 'static', targeted: false, manual: true, sfx: '',
+    levels: [{ cost: 180, damage: 0, range: 0, rate: 0, charge: 45, hp: 300, fort: 10 }],
+  }),
+
   // ---- obstacles
   RT({
     kind: 'teeth', role: 'barricade', cat: 'maze', name: "Dragon's Teeth", short: 'Teeth', desc: 'Concrete obstacles: a cheap 1×1 wall for shaping the maze.',
@@ -177,7 +193,7 @@ const SOVIET: EnemyDef[] = [
   { name: 'KV-1 Heavy Tank', hp: 320, speed: 28, reward: 14, armor: 0, air: false, radius: 14, lives: 3, tex: 'su_kv1', bio: 0.3, arm: [110, 80, 70, 30], gun: { dmg: 40, range: 180, rate: 0.2, pen: 75, supp: 0.3, halt: 0.7, splash: 16, fx: 'tank' } },
   { name: 'IS-2 Heavy Tank', hp: 2000, speed: 24, reward: 80, armor: 0, air: false, radius: 16, lives: 4, tex: 'su_is2', bio: 0.25, arm: [160, 90, 60, 30], boss: true, gun: { dmg: 140, range: 220, rate: 0.1, pen: 160, supp: 0.6, halt: 0.9, splash: 30, fx: 'tank' } },
   { name: 'Il-2 Sturmovik', hp: 95, speed: 70, reward: 6, armor: 0, air: true, radius: 13, lives: 1, tex: 'su_il2', bio: 0, arm: [12, 12, 8, 8], gun: { dmg: 32, range: 70, rate: 0.35, pen: 40, supp: 0.3, splash: 24, fx: 'rocket' } },
-  { name: 'Yak-9 Fighter', hp: 60, speed: 110, reward: 4, armor: 0, air: true, radius: 12, lives: 1, tex: 'su_yak', bio: 0 },
+  { name: 'Yak-9 Fighter', hp: 60, speed: 110, reward: 4, armor: 0, air: true, radius: 12, lives: 1, tex: 'su_yak', bio: 0, gun: { dmg: 7, range: 120, rate: 3, pen: 15, supp: 0, fx: 'mg', air: true } },
   { name: 'BM-13 Katyusha', hp: 90, speed: 58, reward: 9, armor: 0, air: false, radius: 11, lives: 1, tex: 'su_katyusha', bio: 1,
     gun: { dmg: 22, range: 340, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 16, fx: 'katyusha' } },
 ];
@@ -229,6 +245,31 @@ function sovietWave(n: number): SpawnGroup[] {
   return g;
 }
 
+// ---------------------------------------------------------------- German units
+
+const GERMAN_UNITS: UnitDef[] = [
+  { kind: 'grenadier', name: 'Grenadier Squad', short: 'Grenadiers', tex: 'de_rifle', from: 'barracks', cost: 35, manpower: 1, train: 6, hp: 70, speed: 42, radius: 6, inf: true,
+    gun: { dmg: 5, range: 110, rate: 1.4, pen: 8, supp: 0.03, sfx: 'mosin' }, desc: 'Riflemen: cheap, steady fire, and a body between the enemy and your guns.' },
+  { kind: 'mgteam', name: 'MG-42 Team', short: 'MG Team', tex: 'de_mg', from: 'barracks', cost: 50, manpower: 1, train: 8, hp: 55, speed: 38, radius: 6, inf: true,
+    gun: { dmg: 3, range: 125, rate: 9, pen: 8, supp: 0.07, still: true, sfx: 'mg42' }, desc: 'A light machine gun that sets up wherever you need it. Must stop to fire.' },
+  { kind: 'atteam', name: 'Panzerschreck Team', short: 'AT Team', tex: 'de_schreck', from: 'barracks', cost: 60, manpower: 1, train: 9, hp: 50, speed: 40, radius: 6, inf: true, camo: true,
+    gun: { dmg: 85, range: 75, rate: 0.3, pen: 170, sfx: 'schreck' }, desc: 'Tank hunters. Put them in Ambush where tanks pass close: hidden until they fire.' },
+  { kind: 'sniperu', name: 'Sniper', short: 'Sniper', tex: 'de_sniper', from: 'barracks', cost: 55, manpower: 1, train: 9, hp: 35, speed: 40, radius: 6, inf: true, camo: true,
+    gun: { dmg: 60, range: 270, rate: 0.4, pen: 10, sfx: 'sniper' }, desc: 'Camouflaged marksman: the enemy only sees it when it fires.' },
+  { kind: 'pioneer', name: 'Pioneers', short: 'Pioneers', tex: 'de_pioneer', from: 'barracks', cost: 45, manpower: 1, train: 8, hp: 60, speed: 44, radius: 6, inf: true, repair: 14,
+    gun: { dmg: 4, range: 90, rate: 1, pen: 8, sfx: 'mosin' }, desc: 'Combat engineers: repair damaged emplacements and raise rubble back up, free of charge.' },
+  { kind: 'medic', name: 'Sanitäter', short: 'Medic', tex: 'de_medic', from: 'barracks', cost: 40, manpower: 1, train: 7, hp: 45, speed: 46, radius: 6, inf: true, heal: 6,
+    desc: 'Patches up soldiers and the commander nearby.' },
+  { kind: 'pz4', name: 'Panzer IV Ausf. H', short: 'Panzer IV', tex: 'de_pz4', from: 'motorpool', cost: 200, manpower: 2, train: 15, hp: 330, speed: 46, radius: 12, arm: [80, 30, 20, 15],
+    gun: { dmg: 75, range: 190, rate: 0.32, pen: 105, splash: 12, still: true, sfx: 'pak40' }, desc: 'The workhorse: the long 75 mm kills T-34s; its sides are thin.' },
+  { kind: 'panther', name: 'Panther Ausf. G', short: 'Panther', tex: 'de_panther', from: 'motorpool', cost: 320, manpower: 2, train: 20, hp: 420, speed: 50, radius: 14, arm: [110, 45, 40, 16],
+    gun: { dmg: 90, range: 220, rate: 0.3, pen: 150, splash: 12, still: true, sfx: 'pak40' }, desc: 'Sloped 80 mm front, a high-velocity gun that goes through almost anything. Keep its front to the enemy.' },
+  { kind: 'tigeru', name: 'Tiger I', short: 'Tiger', tex: 'de_tiger', from: 'motorpool', cost: 420, manpower: 3, train: 25, hp: 560, speed: 32, radius: 14, arm: [100, 80, 80, 25],
+    gun: { dmg: 125, range: 210, rate: 0.24, pen: 140, splash: 16, still: true, sfx: 'tiger' }, desc: 'Thick armour all round and the 8.8 cm gun: slow, and worth three lives of any column.' },
+  { kind: 'fw190', name: 'Fw 190 A', short: 'Fw 190', tex: 'de_fw190', from: 'airfield', cost: 0, manpower: 0, train: 0, hp: 140, speed: 190, radius: 12, air: true,
+    gun: { dmg: 10, range: 110, rate: 5, pen: 20, hitsAir: true, sfx: 'flak38' }, desc: 'Fighters on patrol: they hunt aircraft first, then strafe soft targets.' },
+];
+
 export function ww2Ruleset(side: Faction, foe: Faction): Ruleset {
   void side;
   void foe;
@@ -236,6 +277,7 @@ export function ww2Ruleset(side: Faction, foe: Faction): Ruleset {
     id: 'ww2',
     towers: GERMAN,
     enemies: SOVIET,
+    units: GERMAN_UNITS,
     combos: [
       { a: 'mg42', b: 'wire', name: 'Kill Zone', desc: '+30% fire rate', rate: 1.3 },
       { a: 'pak40', b: 'pak40', name: 'Pakfront', desc: '+20% fire rate', rate: 1.2 },
@@ -249,6 +291,7 @@ export function ww2Ruleset(side: Faction, foe: Faction): Ruleset {
       { id: 'precision', name: 'Anti-tank' },
       { id: 'fire', name: 'Artillery' },
       { id: 'support', name: 'Support' },
+      { id: 'units', name: 'Units' },
       { id: 'maze', name: 'Obstacles' },
       { id: 'super', name: 'Luftwaffe & V-weapons' },
     ],

@@ -1,11 +1,11 @@
 import {
-  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOTAL_WAVES, TOWERS, WW2, hpScale,
+  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOTAL_WAVES, TOWERS, UNITS, WW2, hpScale,
   type EnemyDef, type TowerDef, type TowerLevel,
 } from '../game/defs';
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
-import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
 import { ABILITY_HELP, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 
@@ -21,6 +21,8 @@ export interface HudActions {
   gate(): void;
   fire(): void;
   repair(): void;
+  train(unit: number): void;
+  stance(stance: number): void;
   next(): void;
   speed(s: number): void;
   menu(): void;
@@ -51,6 +53,8 @@ export interface UiState {
   enemy: number;
   /** Terrain type of the cell under the cursor (T_* in maps.ts), or -1. */
   ground: number;
+  /** WW2: slots of the selected defender units. */
+  units: number[];
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -246,6 +250,8 @@ export class Hud {
       else if (a === 'uptype') act.upgradeAllOfType();
       else if (a === 'gate') act.gate();
       else if (a === 'repair') act.repair();
+      else if (el.dataset.train) act.train(Number(el.dataset.train));
+      else if (el.dataset.stance) act.stance(Number(el.dataset.stance));
       else if (a === 'fire') act.fire();
       else if (a === 'mup') act.multiUpgrade();
       else if (a === 'msell') act.multiSell();
@@ -389,7 +395,7 @@ export class Hud {
     const total = [...damage.values()].reduce((a, b) => a + b, 0) || 1;
     const rows = top.map(([id, d]) => {
       const t = id === -1 ? null : sim.tower(id);
-      const name = id === -1 ? 'Commander' : t ? `${TOWERS[t.type].short} L${t.level + 1}` : 'Sold tower';
+      const name = id === -1 ? 'Commander' : id === -2 ? 'Units' : t ? `${TOWERS[t.type].short} L${t.level + 1}` : 'Sold tower';
       const color = t ? hex(TOWERS[t.type].color) : '#ffd84a';
       return `<div class="rr"><span class="sw" style="background:${color}"></span>${name}<span class="bar"><i style="width:${Math.round((d / total) * 100)}%"></i></span><b>${Math.round(d)}</b></div>`;
     }).join('');
@@ -404,6 +410,7 @@ export class Hud {
     const what = this.hover ?? ui.aiming;
     let key: string;
     if (what) key = `i${what.kind}:${what.index}:${what === ui.aiming}:${sim.money >= (what.kind === 'tower' ? sim.cost(what.index) : 0)}:${sim.items.join()}:${sim.hero?.cd.map(Math.ceil).join()}`;
+    else if (ui.units.length) key = `u${ui.units.map((u) => `${u}:${Math.ceil(sim.uHp[u])}:${sim.uStance[u]}:${sim.uKills[u]}:${sim.unitHidden(u)}`).join(',')}`;
     else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}`;
     else if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
     else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}:${Math.ceil(sim.hero.hp)}:${Math.ceil(sim.hero.downT)}`;
@@ -411,7 +418,8 @@ export class Hud {
       const up = sim.upgradeCost(t);
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
-      key = `t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
+      const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
+      key = `tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -421,6 +429,8 @@ export class Hud {
 
     if (what) {
       this.info.innerHTML = this.explain(sim, what, what === ui.aiming);
+    } else if (ui.units.length) {
+      this.info.innerHTML = this.unitPanel(sim, ui.units, ro);
     } else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) {
       this.info.innerHTML = this.enemyPanel(sim, ui.enemy);
     } else if (ui.multi.length) {
@@ -481,6 +491,7 @@ export class Hud {
       if (t.wreck) {
         special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
       }
+      if (def.role === 'barracks' || def.role === 'motorpool') special = this.trainPanel(sim, t, ro);
       const repair = fix ? `<button data-act="repair" class="primary" ${sim.money >= fix && !ro ? '' : 'disabled'}>${t.wreck ? 'Rebuild' : 'Repair'} $${fix} (B)</button>` : '';
       const record = def.hitsGround || def.hitsAir ? `
           <tr><td>Live DPS</td><td>${Math.round(this.dps(t))}</td><td></td></tr>
@@ -597,6 +608,47 @@ export class Hud {
         ${status ? `<tr><td>Status</td><td>${status}</td></tr>` : ''}
       </table>
       <div class="combo"><b>Counter</b> ${help.counter}</div>`;
+  }
+
+  /** WW2: what a barracks or motor pool can train, and the manpower it takes. */
+  private trainPanel(sim: Sim, t: Tower, ro: string): string {
+    const why = { manpower: 'no manpower', money: '', busy: '', invalid: '' } as Record<string, string>;
+    const rows = UNITS.map((d, k) => {
+      if (d.from !== t.kind) return '';
+      const block = sim.trainBlock(t, k);
+      return `<button data-train="${k}" title="${d.desc}" ${block || ro ? 'disabled' : ''}>${d.short} $${d.cost}${d.manpower > 1 ? ` · ${d.manpower} men` : ''}${why[block] ? ` (${why[block]})` : ''}</button>`;
+    }).join('');
+    const now = t.trainKind >= 0 ? `<div class="desc">Training <b>${UNITS[t.trainKind].name}</b>: ready in ${Math.ceil(t.trainT)}s</div>` : '';
+    return `${now}<div class="row train">${rows}</div><div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.</div>`;
+  }
+
+  /** WW2: the selected units: health, stance, record. */
+  private unitPanel(sim: Sim, units: number[], ro: string): string {
+    const kinds = new Map<string, number>();
+    for (const u of units) kinds.set(UNITS[sim.uKind[u]].short, (kinds.get(UNITS[sim.uKind[u]].short) ?? 0) + 1);
+    const one = units.length === 1 ? units[0] : -1;
+    const d = UNITS[sim.uKind[units[0]]];
+    const stance = units.every((u) => sim.uStance[u] === sim.uStance[units[0]]) ? sim.uStance[units[0]] : -1;
+    const air = units.every((u) => sim.uAir[u]);
+    const buttons = air ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>`;
+    let body: string;
+    if (one >= 0) {
+      const g = d.gun;
+      body = `<div class="help">${d.desc}</div>
+        <table>
+          <tr><td>Health</td><td>${Math.ceil(sim.uHp[one])} / ${d.hp}</td></tr>
+          ${d.arm ? `<tr><td>Armour</td><td>${d.arm[0]} front · ${d.arm[1]} side · ${d.arm[2]} rear (mm)</td></tr>` : ''}
+          ${g ? `<tr><td>Weapon</td><td>${num(g.dmg)} dmg · ${g.pen} mm · range ${g.range}${g.still ? ' · stops to fire' : ''}</td></tr>` : ''}
+          ${d.repair ? `<tr><td>Repairs</td><td>${d.repair} HP/s</td></tr>` : ''}
+          ${d.heal ? `<tr><td>Heals</td><td>${d.heal} HP/s</td></tr>` : ''}
+          ${sim.uAir[one] ? `<tr><td>Patrol</td><td>${Math.ceil(sim.uLife[one])}s left</td></tr>` : ''}
+          <tr><td>Kills</td><td>${sim.uKills[one]}</td></tr>
+          ${sim.unitHidden(one) ? '<tr><td>Status</td><td>hidden from the enemy</td></tr>' : ''}
+        </table>`;
+    } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
+    return `<div class="title">${one >= 0 ? d.name : `${units.length} units`}<span class="lvl">${air ? 'aircraft' : 'unit'}</span></div>
+      ${body}${buttons}
+      <div class="desc" style="margin-top:8px">${air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
   }
 
   /** Cost of upgrading every tower in the selection by one level. */

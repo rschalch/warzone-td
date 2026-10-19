@@ -142,7 +142,7 @@ Okinawa (1945, Japan: Shuri Line).
 
 ## 7. Phases
 
-Status: phases 0–1 done (Germany vs Soviet Union); phase 2 (return fire) done, with the Katyusha and the V-2.
+Status: phases 0–3 done (Germany vs Soviet Union): ballistics, return fire (with the Katyusha and the V-2), units.
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs

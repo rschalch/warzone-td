@@ -8,14 +8,14 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS, WW2 } from './game/defs';
+import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS, UNITS, WW2 } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import { PARTNER } from './game/partner';
 import {
   Sim as SimClass,
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
-  AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_WAVE, EV_WRECK, HERO_ABILITIES, type Sim, type Tower,
+  AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, HERO_ABILITIES, MAX_UNITS, type Sim, type Tower,
 } from './game/sim';
 import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
@@ -54,6 +54,8 @@ let placing = -1;
 let selected: Tower | null = null;
 let multi: Tower[] = [];
 let heroSelected = false;
+/** WW2: selected defender units, by uid. */
+let unitSel: number[] = [];
 /** Enemy being inspected (slot + uid, so a recycled slot isn't mistaken for it). */
 let enemySel: { slot: number; uid: number } | null = null;
 /** A superweapon, item or hero ability waiting for its target click. */
@@ -96,6 +98,7 @@ function handleResults(): void {
     }
     if (!ok && cmd.t === 'gate') flash('The gate can’t close: units in the way or it would seal the route');
     if (!ok && cmd.t === 'sell' && !session.sim.canSell) flash('Ironman: no selling');
+    if (!ok && cmd.t === 'train') flash('Can’t train: not enough money or manpower (HQs and depots raise it), or already training');
     if (!ok && cmd.t === 'repair') flash('Can’t repair: not enough money, or units are standing in the rubble');
   }
   session.results.length = 0;
@@ -119,6 +122,8 @@ const hud = new Hud({
   mode: (m) => selected && issue({ t: 'mode', id: selected.id, mode: m }),
   gate: () => toggleGate(),
   repair: () => repairSelected(),
+  train: (unit) => selected && issue({ t: 'train', id: selected.id, unit }),
+  stance: (stance) => unitSel.length && issue({ t: 'unitStance', ids: unitSel, stance }),
   fire: () => startSuper(),
   next: () => issue({ t: 'wave' }),
   speed: (s) => setSpeed(s),
@@ -162,8 +167,39 @@ function clearSelection(): void {
   selected = null;
   multi = [];
   heroSelected = false;
+  unitSel = [];
   targeting = null;
   enemySel = null;
+}
+
+/** Slots of the selected units that are still alive. */
+function unitSlots(s: Sim): number[] {
+  const out: number[] = [];
+  for (const id of unitSel) {
+    const u = s.unitSlot(id);
+    if (u >= 0) out.push(u);
+  }
+  return out;
+}
+
+/** WW2: our unit under the pointer (aircraft are drawn high up). */
+function unitUnder(e: { clientX: number; clientY: number }): number {
+  const s = sim();
+  if (!s || !WW2) return -1;
+  const [sx, sy] = canvasToScreen(...pointerToCanvas(e));
+  let best = -1;
+  let bestD = Infinity;
+  for (let u = 0; u < MAX_UNITS; u++) {
+    if (!s.uAlive[u]) continue;
+    const ux = projection.x(s.uX[u], s.uY[u]);
+    const uy = projection.y(s.uX[u], s.uY[u]) - (s.uAir[u] ? AIR_Z : 6) * projection.lift;
+    const d = Math.hypot(ux - sx, uy - sy);
+    if (d < UNITS[s.uKind[u]].radius + 7 && d < bestD) {
+      bestD = d;
+      best = u;
+    }
+  }
+  return best;
 }
 
 /** The enemy under the pointer, if any (aircraft are drawn high up, so test where they appear). */
@@ -663,6 +699,20 @@ function clickAt(e: { clientX: number; clientY: number }): void {
     const hy = projection.y(s.hero.x, s.hero.y) - 8 * projection.lift;
     if (Math.hypot(hx - sx, hy - sy) < 14) return selectHero();
   }
+  const mine = unitUnder(e);
+  if (mine >= 0) {
+    const id = s.uUid[mine];
+    const add = (e as { shiftKey?: boolean }).shiftKey && unitSel.length > 0;
+    const keep = add ? unitSel.filter((x) => x !== id) : [];
+    clearSelection();
+    unitSel = add && keep.length < unitSel.length ? keep : [...keep, id];
+    return;
+  }
+  if (unitSel.length && session!.mode !== 'replay' && !towerUnder(e)) {
+    // an order: the selected units walk there (onto an enemy: they go after it)
+    issue({ t: 'unitMove', ids: unitSel, x: aimX, y: aimY });
+    return;
+  }
   const foe = enemyUnder(e);
   if (foe >= 0) {
     clearSelection();
@@ -689,6 +739,19 @@ function boxSelect(x0: number, y0: number, x1: number, y1: number): void {
   if (!s) return;
   const [ax, ay] = canvasToScreen(Math.min(x0, x1), Math.min(y0, y1));
   const [bx, by] = canvasToScreen(Math.max(x0, x1), Math.max(y0, y1));
+  // units in the box take precedence over towers
+  const units: number[] = [];
+  for (let u = 0; u < MAX_UNITS; u++) {
+    if (!s.uAlive[u]) continue;
+    const px = projection.x(s.uX[u], s.uY[u]);
+    const py = projection.y(s.uX[u], s.uY[u]);
+    if (px >= ax && px <= bx && py >= ay && py <= by) units.push(s.uUid[u]);
+  }
+  if (units.length) {
+    clearSelection();
+    unitSel = units;
+    return;
+  }
   multi = s.towers.filter((t) => {
     const px = projection.x(t.x, t.y);
     const py = projection.y(t.x, t.y);
@@ -938,6 +1001,11 @@ function handleEvents(s: Sim): void {
       case EV_ESHOT:
         sound.play(ENEMY_SOUND[a], x, y);
         break;
+      case EV_USHOT: {
+        const sfx = UNITS[a]?.gun?.sfx;
+        if (sfx) sound.play(sfx, x, y);
+        break;
+      }
       case EV_WRECK:
         sound.play('wreck', x, y);
         if (settings.shake) {
@@ -1012,14 +1080,16 @@ function frame(): void {
     if (targeting?.kind === 'super' && !s.tower(targeting.index)) targeting = null;
     if (enemySel && (!s.eAlive[enemySel.slot] || s.eUid[enemySel.slot] !== enemySel.uid)) enemySel = null;
     const enemy = enemySel ? enemySel.slot : -1;
+    const units = unitSlots(s);
+    if (units.length < unitSel.length) unitSel = units.map((u) => s.uUid[u]);
     view.tick(realDt);
     view.render(session.speed > 0 ? session.acc / (1 / 60) : 1, {
       hoverCol, hoverRow, cellCol, cellRow, placing, selected, aiming: null, aimX, aimY,
       targeting: targeting ? { r: targeting.r, color: targeting.color } : null,
-      heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'), enemy,
+      heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'), enemy, units,
     });
     hud.update(s, {
-      placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy,
+      placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy, units,
       ground: cellCol >= 0 && cellRow >= 0 && cellCol < COLS && cellRow < ROWS ? s.map.grid[cellRow * COLS + cellCol] : -1,
       aiming: targeting ? { kind: targeting.kind, index: targeting.index } : null,
     });
@@ -1138,6 +1208,9 @@ async function boot(): Promise<void> {
     start: (cfg: GameConfig) => startGame(cfg),
     Session,
     Sim: SimClass,
+    /** Tower type and unit kind by name, for scripted checks. */
+    towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),
+    unitIndex: (kind: string) => UNITS.findIndex((u) => u.kind === kind),
     quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal', ww2 = false) =>
       startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234, ww2: ww2 ? { side: 'de', foe: 'su' } : undefined }),
   };

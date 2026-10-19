@@ -21,7 +21,7 @@ const BLACK = '#1a1a18';
 
 // ---------------------------------------------------------------- soldiers
 
-type Gear = 'rifle' | 'smg' | 'scoped' | 'none';
+type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'none';
 interface Soldier {
   tunic: string[];
   helmet: string;
@@ -61,6 +61,18 @@ function soldier(o: Soldier): Part[] {
       box(g, -1, 0.6, 10.5, 1, 0.4, '#5a3c22', null); // wooden stock
       box(g, 5.5, 0.75, 5, 0.7, 0.3, BLACK, null);
       if (o.gear === 'scoped') box(g, 2.6, 0.1, 3.6, 0.9, 0.4, '#101010', null);
+    }));
+  } else if (o.gear === 'mg') {
+    parts.push(P(5.5, 6.5, (g) => {
+      box(g, -1, 0.4, 6, 1.4, 0.4, '#2e2e2a', null); // MG-42 receiver and stock
+      box(g, 5, 0.55, 7, 1.1, 0.4, '#3a3a36', null); // perforated jacket
+      for (let x = 5.6; x < 11.5; x += 1.1) circ(g, x, 1.1, 0.25, '#111', null);
+      line(g, [1, 1.6, -0.5, 3.6], '#b08a40', 0.7); // belt
+    }));
+  } else if (o.gear === 'tube') {
+    parts.push(P(7, 8.5, (g) => {
+      box(g, -6, -2.6, 15, 2, 0.9, grad(g, 0, -2.6, 0, -0.6, [[0, '#6a7052'], [1, '#383c2a']]), null); // Panzerschreck on the shoulder
+      box(g, 0.5, -3.4, 3, 3.6, 0.4, '#4a4e3a', null); // blast shield
     }));
   } else if (o.gear === 'smg') {
     parts.push(P(5.5, 6.5, (g) => {
@@ -341,7 +353,7 @@ model('su_is2', 25, DIRS, [
 ]);
 
 /** Low-wing monoplane seen from above: wings across y, nose at +x, red stars on the wings. */
-function plane(o: { span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number }): Part[] {
+function plane(o: { span: number; len: number; body: string[]; under?: string; armoured?: boolean; seats: number; german?: boolean }): Part[] {
   const half = o.span / 2;
   return [
     P(2, 4, (g) => {
@@ -359,8 +371,13 @@ function plane(o: { span: number; len: number; body: string[]; under?: string; a
       finish(g, grad(g, 0, -half, 0, half, [[0, o.body[0]], [0.5, o.body[1]], [1, o.body[2]]]));
       line(g, [-1.5, -half + 2, -1.5, -3], 'rgba(0,0,0,0.25)'); // ailerons / flaps
       line(g, [-1.5, half - 2, -1.5, 3], 'rgba(0,0,0,0.25)');
-      star(g, -1.5, -half * 0.62, 2, RED, 'rgba(255,255,255,0.7)');
-      star(g, -1.5, half * 0.62, 2, RED, 'rgba(255,255,255,0.7)');
+      if (o.german) {
+        balkenkreuz(g, -1.5, -half * 0.62, 2);
+        balkenkreuz(g, -1.5, half * 0.62, 2);
+      } else {
+        star(g, -1.5, -half * 0.62, 2, RED, 'rgba(255,255,255,0.7)');
+        star(g, -1.5, half * 0.62, 2, RED, 'rgba(255,255,255,0.7)');
+      }
     }),
     P(1.5, 5.5, (g) => {
       // fuselage and tailplane
@@ -393,7 +410,7 @@ function plane(o: { span: number; len: number; body: string[]; under?: string; a
       g.ellipse(o.len * 0.5 + 0.6, 0, 0.8, 5.5, 0, 0, Math.PI * 2);
       g.fillStyle = 'rgba(40,40,36,0.35)';
       g.fill();
-      circ(g, o.len * 0.5 + 0.6, 0, 0.9, RED, null);
+      circ(g, o.len * 0.5 + 0.6, 0, 0.9, o.german ? '#e8d040' : RED, null);
     }),
   ];
 }
@@ -909,6 +926,69 @@ model('w_v2', 23, 1, [
   ...crew(-9, 2, 0.4, WD, FG),
 ]);
 
+model('w_barracks', 21, 1, [
+  P(WD - 1, WD + 1, (g) => box(g, -15, -15, 30, 30, 1.5, '#5e5844')), // trodden earth
+  P(WD + 1, WD + 9, (g) => {
+    // a timber hut with a pitched felt roof
+    box(g, -13, -10, 22, 14, 0.6, grad(g, -13, -10, 9, 4, [[0, '#4a4438'], [1, '#2a2620']]));
+    line(g, [-13, -3, 9, -3], 'rgba(255,255,255,0.12)', 0.8);
+    for (let x = -11; x < 9; x += 3) line(g, [x, -10, x, 4], 'rgba(0,0,0,0.25)', 0.4);
+  }),
+  P(WD + 1, WD + 3, (g) => {
+    for (let k = 0; k < 4; k++) box(g, -12 + k * 5, 8, 4, 5, 1.2, grad(g, 0, 8, 0, 13, [[0, '#b8a47a'], [1, '#7a6a48']])); // sandbags
+    line(g, [11, -12, 11, 12], '#3a2c1c', 1); // flagpole shadow
+  }),
+  P(WD + 3, WD + 16, (g) => line(g, [11, 6, 11, 6.2], '#4a3a24', 1.2), true),
+  P(WD + 15, WD + 16, (g) => box(g, 11, 4, 6, 4, 0.2, '#c42a1e', null)), // pennant
+  ...crew(-2, 9, 0, WD, FG),
+  ...crew(4, 10, -0.6, WD, FG),
+]);
+
+model('w_motorpool', 22, 1, [
+  P(WD - 1, WD + 1, (g) => {
+    box(g, -17, -17, 34, 34, 2, '#6a665a'); // concrete apron
+    for (let k = -17; k < 17; k += 6) line(g, [-17, k, 17, k], 'rgba(0,0,0,0.15)');
+  }),
+  P(WD + 1, WD + 12, (g) => {
+    // open-fronted hangar with a camouflage net roof
+    box(g, -16, -15, 32, 3, 0.4, '#3a3a32');
+    box(g, -16, -15, 3, 22, 0.4, '#3a3a32');
+    box(g, 13, -15, 3, 22, 0.4, '#3a3a32');
+  }),
+  P(WD + 12, WD + 13, (g) => {
+    box(g, -16, -15, 32, 22, 1, 'rgba(90,100,60,0.85)');
+    camo(g, () => box(g, -16, -15, 32, 22, 1, 'rgba(0,0,0,0)', null), ['rgba(60,70,40,0.6)', 'rgba(130,120,70,0.5)'], 77, 10, 4, 16);
+  }),
+  P(WD + 1, WD + 4, (g) => {
+    // a spare Maybach engine and a stack of road wheels
+    box(g, -10, 10, 7, 5, 0.6, '#3a3a36');
+    for (let k = 0; k < 3; k++) circ(g, 6 + k * 3.5, 12.5, 1.6, '#2a2a26');
+  }),
+]);
+
+model('w_airfield', 23, 1, [
+  P(WD - 1, WD, (g) => {
+    box(g, -19, -19, 38, 38, 2, '#7a7460'); // grass strip
+    for (let k = -16; k < 16; k += 6) box(g, k, -1, 3, 2, 0.3, 'rgba(240,240,230,0.6)', null);
+  }),
+  P(WD, WD + 4, (g) => {
+    // Fw 190 parked, wings spread, nose up
+    g.save();
+    g.rotate(-Math.PI / 2);
+    box(g, -3, -11, 6, 22, 1.5, grad(g, -3, -11, 3, 11, [[0, '#9aa0a0'], [1, '#4e5656']]));
+    box(g, -10, -1.5, 14, 3, 1.4, grad(g, -10, -1.5, 4, 1.5, [[0, '#8a9090'], [1, '#4e5656']]));
+    circ(g, 4.4, 0, 1.6, '#e8d040', null);
+    g.restore();
+    balkenkreuz(g, -6, -2, 1.6);
+    balkenkreuz(g, 6, -2, 1.6);
+  }),
+  P(WD, WD + 3, (g) => {
+    box(g, 9, 10, 8, 6, 1, '#4a4c3a'); // fuel bowser
+    for (const [x, y] of [[-14, 12], [-11, 14]]) circ(g, x, y, 1.6, '#3a3c2c');
+  }),
+  ...crew(-8, 8, 0.4, WD, FG),
+]);
+
 // ---------------------------------------------------------------- obstacles
 
 model('teeth', 11, 1, [0, 1, 2, 3].map((k) => {
@@ -1065,5 +1145,50 @@ for (let lv = 0; lv < 10; lv++) {
   parts.push(P(top - 0.5, top, (g) => germanRank(g, lv)));
   model(`wbase${lv}`, 22, 1, parts);
 }
+
+// ---------------------------------------------------------------- German units (mobile, facing +x)
+
+const HELM = '#5e6452';
+model('de_rifle', 8, DIRS, soldier({ tunic: FG, helmet: HELM, gear: 'rifle', pack: 'roll' }));
+model('de_mg', 8, DIRS, soldier({ tunic: FG, helmet: HELM, gear: 'mg', pack: 'none' }));
+model('de_schreck', 8, DIRS, soldier({ tunic: FG, helmet: HELM, gear: 'tube', pack: 'none' }));
+model('de_sniper', 8, DIRS, soldier({ tunic: ['#8a8a52', '#5e6a38', '#3e4422'], helmet: '#4e5a2e', cap: 'hood', gear: 'scoped', pack: 'none' }));
+model('de_pioneer', 8, DIRS, soldier({ tunic: ['#7a7a6a', '#5a5a4c', '#3a3a30'], helmet: HELM, gear: 'rifle', pack: 'roll' }));
+model('de_medic', 8, DIRS, soldier({ tunic: FG, helmet: HELM, gear: 'none', pack: 'medic' }));
+
+/** A German tank: box hull, side skirts, a turret set mid-hull and a long gun. */
+function panzer(o: { len: number; wid: number; tr: number; gun: number; slope?: boolean; skirts?: boolean; seed: number }): Part[] {
+  const L = o.len / 2;
+  const W = o.wid / 2;
+  return [
+    P(0, 5, tracks(o.len, o.wid, o.wid * 0.24, 6)),
+    P(4.5, 9, (g) => {
+      const pts = o.slope ? [-L, -W + 1, L - 6, -W + 1, L, -W + 3.5, L, W - 3.5, L - 6, W - 1, -L, W - 1] : [-L, -W + 1, L - 1.5, -W + 1, L, -W + 2.5, L, W - 2.5, L - 1.5, W - 1, -L, W - 1];
+      poly(g, pts, grad(g, -L, -W, L, W, [[0, DG[0]], [1, DG[2]]]));
+      camo(g, () => poly(g, pts, 'rgba(0,0,0,0)', null), DG_CAMO, o.seed, 8, 4, L);
+      if (o.slope) poly(g, [L - 6, -W + 1, L, -W + 3.5, L, W - 3.5, L - 6, W - 1], 'rgba(255,255,220,0.12)', 'rgba(0,0,0,0.3)');
+      box(g, -L + 1, -3.5, 6, 7, 0.6, '#5a4c30'); // engine deck
+      for (let x = -L + 1.5; x < -L + 6.5; x += 1) line(g, [x, -3, x, 3], 'rgba(0,0,0,0.35)');
+      if (o.skirts) for (const y of [-W, W - 1.6]) box(g, -L + 2, y, o.len - 4, 1.6, 0.3, grad(g, 0, y, 0, y + 1.6, [[0, DG[1]], [1, DG[2]]]));
+      balkenkreuz(g, -L + 8, W - 2.6, 1.6);
+    }),
+    P(9, 14, (g) => {
+      g.beginPath();
+      g.ellipse(-1, 0, o.tr, o.tr * 0.85, 0, 0, Math.PI * 2);
+      finish(g, grad(g, -o.tr, -o.tr, o.tr, o.tr, [[0, DG[0]], [1, DG[2]]]));
+      camo(g, () => circ(g, -1, 0, o.tr * 0.85, 'rgba(0,0,0,0)', null), DG_CAMO, o.seed + 3, 4, 2.5, o.tr);
+      circ(g, -o.tr * 0.55, -o.tr * 0.35, o.tr * 0.3, rgrad(g, -o.tr * 0.55, -o.tr * 0.35, o.tr * 0.3, [[0, '#c8b47a'], [1, '#6e5e3a']])); // cupola
+    }),
+    P(10.5, 12.5, (g) => {
+      box(g, o.tr - 2.5, -2.2, 3, 4.4, 0.8, '#8a7650'); // mantlet
+      box(g, o.tr, -0.9, o.gun, 1.8, 0.6, grad(g, 0, -0.9, 0, 0.9, [[0, DG[1]], [1, '#5a4c30']]));
+      box(g, o.tr + o.gun - 2, -1.4, 2.6, 2.8, 0.5, '#4a4030'); // muzzle brake
+    }),
+  ];
+}
+model('de_pz4', 18, DIRS, panzer({ len: 26, wid: 19, tr: 6, gun: 15, skirts: true, seed: 4 }));
+model('de_panther', 22, DIRS, panzer({ len: 30, wid: 22, tr: 6.5, gun: 19, slope: true, skirts: true, seed: 9 }));
+model('de_tiger', 22, DIRS, panzer({ len: 30, wid: 24, tr: 8, gun: 17, seed: 14 }));
+model('de_fw190', 18, DIRS, plane({ span: 24, len: 17, body: ['#9aa0a0', '#6a7272', '#3e4646'], seats: 1, german: true }), false);
 
 setModelSet('classic');
