@@ -1,17 +1,24 @@
 # WW2 mode: to-do
 
-Three fixes, then eight realism ideas the user asked for (October 2026), to be built on the `ww2` branch (never merged to `main`).
+Three fixes, then eight realism ideas the user asked for (October 2026), built on the `ww2` branch (never merged to `main`). All done.
 Read `CLAUDE.md` first (ground rules: determinism, commands, saved state, both cameras, performance), then
 `docs/ww2-design.md`. Work through them in order; after each one run `npx tsc --noEmit`, `npm run build` and
 `npm run smoke`, add a smoke check, check balance with the bot, verify the visuals with screenshots (top and
 iso), update `CLAUDE.md` / `README.md` / `docs/ww2-design.md`, then commit and push to `ww2` and tick it off here.
 
-Balance references (bot, as of commit 0893d50):
+Balance references (bot, as of commit 0893d50, before the features below):
 
 | Run | Result |
 |---|---|
 | `WW2=1 MAPS=0,1,2 DIFF=easy,normal npm run bot` | Easy: wins Open Field and Crossfire by taking the enemy HQ (~wave 36–40), loses Boulder Pass at wave 31. Normal: lost at waves 24–26 |
 | `BATTLE=all DIFF=easy npm run bot` | 10 of 12 battles won; Iwo Jima (24/25) and Seelow Heights (24/30) are lost |
+
+After all of them (October 2026, `SEEDS=3`; single runs vary a lot, so compare three seeds):
+
+| Run | Result |
+|---|---|
+| `SEEDS=3 WW2=1 MAPS=0,1,2 DIFF=easy,normal npm run bot` | Easy: Open Field and Crossfire won 2 of 3, Boulder Pass lost ~wave 29 (as before). Normal: Open Field ~23, Crossfire ~28, Boulder Pass ~17 (was ~20: sight and hulks on a rocky map) |
+| `BATTLE=all DIFF=easy npm run bot` | 10 of 12 won (Iwo Jima now won); Okinawa and Seelow Heights lost on their last wave |
 
 A new feature shouldn't make these noticeably worse unless that's the point; if it does, retune.
 

@@ -208,18 +208,18 @@ Okinawa (1945, Japan: Shuri Line).
   sight, a recon flight's mark (which also counts as spotting for our artillery) — or until it fires (6 s).
 
 ### 8.6 Hulks
-- A knocked-out tank leaves a hulk in its cell for 100 s (48 at most). If every route and every attacker on the
+- A knocked-out tank leaves a hulk in its cell for 60 s (48 at most). If every route and every attacker on the
   way can still reach our base without it, it blocks the cell like a wall; otherwise it slows it like rubble
   (halves speed). The path check runs at most once a tick; a second hulk in the same tick only slows.
 - Hulks block sight and fire (they join the forests and ruins in `sightBlock`) and give cover: infantry in the 8
-  cells round one take 60% damage, ours as well as theirs.
+  cells round one take 70% damage, ours as well as theirs.
 - Our engineers with nothing to repair clear the nearest hulk within reach of their post (6 s of work); the
   enemy's sappers blow apart those next to them.
 
 ### 8.7 Night and weather
 - A day lasts 12 minutes of game time; each battle starts at its historical hour (Seelow at 3 a.m., Guadalcanal at
-  dusk), skirmishes at 8. Night (20-5 h, with two-hour dusk and dawn) cuts direct fire to 70% of its range and sight
-  to 60%, the enemy's spotting too, and gives every position (camouflaged or not) extra camouflage.
+  dusk), skirmishes at 8. Night (21-4 h, with two-hour dusk and dawn) cuts direct fire to 75% of its range and sight
+  to 65%, the enemy's spotting too, and gives every position (camouflaged or not) extra camouflage.
 - Flares: a mortar's "Flares" mode, at night, fires a flare every 9 s over the nearest attacker it hears (no sight
   needed); it lights 170 px for 12 s: everything there is seen and in full range of every gun.
 - Weather per battle (and from the seed in skirmish): rain (mud: vehicles 80%, infantry 95%, sight 85%), snow

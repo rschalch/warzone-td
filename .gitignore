@@ -2,5 +2,4 @@ node_modules
 dist
 .bench
 .DS_Store
-.botbench
-.botbench2
+.botbench*

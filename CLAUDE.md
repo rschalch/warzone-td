@@ -134,7 +134,7 @@ their slope (multi-pass blurs, no hard `max`), or the light draws crease lines. 
 
 ## WW2 mode (branch `ww2`, never merged to `main`: main deploys publicly)
 
-Design and phase plan: `docs/ww2-design.md`; open work: `todo.md` (three fixes, then eight realism features, in order). Four factions (`de`, `su`, `us`, `jp`), each with an arsenal (as the
+Design and phase plan: `docs/ww2-design.md`; `todo.md` records the October 2026 fixes and realism features (all done) and the bot's balance references. Four factions (`de`, `su`, `us`, `jp`), each with an arsenal (as the
 defender) and an army (as the attacker): `src/game/ww2_<faction>.ts`, wired up in `ww2.ts` (`ARSENALS`, `ARMIES`,
 `FACTIONS[f].foes`). Every arsenal fills the standard `SLOTS` in order (`ww2_kit.ts`; other sides `derive()` their
 towers from the German ones and change names, models, sounds and stats); every army fills the `ARole` roster that
@@ -245,7 +245,7 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   near their post (`pickHulk()`/`doClear()`, task `-(HULK_TASK + cell)`), the enemy's sappers those next to them.
   `hulksChanged()` bumps `towerVersion`. The renderer draws hulks from the sim (no cosmetic wreck for armour).
 - Night and weather: `clock` runs with the game time (`DAY_S` per day, from `Battle.hour`, default 8); `night`
-  (0..1, dusk 18-20, dawn 5-7) shortens direct fire (`dimMult`) and everyone's sight (`sightMult`, also fog 0.55,
+  (0..1, dusk 19-21, dawn 4-6) shortens direct fire (`dimMult`) and everyone's sight (`sightMult`, also fog 0.55,
   rain 0.85) and adds camouflage to every position (`camoOf`). Mortars in `MODE_FLARE` fire flares at night
   (`fl*` arrays, `litGrid`): lit cells are seen and in full range (`dimR2` in findTarget). `weather` (`Battle.weather`,
   skirmish from the seed): rain slows vehicles, snow everyone (`weatherSpeed()`), fog grounds air (`airLocked()`,
@@ -269,6 +269,12 @@ The economy and tower values were tuned with `npm run gauntlet` and `npm run bot
 every map on Easy and the single-route maps on Normal, loses multi-route maps on Normal and most maps on Hard.
 The bot only builds along the natural path (no real mazing), so humans do much better. Multi-route maps pay more
 (`routeFactor` in `Sim`). Stealth units are revealed by radar or spotted point-blank (`STEALTH_DETECT`).
+
+WW2 (after the October 2026 realism features, `SEEDS=3 WW2=1 MAPS=0,1,2 DIFF=easy,normal npm run bot`): Easy wins
+Open Field and Crossfire two times in three, Boulder Pass falls around wave 29; Normal falls at waves ~23 (Open
+Field), ~28 (Crossfire), ~17 (Boulder Pass: rocks and woods block sight, hulks block the way). The bot builds depots
+for dry guns, counts only the path its guns can see, and sets every other mortar to flares at night; it trains no
+units, so it never captures positions. Single runs vary a lot between seeds: compare with SEEDS=3.
 
 ## Known limitations
 

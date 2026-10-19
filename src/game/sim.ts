@@ -371,8 +371,8 @@ const CB_SHELLS = 5;
 const CB_DMG = 46;
 /** WW2 hulks: knocked-out tanks left on the field (at once), s they stay, damage taken by infantry in their cover, work to clear one. */
 export const MAX_HULKS = 48;
-const HULK_T = 100;
-const HULK_COVER = 0.6;
+const HULK_T = 60;
+const HULK_COVER = 0.7;
 const CLEAR_WORK = 6;
 /** An engineer's task clearing the hulk in cell c is -(HULK_TASK + c). */
 const HULK_TASK = 1000;

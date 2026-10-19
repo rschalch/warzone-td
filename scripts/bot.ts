@@ -161,10 +161,12 @@ function decide(sim: Sim, built: Map<number, number>): void {
       const x = (c + 1) * TILE;
       const y = (row + 1) * TILE;
       let cover = 0;
+      // WW2: direct fire only covers the stretch of path it can see
+      const los = WW2 && !aa && TOWERS[type].role !== 'arty' && TOWERS[type].role !== 'cannon';
       for (const p of path) {
         const dx = ((p % COLS) + 0.5) * TILE - x;
         const dy = (((p / COLS) | 0) + 0.5) * TILE - y;
-        if (dx * dx + dy * dy <= r * r) cover++;
+        if (dx * dx + dy * dy <= r * r && (!los || sim.clearLine(x, y, x + dx, y + dy))) cover++;
       }
       const prev = sim.preview(type, c, row);
       const gain = prev ? routeLength(sim, prev) - before : 0;
