@@ -127,6 +127,7 @@ export const SOVIET_HELP: UnitHelp[] = [
   { text: 'The Il-2 Sturmovik ground-attack plane, armoured underneath: MG bullets bounce off.', counter: 'Flak 38 and the 88.' },
   { text: 'A fast, unarmoured fighter.', counter: 'Flak 38, the 88, and MG-42s.' },
   { text: 'The Katyusha — "Stalin\'s organ": sixteen rockets rippled off a truck, howling down on your positions from long range. The blasts hit sandbagged positions from above.', counter: 'It is a soft truck: anything kills it if it reaches it. Long-range guns (88, Flak 38) or artillery spotted by an observation post; concrete bunkers shrug off the rockets.' },
+  { text: 'Assault engineers with satchel charges. When your maze makes the way round long, they go straight for the weakest wall and blow it up; on the way they lift mines and cut wire.', counter: 'MG-42s and S-mines before they reach the wall; deep mazes of strong, covered emplacements are not worth breaching.' },
 ];
 
 const CAMO_HELP = ' <i>Camouflaged:</i> the enemy only finds it close up (recon jeeps and armoured cars from further off), or for a few seconds after it fires. Its first shot from hiding hits harder; in <b>Ambush</b> mode it waits for a flank or point-blank shot.';

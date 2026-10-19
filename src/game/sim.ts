@@ -226,7 +226,7 @@ export const AIR_Z = 34;
 export const MUZZLE_Z = 16;
 const TWO_PI = Math.PI * 2;
 /** WW2: how the attackers' weapons sound (EV_ESHOT), indexed like EnemyGun.fx. */
-export const ENEMY_FX = ['rifle', 'smg', 'mg', 'tank', 'rocket', 'katyusha'] as const;
+export const ENEMY_FX = ['rifle', 'smg', 'mg', 'tank', 'rocket', 'katyusha', 'satchel', 'barrage'] as const;
 /** WW2: Katyusha rockets in flight at once. */
 export const MAX_ROCKETS = 512;
 /** WW2: what a wrecked emplacement costs to rebuild, and what a repair costs, as a share of what went into it. */
@@ -256,6 +256,10 @@ export const MODE_AMBUSH = 4;
 /** s an emplacement or unit stays revealed after firing, and stays known after being spotted. */
 const REVEAL_T = 3;
 const KNOWN_T = 4;
+/** WW2 smoke screens at once; s they last; px radius. */
+export const MAX_SMOKE = 64;
+const SMOKE_T = 6;
+export const SMOKE_R = 40;
 
 function angleDiff(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -273,6 +277,14 @@ export class Sim {
   /** Per route: distance field towards its exit, over the current maze. */
   readonly fields: FlowField[];
   private readonly scratch: FlowField[];
+  /**
+   * WW2: per route, the way through if walls can be broken: emplacement cells are passable at a cost
+   * that grows with their strength. Rebuilt whenever the towers change (derived state, not saved).
+   */
+  readonly breach: FlowField[];
+  private readonly breachCost = new Float32Array(COLS * ROWS);
+  private readonly breachBlocked = new Uint8Array(COLS * ROWS);
+  private breachVersion = -1;
   /** Speed factor of the bare ground (water slows ground units) and the matching path cost. Static per map. */
   private readonly groundSlow = new Float32Array(COLS * ROWS);
   private readonly moveCost = new Float32Array(COLS * ROWS);
@@ -347,6 +359,13 @@ export class Sim {
   readonly eStunT = new Float32Array(MAX_ENEMIES);
   /** WW2: suppression 0..1 — pinned infantry crawl and keep their heads down. */
   readonly eSupp = new Float32Array(MAX_ENEMIES);
+  /** WW2 intelligence: breaching a wall (0/1), the tower id it is breaking through, s spent stuck, smoke used, inside smoke, sapper work timer. */
+  readonly eBreach = new Uint8Array(MAX_ENEMIES);
+  readonly eWall = new Int32Array(MAX_ENEMIES);
+  private readonly eBreachT = new Float32Array(MAX_ENEMIES);
+  private readonly eSmokeUsed = new Uint8Array(MAX_ENEMIES);
+  readonly eSmoked = new Uint8Array(MAX_ENEMIES);
+  private readonly eWork = new Float32Array(MAX_ENEMIES);
   /** WW2 return fire: the defender aimed at (0 none, -1 the commander, else a tower id), reload, s left of the halt to aim. */
   readonly eTgt = new Int32Array(MAX_ENEMIES);
   private readonly eGunCd = new Float32Array(MAX_ENEMIES);
@@ -392,6 +411,13 @@ export class Sim {
   readonly rkT0 = new Float32Array(MAX_ROCKETS);
   private readonly rkDmg = new Float32Array(MAX_ROCKETS);
   rkCount = 0;
+
+  // ------------------------------------------------------------ WW2: smoke screens (swap-remove)
+  readonly smX = new Float32Array(MAX_SMOKE);
+  readonly smY = new Float32Array(MAX_SMOKE);
+  readonly smT = new Float32Array(MAX_SMOKE);
+  smCount = 0;
+  readonly rkShell = new Uint8Array(MAX_ROCKETS); // 1: an artillery shell rather than a rocket
 
   // ------------------------------------------------------------ WW2: defender units (stable slots)
   readonly uAlive = new Uint8Array(MAX_UNITS);
@@ -525,6 +551,7 @@ export class Sim {
     this.tarGrid.set(this.groundSlow);
     this.fields = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
     this.scratch = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
+    this.breach = map.routes.map((r) => new FlowField(r.exit, this.breachCost));
     for (const f of this.fields) f.compute(this.blocked);
     for (let i = 0; i < MAX_ENEMIES; i++) this.eFree[i] = MAX_ENEMIES - 1 - i;
     this.eFreeTop = MAX_ENEMIES;
@@ -558,7 +585,7 @@ export class Sim {
 
   /** The spawn groups of wave n, after modifiers. */
   waveGroups(n: number): SpawnGroup[] {
-    const groups = buildWave(n);
+    const groups = WW2 ? this.adapt(n, buildWave(n)) : buildWave(n);
     if (!this.config.modifiers.includes('airRaid')) return groups;
     // everything flies: aircraft in numbers matching the ground units' threat
     const air = ENEMIES.findIndex((e) => e.air);
@@ -576,7 +603,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -647,6 +674,7 @@ export class Sim {
     (snap.eBurnBy as (number | null)[]).forEach((i, e) => (sim.eBurnBy[e] = byId(i)));
     for (const f of sim.fields) f.compute(sim.blocked);
     sim.auraVersion = -1;
+    sim.breachVersion = -1;
     sim.checkKey = '';
     return sim;
   }
@@ -1183,7 +1211,13 @@ export class Sim {
    */
   private enemyFire(i: number, def: EnemyDef, g: EnemyGun): boolean {
     if (this.eGunCd[i] > 0) this.eGunCd[i] -= DT * (def.inf ? 1 - 0.6 * this.eSupp[i] : 1);
-    if ((this.ticks + i) % 12 === 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.pickDefender(i, def, g);
+    if (this.eSmoked[i] && this.eWall[i] <= 0) {
+      // smoke blinds both ways: nobody inside picks a target outside
+      this.eAimT[i] = 0;
+      return false;
+    }
+    if (this.eWall[i] > 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.eWall[i]; // breaking through
+    else if ((this.ticks + i) % 12 === 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.pickDefender(i, def, g);
     const id = this.eTgt[i];
     if (!id) return false;
     const t = this.defenderAt(id);
@@ -1193,6 +1227,8 @@ export class Sim {
       return false;
     }
     if (this.eAimT[i] > 0) {
+      // halted: the tank swings its front (its thickest armour) towards the target
+      if (def.arm) this.eAng[i] += Math.max(-1.4 * DT, Math.min(1.4 * DT, angleDiff(this.eAng[i], Math.atan2(t.y - this.eY[i], t.x - this.eX[i]))));
       if ((this.eAimT[i] -= DT) <= 0) this.enemyShot(i, def, g, t);
       return true;
     }
@@ -1234,6 +1270,7 @@ export class Sim {
         this.rkWait[r] = k * 0.16;
         this.rkT[r] = this.rkT0[r] = 1.4 + Math.hypot(tx - x, ty - y) / 400;
         this.rkDmg[r] = dmg;
+        this.rkShell[r] = 0;
       }
       for (let k = 0; k < 10; k++) this.fx(FX_SMOKE, 0, x, y, this.vr.range(-50, 50), this.vr.range(-50, 50), 2, 8, 30, 0.5, 0xb8b0a0, 1.5, 6);
       this.ev(EV_ESHOT, x, y, ENEMY_FX.indexOf(g.fx));
@@ -1260,6 +1297,11 @@ export class Sim {
     const ca = Math.cos(ang);
     const sa = Math.sin(ang);
     const big = g.fx === 'tank';
+    if (g.fx === 'satchel') {
+      // a satchel charge thrown against the wall
+      this.explosion(tx, ty, 1.3, 4);
+      return;
+    }
     this.fx(FX_GLOW, 1, x + ca * 8, y + sa * 8, 0, 0, 0.07, big ? 16 : 6, big ? 6 : 2, 0.9, 0xffd890, 0, z);
     if (g.fx === 'rifle') this.streak(x, y, z, tx, ty, 8, 0.1, 0xfff0c0, 0.8);
     else if (g.fx === 'rocket') this.streak(x, y, z, tx, ty, 4, 0.3, 0xffb060, 1.6);
@@ -1496,6 +1538,8 @@ export class Sim {
     }
     this.wave++;
     this.ev(EV_WAVE, 0, 0, this.wave);
+    // before an armoured assault, the guns prepare the ground
+    if (WW2 && this.wave >= 6 && (this.wave % 4 === 3 || this.wave % 10 === 0)) this.barrage(this.wave);
     const groups = this.waveGroups(this.wave);
     let dur = 0;
     for (const g of groups) dur = Math.max(dur, g.delay + g.count * g.interval);
@@ -1759,6 +1803,190 @@ export class Sim {
     }
   }
 
+
+
+  // ============================================================ WW2: enemy intelligence
+
+  /** Rebuilds the breach fields: emplacements cost their strength to break through; obstacles without HP stay solid. */
+  private refreshBreach(): void {
+    this.breachVersion = this.towerVersion;
+    for (let i = 0; i < this.blocked.length; i++) {
+      this.breachBlocked[i] = this.blocked[i];
+      this.breachCost[i] = this.moveCost[i];
+    }
+    for (const t of this.towers) {
+      const max = this.maxHp(t);
+      if (!max || t.wreck || TOWERS[t.type].walkable) continue;
+      // the time it takes to shoot a way through under fire, as cells of walking: about a cell per HP,
+      // far more for concrete that a 76 mm shell barely scratches
+      const k = (max * (1 + this.fortOf(t) / 25)) / t.size;
+      for (const c of this.cellsOf(t)) {
+        this.breachBlocked[c] = 0;
+        this.breachCost[c] = this.moveCost[c] + k;
+      }
+    }
+    for (const f of this.breach) f.compute(this.breachBlocked, this.blocked);
+  }
+
+  /** Attackers that can break a wall: tanks with HE, sappers with satchel charges. */
+  private canBreach(def: EnemyDef): boolean {
+    // on Easy the attacker never thinks of it
+    if (this.hpMult < 0.9) return false;
+    return !def.air && !!def.gun && (def.gun.fx === 'tank' || def.gun.fx === 'satchel');
+  }
+
+  /**
+   * The assault decision: when the maze makes the way round much longer than smashing through the
+   * cheapest wall, a tank or sapper goes for the wall (and drops the idea if it gets stuck too long).
+   */
+  private thinkBreach(i: number, def: EnemyDef, cell: number): void {
+    const r = this.eRoute[i];
+    const around = this.fields[r].dist[cell];
+    const through = this.breach[r].dist[cell];
+    if (through === Infinity) {
+      this.eBreach[i] = 0;
+      return;
+    }
+    // the harder the game, the readier the enemy is to smash through instead of going round
+    const slack = (def.gun!.fx === 'satchel' ? 10 : 50) / this.hpMult ** 2;
+    if (!this.eBreach[i]) {
+      if (around - through > slack) {
+        this.eBreach[i] = 1;
+        this.eBreachT[i] = 0;
+      }
+    } else if (around <= through + 2 || this.eBreachT[i] > 25) {
+      this.eBreach[i] = 0;
+      this.eWall[i] = 0;
+    }
+  }
+
+  /** Removes a tower without paying for it (sappers lifting mines and cutting wire). */
+  private demolish(t: Tower): void {
+    const i = this.towers.indexOf(t);
+    if (i >= 0) this.towers.splice(i, 1);
+    this.towerById.delete(t.id);
+    this.setFootprint(t, -1);
+    for (const f of this.fields) f.compute(this.blocked);
+    this.towerVersion++;
+    this.burst(t.x, t.y, 0x8a8170, 8, FX_SMOKE, 0);
+  }
+
+  /** Sappers clear mines and wire they walk over, a second or so each. */
+  private sapperWork(i: number): void {
+    const c = Math.floor(this.eX[i] / TILE);
+    const r = Math.floor(this.eY[i] / TILE);
+    if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
+    const id = this.towerAt[r * COLS + c];
+    const t = id >= 0 ? this.towerById.get(id) : undefined;
+    if (!t || (t.kind !== 'mine' && t.kind !== 'wire')) {
+      this.eWork[i] = 0;
+      return;
+    }
+    if ((this.eWork[i] += DT) >= 1.4) {
+      this.eWork[i] = 0;
+      this.demolish(t);
+    }
+  }
+
+  /** A tank under anti-tank fire screens itself with smoke: guns can't pick targets inside it except point-blank. */
+  private popSmoke(i: number): void {
+    this.eSmokeUsed[i] = 1;
+    if (this.smCount >= MAX_SMOKE) return;
+    const k = this.smCount++;
+    // the cloud drifts out ahead of the tank
+    this.smX[k] = this.eX[i] + Math.cos(this.eAng[i]) * 14;
+    this.smY[k] = this.eY[i] + Math.sin(this.eAng[i]) * 14;
+    this.smT[k] = SMOKE_T;
+    for (let n = 0; n < 6; n++) this.fx(FX_SMOKE, 0, this.smX[k], this.smY[k], this.vr.range(-50, 50), this.vr.range(-50, 50), 1.6, 10, 40, 0.8, 0xe8e8e0, 1.2, 6);
+  }
+
+  private updateSmoke(): void {
+    for (let k = this.smCount - 1; k >= 0; k--) {
+      if ((this.smT[k] -= DT) <= 0) {
+        const last = --this.smCount;
+        this.smX[k] = this.smX[last];
+        this.smY[k] = this.smY[last];
+        this.smT[k] = this.smT[last];
+        continue;
+      }
+      if ((this.ticks + k * 5) % 8 === 0) {
+        const a = this.vr.next() * TWO_PI;
+        const r = this.vr.next() * SMOKE_R * 0.8;
+        this.fx(FX_SMOKE, 0, this.smX[k] + Math.cos(a) * r, this.smY[k] + Math.sin(a) * r, this.vr.range(-8, 8), this.vr.range(-8, 8), 2.4, 18, 44, 0.55, 0xdcdcd4, 0.6, 8);
+      }
+    }
+    // who is inside a cloud this tick (read by targeting)
+    for (let n = 0; n < this.liveCount; n++) {
+      const i = this.live[n];
+      let inside = 0;
+      for (let k = 0; k < this.smCount && !inside; k++) {
+        if ((this.eX[i] - this.smX[k]) ** 2 + (this.eY[i] - this.smY[k]) ** 2 <= SMOKE_R * SMOKE_R) inside = 1;
+      }
+      this.eSmoked[i] = inside;
+    }
+  }
+
+  /**
+   * Artillery preparation before an armoured assault: shells on the positions the enemy already
+   * knows about (anything not hidden), the most valuable first.
+   */
+  private barrage(n: number): void {
+    const known = this.towers.filter((t) => !t.wreck && t.hp > 0 && !this.towerHidden(t)).sort((a, b) => b.spent - a.spent || a.id - b.id);
+    if (!known.length) return;
+    const shells = Math.min(MAX_ROCKETS - this.rkCount, 6 + Math.floor(n / 3));
+    const from = this.map.routes[0].airFrom;
+    const dmg = 38 * (0.6 + 0.4 * this.hpMult);
+    for (let k = 0; k < shells; k++) {
+      const t = known[Math.min(known.length - 1, Math.floor(this.rng.next() * this.rng.next() * known.length))];
+      const r = this.rkCount++;
+      const a = this.rng.next() * TWO_PI;
+      const d = Math.sqrt(this.rng.next()) * 34;
+      this.rkSx[r] = from[0];
+      this.rkSy[r] = from[1];
+      this.rkTx[r] = t.x + Math.cos(a) * d;
+      this.rkTy[r] = t.y + Math.sin(a) * d;
+      this.rkWait[r] = 2 + k * 0.35;
+      this.rkT[r] = this.rkT0[r] = 1.6;
+      this.rkDmg[r] = dmg;
+      this.rkShell[r] = 1;
+    }
+    this.ev(EV_ESHOT, from[0], from[1], ENEMY_FX.indexOf('barrage'));
+  }
+
+  /**
+   * Adaptive waves: the attacker brings what counters the defence it has seen. Many anti-tank guns
+   * mean more infantry; many machine guns, more armour; no flak, aircraft.
+   */
+  private adapt(n: number, groups: SpawnGroup[]): SpawnGroup[] {
+    let at = 0;
+    let mg = 0;
+    let aa = 0;
+    let total = 0;
+    for (const t of this.towers) {
+      const d = TOWERS[t.type];
+      if (t.wreck || !d.hitsGround && !d.hitsAir) continue;
+      total++;
+      const lv = d.levels[t.level];
+      if (d.role === 'at') at++;
+      else if (lv.supp && (d.role === 'gun' || d.role === 'bunker')) mg++;
+      if (d.hitsAir && d.airMult >= 1) aa++;
+    }
+    if (total < 6) return groups;
+    // a trade rather than a bonus: armour comes in place of infantry and the other way round
+    const lean = (mg - at) / total;
+    const arm = Math.min(1.4, Math.max(0.7, 1 + 0.6 * lean));
+    const inf = Math.min(1.4, Math.max(0.7, 1 - 0.6 * lean));
+    const out = groups.map((g) => {
+      const e = ENEMIES[g.kind];
+      const f = e.inf ? inf : !e.air && e.arm && e.arm[0] >= 40 ? arm : 1;
+      return f === 1 ? g : { ...g, count: Math.max(1, Math.round(g.count * f)) };
+    });
+    if (n >= 6 && aa === 0) {
+      const il2 = ENEMIES.findIndex((e) => e.air && e.gun && !e.gun.air);
+      if (il2 >= 0) out.push({ kind: il2, count: 1 + Math.round(n * 0.15), interval: 1.5, delay: 4 });
+    }
+    return out;
+  }
 
   // ============================================================ WW2: defender units
 
@@ -2293,6 +2521,7 @@ export class Sim {
         this.rkT[r] = this.rkT[last];
         this.rkT0[r] = this.rkT0[last];
         this.rkDmg[r] = this.rkDmg[last];
+        this.rkShell[r] = this.rkShell[last];
       }
     }
   }
@@ -2315,6 +2544,8 @@ export class Sim {
     this.hash.build(this.live, this.liveCount, this.eX, this.eY);
     this.updateTowers();
     if (WW2) {
+      if (this.breachVersion !== this.towerVersion) this.refreshBreach();
+      if (this.smCount) this.updateSmoke();
       this.updateUnits();
       if (this.ticks % 10 === 0) this.updateSpotting();
     }
@@ -2389,6 +2620,12 @@ export class Sim {
     this.eSupp[i] = 0;
     this.eTgt[i] = 0;
     this.eAimT[i] = 0;
+    this.eBreach[i] = 0;
+    this.eWall[i] = 0;
+    this.eBreachT[i] = 0;
+    this.eSmokeUsed[i] = 0;
+    this.eSmoked[i] = 0;
+    this.eWork[i] = 0;
     this.eGunCd[i] = def.gun ? this.rng.range(0.3, 1) / def.gun.rate : 0;
     this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06);
     this.eReward[i] = Math.round(def.reward * rewardScale(wave) * this.bountyMult);
@@ -2596,13 +2833,27 @@ export class Sim {
         else if (cx >= COLS) cx = COLS - 1;
         if (y < 0) cy = 0;
         else if (cy >= ROWS) cy = ROWS - 1;
-        const field = this.fields[this.eRoute[i]];
+        const breaching = this.eBreach[i] === 1;
+        const field = breaching ? this.breach[this.eRoute[i]] : this.fields[this.eRoute[i]];
         let cell = cy * COLS + cx;
         // brushing a tower corner can put us in a blocked cell: steer from the last good one
         if (this.blocked[cell] || field.dist[cell] === Infinity) cell = this.eCell[i];
         else this.eCell[i] = cell;
+        if (WW2 && (this.ticks + i) % 60 === 0 && this.canBreach(def)) this.thinkBreach(i, def, cell);
+        if (def.gun?.fx === 'satchel' && (this.ticks + i) % 6 === 0) this.sapperWork(i);
         const dist = field.dist[cell];
         this.eRemain[i] = dist * TILE;
+        let wall = 0;
+        if (breaching && dist > 0) {
+          // the next step is into an emplacement: stop and break it
+          const nx = field.next[cell];
+          if (nx >= 0 && this.blocked[nx]) {
+            wall = this.towerAt[nx] >= 0 ? this.towerAt[nx] : 0;
+            sp = 0;
+            this.eBreachT[i] += DT;
+          }
+        }
+        this.eWall[i] = wall;
         if (dist === 0) {
           // in the exit gate: walk straight off the map
           tx = x + route.outDir[0] * TILE * 4;
@@ -2721,6 +2972,8 @@ export class Sim {
         if (range > 0) pen *= 1.1 - 0.25 * Math.min(1, Math.hypot(dx, dy) / range);
       }
       const r = armour > 0 ? pen / armour : 9;
+      // under anti-tank fire, a tank crew pops smoke once
+      if (!top && pen >= 40 && def.arm[0] >= 40 && !this.eSmokeUsed[i] && this.rng.next() < 0.35) this.popSmoke(i);
       if (r < 1) {
         // bounced: a glancing hit near the limit still chips something off
         const big = a >= 20;
@@ -2776,6 +3029,7 @@ export class Sim {
       // stealth: radar reveals it everywhere; otherwise only point-blank
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
+      if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
       if (pen > 0 && !this.canHurt(i, pen, top)) continue;
       let s: number;
       switch (mode) {

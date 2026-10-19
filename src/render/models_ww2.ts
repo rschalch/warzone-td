@@ -27,7 +27,7 @@ interface Soldier {
   helmet: string;
   cap?: 'helmet' | 'pilotka' | 'hood';
   gear: Gear;
-  pack?: 'roll' | 'medic' | 'none';
+  pack?: 'roll' | 'medic' | 'satchel' | 'none';
 }
 
 /** A standing soldier walking towards +x, the same stack as the modern infantry. */
@@ -47,6 +47,9 @@ function soldier(o: Soldier): Part[] {
         box(g, -4.4, -2.6, 2.8, 5.2, 1, '#d8d4c4');
         line(g, [-3, -1.6, -3, 1.6], RED, 1);
         line(g, [-4.1, 0, -1.9, 0], RED, 1);
+      } else if (o.pack === 'satchel') {
+        box(g, -4.6, -3, 3.2, 6, 0.8, '#6a5030'); // satchel charges
+        line(g, [-3, -3, -3, 3], '#3a2a18', 0.5);
       } else if (o.pack !== 'none') box(g, -4.2, -2.6, 2.6, 5.2, 1, '#57502f');
       g.beginPath();
       g.ellipse(0, 0, 2.6, 3.7, 0, 0, Math.PI * 2);
@@ -101,6 +104,7 @@ function soldier(o: Soldier): Part[] {
 model('su_rifle', 8, DIRS, soldier({ tunic: KHAKI, helmet: '#4e5a2e', gear: 'rifle', pack: 'roll' }));
 model('su_smg', 8, DIRS, soldier({ tunic: ['#9c9568', '#7a7448', '#4f4a2e'], helmet: '#4e5a2e', gear: 'smg', pack: 'roll' }));
 model('su_sniper', 8, DIRS, soldier({ tunic: ['#7d8a4e', '#5c6a34', '#3a4520'], helmet: '#4a5a2a', cap: 'hood', gear: 'scoped', pack: 'none' }));
+model('su_sapper', 8, DIRS, soldier({ tunic: ['#8a8a6a', '#6a6a4c', '#46462f'], helmet: '#4e5a2e', gear: 'smg', pack: 'satchel' }));
 model('su_medic', 8, DIRS, soldier({ tunic: KHAKI, helmet: '#6a6a40', cap: 'pilotka', gear: 'none', pack: 'medic' }));
 
 /** A crewman seen from above at (x,y) facing angle a: shoulders then helmet. */

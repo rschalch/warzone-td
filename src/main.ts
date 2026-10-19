@@ -935,7 +935,7 @@ const SHOT_SOUND: Record<string, string> = {
 };
 const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom'];
 /** WW2: the attackers' weapons, by ENEMY_FX index. */
-const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha'];
+const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha', '', ''];
 
 function handleEvents(s: Sim): void {
   const ev = s.events;
@@ -999,7 +999,11 @@ function handleEvents(s: Sim): void {
         sound.play('deny');
         break;
       case EV_ESHOT:
-        sound.play(ENEMY_SOUND[a], x, y);
+        if (a === 7) {
+          // artillery preparation: the guns behind the enemy lines open up
+          sound.play('arty');
+          flash('Artillery barrage on your known positions!');
+        } else if (ENEMY_SOUND[a]) sound.play(ENEMY_SOUND[a], x, y);
         break;
       case EV_USHOT: {
         const sfx = UNITS[a]?.gun?.sfx;

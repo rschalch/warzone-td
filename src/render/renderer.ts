@@ -4,7 +4,7 @@ import { COLS, DT, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from 
 import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
-  MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
+  MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, P_SHELL, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
@@ -583,16 +583,18 @@ export class GameRenderer {
       const y = s.rkSy[r] + (s.rkTy[r] - s.rkSy[r]) * f;
       if (!this.visible(this.p.x(x, y), this.p.y(x, y))) continue;
       const arc = Math.sin(f * Math.PI);
-      // the arc is steep: climbing, then diving onto the target
+      // the arc is steep: climbing, then diving onto the target (barrage shells: no rocket flame)
       const rot = this.p.angle(s.rkTx[r] - s.rkSx[r], s.rkTy[r] - s.rkSy[r]);
+      const shell = s.rkShell[r] === 1;
+      const tex = this.projTex[shell ? P_SHELL : P_MISSILE];
       if (this.iso) {
-        const z = 8 + arc * 130;
-        this.proj.push(this.projTex[P_MISSILE], this.p.x(x, y), this.p.y(x, y) - z, rot, 0.9, 0.9, 0xd8d0b0, 1);
-        this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z, 0, 0.3, 0.3, 0xffa040, 0.7, 0.5);
+        const z = 8 + arc * (shell ? 200 : 130);
+        this.proj.push(tex, this.p.x(x, y), this.p.y(x, y) - z, rot, 0.9, 0.9, 0xd8d0b0, 1);
+        if (!shell) this.glow.push(this.fxTex[FX_GLOW], this.p.x(x, y), this.p.y(x, y) - z, 0, 0.3, 0.3, 0xffa040, 0.7, 0.5);
       } else {
         const g = 0.9 + arc * 1.1;
-        this.proj.push(this.projTex[P_MISSILE], x, y, rot, g, g, 0xd8d0b0, 1);
-        this.glow.push(this.fxTex[FX_GLOW], x, y, 0, 0.3 * g, 0.3 * g, 0xffa040, 0.7, 0.5);
+        this.proj.push(tex, x, y, rot, g, g, 0xd8d0b0, 1);
+        if (!shell) this.glow.push(this.fxTex[FX_GLOW], x, y, 0, 0.3 * g, 0.3 * g, 0xffa040, 0.7, 0.5);
       }
     }
     this.proj.end();

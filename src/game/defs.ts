@@ -75,7 +75,7 @@ export interface EnemyGun {
   /** Fighters: shoots only at the defender's aircraft. */
   air?: boolean;
   /** Sound and tracer: small arms, automatic fire, tank gun, aircraft rockets, rocket artillery. */
-  fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha';
+  fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha' | 'satchel';
 }
 
 export const EN_INFANTRY = 0;

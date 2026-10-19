@@ -109,7 +109,7 @@ function fortName(mm: number): string {
 function weaponLine(e: EnemyDef): string {
   const g = e.gun;
   if (!g) return 'unarmed';
-  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo` }[g.fx];
+  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo`, satchel: 'satchel charges' }[g.fx];
   return `${what} · ${g.pen} mm · range ${g.range}${g.halt ? ' · halts to fire' : ''}`;
 }
 
@@ -593,6 +593,10 @@ export class Hud {
     if (sim.eSlowT[i] > 0) tags.push('slowed');
     if (sim.eJam[i] > 0) tags.push('jammed');
     if (sim.eSupp[i] > 0.05) tags.push(`suppressed ${Math.round(sim.eSupp[i] * 100)}%`);
+    if (sim.eWall[i] > 0) tags.push('breaking through a wall');
+    else if (sim.eBreach[i]) tags.push('going for a breach');
+    if (sim.eSmoked[i]) tags.push('in smoke');
+    if (sim.eAimT[i] > 0) tags.push('halted, aiming');
     return tags.join(', ');
   }
 

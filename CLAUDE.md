@@ -157,6 +157,12 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   is false after firing (`seenT`) or once spotted (`knownT`, set in `updateSpotting()` by any attacker within
   its `spotRange` × (1 − 0.7·camo); recon has a long `EnemyDef.spot`). Hidden guns hit harder; tower mode
   `MODE_AMBUSH` (4) waits for a flank or point-blank shot. Units: `unitHidden()` / `uKnownT`.
+- Intelligence: `breach` flow fields (emplacement cells passable at a cost of their max HP and fort; corner
+  rule from the real walls; rebuilt when `towerVersion` changes, not saved). Tanks and sappers compare the
+  way round with the way through (`thinkBreach`, never on Easy) and shell the wall in front (`eWall`).
+  Sappers lift mines and wire; tanks pop smoke under AT fire (`sm*`, blinds both ways); armoured waves open
+  with a barrage on known positions (`barrage`, shells in the `rk*` arrays); `adapt()` trades infantry for
+  armour by what you built and adds Il-2s if you have no flak.
 - Balance: `WW2=1 npm run bot`. The AI partner is off in WW2 for now.
 
 ## Balance notes

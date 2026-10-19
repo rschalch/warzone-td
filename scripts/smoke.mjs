@@ -103,7 +103,7 @@ try {
   check(true, 'WW2 game starts with the German arsenal');
   const ww2 = await page.evaluate(() => {
     const { Session, Sim, session } = window.game;
-    const cfg = { ...session.config, seed: 5, difficulty: 'easy' };
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal' }; // Normal: the enemy also breaches walls
     // ballistics: an MG-42 can't hurt a T-34; a Panzerschreck goes through from any side
     const s = Sim.create(cfg);
     const mg = s.place(window.game.towerIndex('mg42'), 10, 10, true);

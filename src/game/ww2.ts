@@ -187,6 +187,7 @@ export const SU_IS2 = 10;
 export const SU_IL2 = 11;
 export const SU_YAK = 12;
 export const SU_KATYUSHA = 13;
+export const SU_SAPPER = 14;
 
 const SOVIET: EnemyDef[] = [
   { name: 'Rifle Squad', hp: 30, speed: 44, reward: 2, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_rifle', bio: 2, inf: true, gun: { dmg: 2.5, range: 110, rate: 0.7, pen: 7, supp: 0.03, fx: 'rifle' } },
@@ -204,6 +205,8 @@ const SOVIET: EnemyDef[] = [
   { name: 'Yak-9 Fighter', hp: 60, speed: 110, reward: 4, armor: 0, air: true, radius: 12, lives: 1, tex: 'su_yak', bio: 0, gun: { dmg: 7, range: 120, rate: 3, pen: 15, supp: 0, fx: 'mg', air: true } },
   { name: 'BM-13 Katyusha', hp: 90, speed: 58, reward: 9, armor: 0, air: false, radius: 11, lives: 1, tex: 'su_katyusha', bio: 1,
     gun: { dmg: 22, range: 340, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 16, fx: 'katyusha' } },
+  { name: 'Sapper Squad', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_sapper', bio: 2, inf: true,
+    gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
 ];
 
 function sovietWave(n: number): SpawnGroup[] {
@@ -246,6 +249,8 @@ function sovietWave(n: number): SpawnGroup[] {
         break;
     }
   }
+  // assault engineers go ahead of the armour: they blow walls, lift mines and cut wire
+  if (n >= 6 && n % 10 !== 0 && n % 5 !== 0 && n % 4 !== 1) add(SU_SAPPER, 2 + n * 0.12, 1.4, 3);
   // rocket artillery shells the positions ahead of the armour
   if (n >= 8 && n % 10 !== 0 && n % 5 !== 0 && (n % 4 === 3 || n % 4 === 0)) add(SU_KATYUSHA, 1 + n * 0.05, 5, 6);
   if (n >= 7 && n % 3 === 1) add(SU_SNIPER, 2 + n * 0.25, 1.2, 5);

@@ -20,8 +20,12 @@ export class FlowField {
   /** cost[i]: time to cross cell i relative to open ground (water is slower), so units take the quickest way. */
   constructor(readonly goals: number[], private readonly cost: Float32Array) {}
 
-  /** blocked[i] != 0 means impassable. Hot (every placement check runs it per route): heap inlined. */
-  compute(blocked: Uint8Array): void {
+  /**
+   * blocked[i] != 0 means impassable. Hot (every placement check runs it per route): heap inlined.
+   * `corners` decides which diagonal squeezes are refused (the breach field passes through walls but
+   * still can't slip between two that touch at a corner).
+   */
+  compute(blocked: Uint8Array, corners: Uint8Array = blocked): void {
     const dist = this.dist;
     const cost = this.cost;
     const next = this.next;
@@ -78,7 +82,7 @@ export class FlowField {
         const j = y * COLS + x;
         if (blocked[j]) continue;
         // diagonal moves may not squeeze between two blocked cells / clip a corner
-        if (dx && dy && (blocked[cy * COLS + x] || blocked[y * COLS + cx])) continue;
+        if (dx && dy && (corners[cy * COLS + x] || corners[y * COLS + cx])) continue;
         const nd = k + NCOST[n] * 0.5 * (cost[i] + cost[j]);
         if (nd < dist[j]) {
           dist[j] = nd;
