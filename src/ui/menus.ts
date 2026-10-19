@@ -171,6 +171,7 @@ export function showCampaign(): void {
 
 function showBriefing(b: Battle): void {
   let difficulty: Difficulty = lastDifficulty;
+  let partner = 0;
   const render = () => {
     const extras = [
       b.objective ? `Keep <b>${esc(b.objective.name)}</b> standing: if it falls, the battle is lost.` : '',
@@ -189,6 +190,9 @@ function showBriefing(b: Battle): void {
             <h3>Difficulty</h3>
             <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}">${DIFFICULTIES[d].name}</button>`).join('')}</div>
             <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win${difficulty === 'easy' ? ' · the enemy never breaches walls' : ''}</p>
+            ${coopLink ? '' : `<h3>AI partner</h3>
+            <div class="seg wide"><button data-partner="0" class="${partner ? '' : 'on'}">Off</button>${PARTNER_ROLES.map((r) => `<button data-partner="${r.share}" class="${partner === r.share ? 'on' : ''}">${r.name}</button>`).join('')}</div>
+            <p class="d">${partner ? `A second commander shares your bank and ${PARTNER_ROLES.find((r) => r.share === partner)!.desc}: it reads the next wave, digs in what the line lacks and keeps its own positions repaired.` : 'Fight alone, or bring in an AI commander to build alongside you.'}</p>`}
           </div>
         </div>
         <div class="actions"><button data-start class="primary">Deploy</button>${back}</div>
@@ -198,12 +202,17 @@ function showBriefing(b: Battle): void {
       difficulty = el.dataset.diff as Difficulty;
       render();
     });
+    on('[data-partner]', (el) => {
+      partner = Number(el.dataset.partner);
+      render();
+    });
     on('[data-start]', () => {
       lastDifficulty = difficulty;
       const perks: Record<string, number> = {};
       for (const p of PERKS) if (perkLevel(p.id)) perks[p.id] = perkLevel(p.id);
       const ww2 = { side: b.side, foe: b.foe, battle: b.id };
       const towers = rulesetFor(ww2).towers;
+      const ai = partner && !coopLink ? partner : undefined;
       host.start({
         map: b.map,
         difficulty,
@@ -212,6 +221,7 @@ function showBriefing(b: Battle): void {
         perks,
         seed: Math.floor(Math.random() * 1e9),
         ww2,
+        partner: ai,
       });
     });
     bindBack(() => showCampaign());
@@ -274,7 +284,7 @@ export function showSetup(map: MapDef, opts: { daily?: string; modifiers?: Modif
   let difficulty: Difficulty = opts.daily ? 'normal' : lastDifficulty;
   let era = opts.daily ? undefined : lastEra;
   // an AI partner is for solo games: not with a human partner, not in the (comparable) daily
-  const canPartnerAt = () => !opts.daily && !coopLink && !era;
+  const canPartnerAt = () => !opts.daily && !coopLink;
   let partner = canPartnerAt() ? opts.partner ?? 0 : 0;
   const mods = new Set<Modifier>(opts.modifiers ?? []);
   const seed = opts.seed ?? Math.floor(Math.random() * 1e9);

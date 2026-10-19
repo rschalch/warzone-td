@@ -153,6 +153,8 @@ Okinawa (1945, Japan: Shuri Line).
 Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:
 Germany vs Soviet Union, Soviet Union vs Germany, Germany vs Allies (Normandy), Allies vs Germany (the
 Bulge), Allies vs Japan (Guadalcanal), Japan vs Allies (Iwo Jima). Phase 7 (the campaign) is done: twelve battles in `src/game/battles.ts`.
+Since then: units dig in, gain veterancy and lay mines; infantry climb dragon's teeth; WW2 commander abilities
+(fire mission, hold the line, recon flight); faction music from public-domain period tunes; the AI partner plays WW2.
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs

@@ -5,8 +5,8 @@ import {
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
-import { HERO_ABILITIES, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
-import { ABILITY_HELP, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
+import { VET_KILLS, heroAbilities, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { ABILITY_HELP, ABILITY_HELP_WW2, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 
 /** Something to explain in the side panel (hovered button, or a target being aimed). */
@@ -23,6 +23,8 @@ export interface HudActions {
   repair(): void;
   train(unit: number): void;
   stance(stance: number): void;
+  dig(): void;
+  mines(): void;
   next(): void;
   speed(s: number): void;
   menu(): void;
@@ -216,7 +218,7 @@ export class Hud {
     this.heroBtn.onclick = () => act.hero();
     this.hoverable(this.heroBtn, { kind: 'hero', index: 0 });
     this.tactical.appendChild(this.heroBtn);
-    HERO_ABILITIES.forEach((a, k) => {
+    heroAbilities().forEach((a, k) => {
       const b = document.createElement('button');
       b.className = 'ab';
       b.title = `${a.name} (${a.key}) — ${a.desc} Cooldown ${a.cd}s.`;
@@ -256,6 +258,8 @@ export class Hud {
       else if (a === 'repair') act.repair();
       else if (el.dataset.train) act.train(Number(el.dataset.train));
       else if (el.dataset.stance) act.stance(Number(el.dataset.stance));
+      else if (a === 'dig') act.dig();
+      else if (a === 'mines') act.mines();
       else if (a === 'fire') act.fire();
       else if (a === 'mup') act.multiUpgrade();
       else if (a === 'msell') act.multiSell();
@@ -388,8 +392,9 @@ export class Hud {
     const state = h.downT > 0 ? `wounded ${Math.ceil(h.downT)}s` : h.level < HERO_MAX_LEVEL ? `${Math.floor((h.xp / sim.heroNextXp(h.level)) * 100)}%` : 'max';
     this.set(this.heroBtn, `<b>Commander</b><span>Lv ${h.level} · ${state}</span><span class="k">H</span>`, true);
     this.heroBtn.classList.toggle('on', ui.heroSelected);
-    HERO_ABILITIES.forEach((a, k) => {
+    heroAbilities().forEach((a, k) => {
       const cd = h.cd[k];
+      this.abilityBtns[k].title = `${a.name} (${a.key}) — ${a.desc} Cooldown ${a.cd}s.`;
       this.set(this.abilityBtns[k], `<b>${a.name}</b><span>${cd > 0 ? `${Math.ceil(cd)}s` : 'ready'}</span><span class="k">${a.key}</span>`, true);
       this.abilityBtns[k].disabled = cd > 0 || h.downT > 0 || ui.mode === 'replay';
     });
@@ -458,7 +463,7 @@ export class Hud {
         <div class="desc" style="margin-top:8px">Shift-drag selects a group. Upgrading goes cheapest first, as far as your money reaches.</div>`;
     } else if (ui.heroSelected && sim.hero) {
       const h = sim.hero;
-      const abil = HERO_ABILITIES.map((a, k) => `<button data-ab="${k}" ${h.cd[k] > 0 || ro ? 'disabled' : ''}>${a.name}${h.cd[k] > 0 ? ` ${Math.ceil(h.cd[k])}s` : ''}</button>`).join('');
+      const abil = heroAbilities().map((a, k) => `<button data-ab="${k}" ${h.cd[k] > 0 || ro ? 'disabled' : ''}>${a.name}${h.cd[k] > 0 ? ` ${Math.ceil(h.cd[k])}s` : ''}</button>`).join('');
       this.info.innerHTML = `
         <div class="title">Commander<span class="lvl">Lv ${h.level}/${HERO_MAX_LEVEL}</span></div>
         <div class="help">${WW2 ? HERO_HELP_WW2 : HERO_HELP}</div>
@@ -470,7 +475,7 @@ export class Hud {
           <tr><td>Kills</td><td>${h.src.kills}</td></tr>
         </table>
         <div class="row abil">${abil}</div>
-        <div class="desc" style="margin-top:8px">${HERO_ABILITIES.map((a) => `<b>${a.key}</b> ${a.name}: ${a.desc}`).join('<br>')}</div>`;
+        <div class="desc" style="margin-top:8px">${heroAbilities().map((a) => `<b>${a.key}</b> ${a.name}: ${a.desc}`).join('<br>')}</div>`;
     } else if (t) {
       const def = TOWERS[t.type];
       const lv = def.levels[t.level];
@@ -581,10 +586,10 @@ export class Hud {
         <div class="desc">Tactical item: one charge comes back at every new wave (up to ${sim.itemMax}).</div>`;
     }
     if (w.kind === 'ability') {
-      const a = HERO_ABILITIES[w.index];
+      const a = heroAbilities()[w.index];
       const cd = sim.hero?.cd[w.index] ?? 0;
       return `<div class="title">${a.name}<span class="lvl">${cd > 0 ? `ready in ${Math.ceil(cd)}s` : 'ready'} · key ${a.key}</span></div>${aimNote}
-        <div class="help">${ABILITY_HELP[w.index]}</div>
+        <div class="help">${(WW2 ? ABILITY_HELP_WW2 : ABILITY_HELP)[w.index]}</div>
         <div class="desc">Commander ability · cooldown ${a.cd}s.</div>`;
     }
     const h = sim.hero;
@@ -649,7 +654,15 @@ export class Hud {
     const d = UNITS[sim.uKind[units[0]]];
     const stance = units.every((u) => sim.uStance[u] === sim.uStance[units[0]]) ? sim.uStance[units[0]] : -1;
     const air = units.every((u) => sim.uAir[u]);
-    const buttons = air ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>`;
+    const fighters = units.filter((u) => UNITS[sim.uKind[u]].gun && !sim.uAir[u]);
+    const dugAll = fighters.length > 0 && fighters.every((u) => sim.uDig[u] > 0);
+    const digging = fighters.some((u) => sim.uDig[u] > 0 && sim.uDig[u] < 1);
+    const engineers = units.some((u) => UNITS[sim.uKind[u]].repair);
+    const orders = [
+      fighters.length ? `<button data-act="dig" class="${dugAll ? 'on' : ''}" title="Foxholes for soldiers (half damage and suppression), hull-down for tanks (only the front armour shows). Dug-in units are hidden while they hold fire and can't move; any move order climbs out. Takes ${4}s." ${ro}>${dugAll ? (digging ? 'Digging…' : 'Dug in') : 'Dig in'} <span class="k">D</span></button>` : '',
+      engineers ? `<button data-act="mines" title="Each selected engineer buries an anti-tank mine around the point you click (paid as one built there)." ${ro}>Lay mines <span class="k">M</span></button>` : '',
+    ].join('');
+    const buttons = air ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>${orders ? `<div class="row modes">${orders}</div>` : ''}`;
     let body: string;
     if (one >= 0) {
       const g = d.gun;
@@ -661,7 +674,9 @@ export class Hud {
           ${d.repair ? `<tr><td>Repairs</td><td>${d.repair} HP/s</td></tr>` : ''}
           ${d.heal ? `<tr><td>Heals</td><td>${d.heal} HP/s</td></tr>` : ''}
           ${sim.uAir[one] ? `<tr><td>Patrol</td><td>${Math.ceil(sim.uLife[one])}s left</td></tr>` : ''}
-          <tr><td>Kills</td><td>${sim.uKills[one]}</td></tr>
+          <tr><td>Kills</td><td>${sim.uKills[one]}${vetLine(sim, one)}</td></tr>
+          ${sim.uDig[one] > 0 ? `<tr><td>Cover</td><td>${sim.uDig[one] >= 1 ? (d.arm ? 'hull-down' : 'in a foxhole') : `digging in ${Math.round(sim.uDig[one] * 100)}%`}</td></tr>` : ''}
+          ${sim.uLay[one] >= 0 ? '<tr><td>Task</td><td>laying a mine</td></tr>' : ''}
           ${sim.unitHidden(one) ? '<tr><td>Status</td><td>hidden from the enemy</td></tr>' : ''}
         </table>`;
     } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
@@ -682,4 +697,12 @@ export class Hud {
   perfLine(html: string): void {
     this.set(this.perfText, html, true);
   }
+}
+
+/** Veterancy: the rank's stars, and how many kills to the next one. */
+function vetLine(sim: Sim, u: number): string {
+  const v = sim.unitVet(u);
+  const stars = v ? ` · <b style="color:#ffd34a">${'★'.repeat(v)}</b> ${['', 'Veteran', 'Hardened', 'Elite'][v]}` : '';
+  const next = v < 3 ? ` (${VET_KILLS[v] - sim.uKills[u]} to ${['Veteran', 'Hardened', 'Elite'][v]})` : '';
+  return stars + next;
 }

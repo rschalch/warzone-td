@@ -183,6 +183,18 @@ export const HERO_ABILITIES = [
   { name: 'Stun Grenade', key: '\\', cd: 25, desc: 'Stops every unit near the target for 2.5s.' },
 ] as const;
 
+/** WW2: the commander calls in the guns, rallies the line and sends a spotter plane. */
+export const WW2_ABILITIES = [
+  { name: 'Fire Mission', key: '[', cd: 40, desc: 'The divisional guns drop ten shells around the target.' },
+  { name: 'Hold the Line', key: ']', cd: 50, desc: 'Crews near the commander shake off suppression and fire 40% faster for 8s.' },
+  { name: 'Recon Flight', key: '\\', cd: 30, desc: 'A spotter plane marks every attacker near the target for 20s: snipers revealed, +20% damage taken.' },
+] as const;
+
+/** The commander's abilities in the running ruleset. */
+export function heroAbilities(): readonly { name: string; key: string; cd: number; desc: string }[] {
+  return WW2 ? WW2_ABILITIES : HERO_ABILITIES;
+}
+
 export const HERO_MAX_LEVEL = 10;
 
 export interface Hero {
@@ -219,6 +231,8 @@ interface Strike {
 }
 
 const TURN_RATE = 10; // rad/s for turrets
+/** WW2: speed of infantry climbing over dragon's teeth. */
+const TEETH_CLIMB = 0.35;
 const STEALTH_DETECT = 45; // px: any tower spots a stealth unit this close
 /** WW2: penetration of the commander's submachine gun. */
 const HERO_PEN = 8;
@@ -250,6 +264,11 @@ export const STANCES = [
 /** How far a Guard leaves its post to chase, and how far a Hunt looks for prey (px). */
 const GUARD_LEASH = 150;
 const HUNT_RANGE = 420;
+/** s to dig a foxhole or a hull-down scrape, and to bury a mine. */
+const DIG_TIME = 4;
+const LAY_TIME = 2.5;
+/** Kills for each veterancy rank (1-3). */
+export const VET_KILLS = [3, 8, 15];
 /** Defender ids for units: -(UNIT_ID0 + slot). */
 const UNIT_ID0 = 10;
 /** WW2: the tower targeting mode that holds fire for a flank or point-blank shot. */
@@ -286,6 +305,11 @@ export class Sim {
   private readonly breachCost = new Float32Array(COLS * ROWS);
   private readonly breachBlocked = new Uint8Array(COLS * ROWS);
   private breachVersion = -1;
+  /** WW2: infantry climb over dragon's teeth (slowly); their own flow fields, rebuilt with the breach fields. */
+  readonly foot: FlowField[];
+  private readonly footCost = new Float32Array(COLS * ROWS);
+  private readonly footBlocked = new Uint8Array(COLS * ROWS);
+  private hasTeeth = false;
   /** Speed factor of the bare ground (water slows ground units) and the matching path cost. Static per map. */
   private readonly groundSlow = new Float32Array(COLS * ROWS);
   private readonly moveCost = new Float32Array(COLS * ROWS);
@@ -366,6 +390,8 @@ export class Sim {
   readonly eStunT = new Float32Array(MAX_ENEMIES);
   /** WW2: suppression 0..1 — pinned infantry crawl and keep their heads down. */
   readonly eSupp = new Float32Array(MAX_ENEMIES);
+  /** WW2: s left marked by the player's recon flight (seen everywhere, takes more damage). */
+  readonly eMarkT = new Float32Array(MAX_ENEMIES);
   /** WW2 intelligence: breaching a wall (0/1), the tower id it is breaking through, s spent stuck, smoke used, inside smoke, sapper work timer. */
   readonly eBreach = new Uint8Array(MAX_ENEMIES);
   readonly eWall = new Int32Array(MAX_ENEMIES);
@@ -455,6 +481,11 @@ export class Sim {
   readonly uKnownT = new Float32Array(MAX_UNITS); // s the enemy keeps track of it after spotting it
   readonly uKills = new Int32Array(MAX_UNITS);
   readonly uTask = new Int32Array(MAX_UNITS).fill(-1); // engineers: tower id; medics: unit slot (-2 the commander)
+  /** Digging in: 0 in the open, rising to 1 (dug in: foxhole or hull-down) over DIG_TIME. */
+  readonly uDig = new Float32Array(MAX_UNITS);
+  /** Engineers: the cell they are going to mine (-1 none), and s spent burying it. */
+  readonly uLay = new Int32Array(MAX_UNITS).fill(-1);
+  private readonly uWork = new Float32Array(MAX_UNITS);
   nextUnitUid = 1;
   /** Stands in as the damage source for unit fire (id -2), and as the aim point of shots at a unit. */
   private readonly unitSrc: Tower = Sim.proxy(-2);
@@ -561,6 +592,7 @@ export class Sim {
     this.fields = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
     this.scratch = map.routes.map((r) => new FlowField(r.exit, this.moveCost));
     this.breach = map.routes.map((r) => new FlowField(r.exit, this.breachCost));
+    this.foot = map.routes.map((r) => new FlowField(r.exit, this.footCost));
     for (const f of this.fields) f.compute(this.blocked);
     for (let i = 0; i < MAX_ENEMIES; i++) this.eFree[i] = MAX_ENEMIES - 1 - i;
     this.eFreeTop = MAX_ENEMIES;
@@ -648,7 +680,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -825,6 +857,10 @@ export class Sim {
       }
       case 'unitMove':
         return this.unitMove(cmd.ids, cmd.x, cmd.y);
+      case 'unitDig':
+        return this.unitDig(cmd.ids);
+      case 'unitMines':
+        return this.unitMines(cmd.ids, cmd.x, cmd.y);
       case 'unitStance': {
         let any = false;
         for (const id of cmd.ids) {
@@ -1725,7 +1761,9 @@ export class Sim {
     const h = this.hero;
     if (!h || h.downT > 0 || a < 0 || a > 2 || h.cd[a] > 0) return false;
     const power = 1 + 0.15 * (h.level - 1);
-    if (a === 0) {
+    if (WW2) {
+      if (!this.ww2Ability(a, x, y, power)) return false;
+    } else if (a === 0) {
       // carpet bombing across the line from the hero to the target
       const dx = x - h.x;
       const dy = y - h.y;
@@ -1748,8 +1786,36 @@ export class Sim {
       this.fx(FX_RING, 1, x, y, 0, 0, 0.4, 10, 140, 1, 0xfff0a0, 0, 0);
       this.ev(EV_STATUS, x, y, 3);
     }
-    h.cd[a] = HERO_ABILITIES[a].cd;
+    h.cd[a] = heroAbilities()[a].cd;
     this.ev(EV_ABILITY, x, y, a);
+    return true;
+  }
+
+  /** WW2 abilities: a fire mission, holding the line (rally), a recon flight. */
+  private ww2Ability(a: number, x: number, y: number, power: number): boolean {
+    const h = this.hero!;
+    x = Math.min(MAP_W, Math.max(0, x));
+    y = Math.min(MAP_H, Math.max(0, y));
+    if (a === 0) {
+      const dmg = 120 * power * (1 + 0.1 * this.wave);
+      for (let k = 0; k < 10; k++) {
+        const ang = this.rng.next() * TWO_PI;
+        const r = Math.sqrt(this.rng.next()) * 85;
+        this.strikes.push({ x: x + Math.cos(ang) * r, y: y + Math.sin(ang) * r, t: 1.4 + k * 0.16, dmg, r: 42, src: h.src, pen: 45 });
+      }
+    } else if (a === 1) {
+      h.rallyT = 8;
+      for (const t of this.towers) if ((t.x - h.x) ** 2 + (t.y - h.y) ** 2 < 160 * 160) t.supp = 0;
+      this.fx(FX_RING, 1, h.x, h.y, 0, 0, 0.6, 10, 320, 0.8, 0xffd84a, 0, 0);
+    } else {
+      // the spotter flies in from the nearest map edge, over the target and on
+      const from = x < MAP_W / 2 ? -200 : MAP_W + 200;
+      this.streak(from, y - 120, 140, 2 * x - from, y + 120, 140, 1.4, 0xe8eef4, 1.5);
+      this.forEachInRange(x, y, 180, true, true, (i) => {
+        this.eMarkT[i] = 20 + 2 * (h.level - 1);
+      });
+      this.fx(FX_RING, 1, x, y, 0, 0, 0.8, 20, 360, 0.7, 0x9fd8ff, 0, 0);
+    }
     return true;
   }
 
@@ -1891,6 +1957,19 @@ export class Sim {
       }
     }
     for (const f of this.breach) f.compute(this.breachBlocked, this.blocked);
+    // the foot fields: dragon's teeth are a climb, not a wall
+    this.footBlocked.set(this.blocked);
+    this.footCost.set(this.moveCost);
+    this.hasTeeth = false;
+    for (const t of this.towers) {
+      if (TOWERS[t.type].slot !== 'teeth' || t.wreck) continue;
+      this.hasTeeth = true;
+      for (const c of this.cellsOf(t)) {
+        this.footBlocked[c] = 0;
+        this.footCost[c] = this.moveCost[c] / TEETH_CLIMB;
+      }
+    }
+    if (this.hasTeeth) for (const f of this.foot) f.compute(this.footBlocked);
   }
 
   /** Attackers that can break a wall: tanks with HE, sappers with satchel charges. */
@@ -2097,7 +2176,7 @@ export class Sim {
   /** Is unit u hidden from the enemy: camouflaged or in ambush, standing still and not just fired? */
   unitHidden(u: number): boolean {
     const d = UNITS[this.uKind[u]];
-    return (!!d.camo || this.uStance[u] === ST_AMBUSH) && this.uSeenT[u] <= 0 && this.uKnownT[u] <= 0 && this.uPathI[u] >= this.uPathLen[u];
+    return (!!d.camo || this.uStance[u] === ST_AMBUSH || this.uDig[u] >= 1) && this.uSeenT[u] <= 0 && this.uKnownT[u] <= 0 && this.uPathI[u] >= this.uPathLen[u];
   }
 
   private spawnUnit(kind: number, x: number, y: number, cell: number): number {
@@ -2125,6 +2204,9 @@ export class Sim {
     this.uKnownT[u] = 0;
     this.uKills[u] = 0;
     this.uTask[u] = -1;
+    this.uDig[u] = 0;
+    this.uLay[u] = -1;
+    this.uWork[u] = 0;
     this.unitVersion++;
     return u;
   }
@@ -2145,6 +2227,7 @@ export class Sim {
     if (d.arm) {
       let armour: number;
       if (top) armour = d.arm[3];
+      else if (this.uDig[u] >= 1) armour = d.arm[0]; // hull-down: only the turret front shows
       else {
         const rel = Math.abs(angleDiff(this.uAng[u], Math.atan2(sy - this.uY[u], sx - this.uX[u])));
         armour = rel < Math.PI / 4 ? d.arm[0] : rel > (Math.PI * 3) / 4 ? d.arm[2] : d.arm[1];
@@ -2153,9 +2236,11 @@ export class Sim {
       a = r >= 1 ? dmg : r < 0.7 ? 0 : dmg * 0.25 * ((r - 0.7) / 0.3);
       if (a <= 0 && dmg >= 20 && !top) this.fx(FX_SPARK, 1, this.uX[u], this.uY[u], this.vr.range(-120, 120), this.vr.range(-120, 120), 0.25, 6, 1, 1, 0xffe0a0, 4, 8);
     } else if (d.inf) {
-      this.uSupp[u] = Math.min(1, this.uSupp[u] + supp);
-      a *= 1 - 0.35 * this.uSupp[u];
+      const dug = this.uDig[u] >= 1;
+      this.uSupp[u] = Math.min(1, this.uSupp[u] + supp * (dug ? 0.5 : 1));
+      a *= (1 - 0.35 * this.uSupp[u]) * (dug ? 0.5 : 1);
     }
+    a *= 1 - 0.08 * this.unitVet(u);
     if (a <= 0) return;
     this.uHp[u] -= a;
     if (this.uHp[u] <= 0) this.killUnit(u);
@@ -2311,8 +2396,14 @@ export class Sim {
     const y = this.uY[u];
     const stance = this.uStance[u];
 
-    // ---- support roles: engineers repair, medics heal
-    if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
+    // ---- digging in: any order to move gets them out of the hole
+    if (moving && this.uDig[u] > 0) this.uDig[u] = 0;
+    else if (this.uDig[u] > 0 && this.uDig[u] < 1) this.uDig[u] = Math.min(1, this.uDig[u] + DT / DIG_TIME);
+    const dug = this.uDig[u] > 0;
+
+    // ---- support roles: engineers repair (or lay the mines they were told to), medics heal
+    if (this.uLay[u] >= 0) this.layMine(u, moving);
+    else if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
     if (d.repair && this.uTask[u] >= 0) this.doRepair(u, d.repair);
     if (d.heal) this.doHeal(u, d.heal);
 
@@ -2324,7 +2415,7 @@ export class Sim {
       t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false);
       this.uTgt[u] = t;
       if (t >= 0) this.uTuid[u] = this.eUid[t];
-      if (!this.uOrder[u] && this.uTask[u] < 0) {
+      if (!this.uOrder[u] && this.uTask[u] < 0 && this.uLay[u] < 0 && !dug) {
         const tx = t >= 0 ? this.eX[t] : 0;
         const ty = t >= 0 ? this.eY[t] : 0;
         const d2 = t >= 0 ? (tx - x) ** 2 + (ty - y) ** 2 : 0;
@@ -2414,7 +2505,8 @@ export class Sim {
     const y = this.uY[u];
     const tx = this.eX[t];
     const ty = this.eY[t];
-    this.uCd[u] = 1 / g.rate;
+    const vet = this.unitVet(u);
+    this.uCd[u] = 1 / (g.rate * (1 + 0.1 * vet));
     this.uSeenT[u] = d.camo ? 2.5 : 1.5;
     const src = this.unitSrc;
     src.x = x;
@@ -2422,7 +2514,9 @@ export class Sim {
     this.proxyRange = g.range;
     this.proxySupp = g.supp ?? 0;
     const airMult = this.eAir[t] ? (g.hitsAir ? 1 : 0) : 1;
-    if (airMult > 0 && this.damage(t, g.dmg * bonus * airMult, false, src, false, g.pen, false)) this.uKills[u]++;
+    if (airMult > 0 && this.damage(t, g.dmg * bonus * airMult * (1 + 0.15 * vet), false, src, false, g.pen, false)) {
+      if (++this.uKills[u] === VET_KILLS[vet]) this.ev(EV_LEVEL, x, y, -1); // promoted
+    }
     // cosmetic
     const z = this.uAir[u] ? AIR_Z : d.inf ? 6 : 10;
     const tz = this.eAir[t] ? AIR_Z + 6 : 6;
@@ -2434,6 +2528,75 @@ export class Sim {
     this.streak(x + ca * r, y + sa * r, z, tx, ty, tz, big ? 0.12 : 0.07, 0xffe0a0, big ? 2 : 0.9);
     if (big) for (let k = 0; k < 3; k++) this.fx(FX_SMOKE, 0, x + ca * r, y + sa * r, ca * 40 + this.vr.range(-20, 20), sa * 40 + this.vr.range(-20, 20), 0.8, 6, 18, 0.45, 0xa8a49a, 3, z);
     this.ev(EV_USHOT, x, y, this.uKind[u]);
+  }
+
+  /** Veterancy rank 0-3 from kills: hits harder, reloads faster, takes less damage. */
+  unitVet(u: number): number {
+    const k = this.uKills[u];
+    return k >= VET_KILLS[2] ? 3 : k >= VET_KILLS[1] ? 2 : k >= VET_KILLS[0] ? 1 : 0;
+  }
+
+  /** Player order: dig in (foxholes for soldiers, hull-down for tanks), or climb out if all are dug in already. */
+  private unitDig(ids: number[]): boolean {
+    const us = ids.map((id) => this.unitSlot(id)).filter((u) => u >= 0 && !this.uAir[u] && UNITS[this.uKind[u]].gun);
+    if (!us.length) return false;
+    const out = us.every((u) => this.uDig[u] > 0);
+    for (const u of us) {
+      if (out) this.uDig[u] = 0;
+      else if (this.uDig[u] <= 0) {
+        this.uDig[u] = 0.001;
+        this.uPathLen[u] = this.uPathI[u]; // stop where it stands
+        this.uOrder[u] = 0;
+        this.uPostX[u] = this.uX[u];
+        this.uPostY[u] = this.uY[u];
+      }
+    }
+    return true;
+  }
+
+  /** Player order: the selected engineers each bury an anti-tank mine around (x, y), paid as one built there. */
+  private unitMines(ids: number[], x: number, y: number): boolean {
+    let k = 0;
+    for (const id of ids) {
+      const u = this.unitSlot(id);
+      if (u < 0 || !UNITS[this.uKind[u]].repair) continue;
+      // one mine each, on a little grid around the target
+      const side = 3;
+      const c = Math.floor(x / TILE) + ((k % side) - 1);
+      const r = Math.floor(y / TILE) + (Math.floor(k / side) % side) - 1;
+      k++;
+      if (c < 0 || r < 0 || c >= COLS || r >= ROWS) continue;
+      if (!this.unitPathTo(u, c, r, c, r)) continue;
+      this.uLay[u] = r * COLS + c;
+      this.uWork[u] = 0;
+      this.uTask[u] = -1;
+      this.uOrder[u] = 1;
+      this.uDig[u] = 0;
+    }
+    return k > 0;
+  }
+
+  /** An engineer on a mine-laying order: walk to the cell, dig for a while, place the mine. */
+  private layMine(u: number, moving: boolean): void {
+    const cell = this.uLay[u];
+    const c = cell % COLS;
+    const r = (cell / COLS) | 0;
+    const cx = (c + 0.5) * TILE;
+    const cy = (r + 0.5) * TILE;
+    if (moving) return;
+    if ((this.uX[u] - cx) ** 2 + (this.uY[u] - cy) ** 2 > 18 * 18) {
+      this.uLay[u] = -1; // could not get there
+      return;
+    }
+    this.uWork[u] += DT;
+    if ((this.ticks + u) % 15 === 0) this.fx(FX_SMOKE, 0, cx + this.vr.range(-5, 5), cy + this.vr.range(-5, 5), 0, -10, 0.6, 4, 8, 0.5, 0x8a7458, 0, 2);
+    if (this.uWork[u] < LAY_TIME) return;
+    this.uLay[u] = -1;
+    this.uOrder[u] = 0;
+    this.uPostX[u] = this.uX[u];
+    this.uPostY[u] = this.uY[u];
+    const mine = TOWERS.findIndex((d) => d.slot === 'atmine');
+    if (mine < 0 || !this.place(mine, c, r)) this.ev(EV_DENY, cx, cy, 0);
   }
 
   /** Engineers and medics look for work near their post (Hold: only within reach). */
@@ -2605,11 +2768,12 @@ export class Sim {
 
     this.refreshAuras();
     this.updateSpawners();
+    // derived paths first, so a restored game moves exactly like the original
+    if (WW2 && this.breachVersion !== this.towerVersion) this.refreshBreach();
     this.updateEnemies();
     this.hash.build(this.live, this.liveCount, this.eX, this.eY);
     this.updateTowers();
     if (WW2) {
-      if (this.breachVersion !== this.towerVersion) this.refreshBreach();
       if (this.smCount) this.updateSmoke();
       this.updateUnits();
       if (this.ticks % 10 === 0) this.updateSpotting();
@@ -2683,6 +2847,7 @@ export class Sim {
     this.eHackT[i] = 0;
     this.eStunT[i] = 0;
     this.eSupp[i] = 0;
+    this.eMarkT[i] = 0;
     this.eTgt[i] = 0;
     this.eAimT[i] = 0;
     this.eBreach[i] = 0;
@@ -2809,6 +2974,10 @@ export class Sim {
       gr = gr < 0 ? 0 : gr >= ROWS ? ROWS - 1 : gr;
       const g = (this.eGCell[i] = gr * COLS + gc);
       this.eSeen[i] = this.radarGrid[g];
+      if (this.eMarkT[i] > 0) {
+        this.eMarkT[i] -= DT;
+        this.eSeen[i] = 1;
+      }
       const jam = (this.eJam[i] = this.jamGrid[g]);
       const air = this.eAir[i] === 1;
       const def = ENEMIES[this.eKind[i]];
@@ -2900,11 +3069,13 @@ export class Sim {
         if (y < 0) cy = 0;
         else if (cy >= ROWS) cy = ROWS - 1;
         const breaching = this.eBreach[i] === 1;
-        const field = breaching ? this.breach[this.eRoute[i]] : this.fields[this.eRoute[i]];
+        const onFoot = this.hasTeeth && def.inf && !breaching;
+        const field = breaching ? this.breach[this.eRoute[i]] : onFoot ? this.foot[this.eRoute[i]] : this.fields[this.eRoute[i]];
         let cell = cy * COLS + cx;
         // brushing a tower corner can put us in a blocked cell: steer from the last good one
-        if (this.blocked[cell] || field.dist[cell] === Infinity) cell = this.eCell[i];
+        if ((onFoot ? this.footBlocked : this.blocked)[cell] || field.dist[cell] === Infinity) cell = this.eCell[i];
         else this.eCell[i] = cell;
+        if (onFoot && this.blocked[cell]) sp *= TEETH_CLIMB; // clambering over the teeth
         if (WW2 && (this.ticks + i) % 60 === 0 && this.canBreach(def)) this.thinkBreach(i, def, cell);
         if (def.gun?.fx === 'satchel' && (this.ticks + i) % 6 === 0) this.sapperWork(i);
         const dist = field.dist[cell];
@@ -2974,6 +3145,7 @@ export class Sim {
     if (!this.eAlive[i]) return false;
     let a = amount * (1 + this.eJam[i]);
     if (WW2) {
+      if (this.eMarkT[i] > 0) a *= 1.2;
       a = this.ballistics(i, a, src, pen, top);
       if (a <= 0) return false;
       pierce = true; // armour has been dealt with
@@ -3178,6 +3350,7 @@ export class Sim {
     const range = lv.range * t.rangeMult;
     const h = this.hero;
     const rallied = h !== null && h.rallyT > 0 && (t.x - h.x) ** 2 + (t.y - h.y) ** 2 < 160 * 160;
+    if (rallied && WW2) t.supp = 0;
     const rate = lv.rate * t.rateMult * (rallied ? 1.4 : 1);
     let dmg = lv.damage * t.dmgMult;
     const airMult = def.airMult * t.airBonus;

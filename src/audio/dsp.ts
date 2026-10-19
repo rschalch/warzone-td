@@ -389,6 +389,18 @@ export const RECIPES: Record<string, { variants: number; render: () => Buf }> = 
       ), 1.4));
     },
   },
+  recon: { // a light spotter plane droning over: rises, passes, falls in pitch
+    variants: 1,
+    render: () => {
+      const pass = (t: number) => Math.exp(-(((t - 1.6) / 0.9) ** 2));
+      const doppler = (t: number) => 1 + 0.06 * Math.tanh((1.6 - t) * 2.5);
+      return finish(sat(mix(3,
+        [tone(3.4, { wave: 'saw', lp: 900, gain: 0.5, freq: (t) => 92 * doppler(t) + 3 * Math.sin(2 * Math.PI * 31 * t), env: pass })],
+        [tone(3.4, { wave: 'square', lp: 700, gain: 0.2, freq: (t) => 184 * doppler(t), env: pass })],
+        [noise(3.4, { color: 'brown', env: (t) => pass(t) * 0.7, f0: 300, gain: 1, flutter: [46, 0.6] })],
+      ), 1.3));
+    },
+  },
   ricochet: {
     variants: 3,
     render: () => finish(mix(0.6,

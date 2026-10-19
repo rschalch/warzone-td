@@ -312,6 +312,31 @@ def('d_smine', 20, 20, (g) => {
   }
 });
 
+def('d_foxhole', 30, 30, (g) => {
+  // the hole: dark, churned earth
+  const gr = g.createRadialGradient(0, 0, 2, 0, 0, 11);
+  gr.addColorStop(0, 'rgba(40,30,20,0.85)');
+  gr.addColorStop(1, 'rgba(70,54,36,0.5)');
+  g.fillStyle = gr;
+  g.beginPath();
+  g.arc(0, 0, 11, 0, Math.PI * 2);
+  g.fill();
+  // a parapet of sandbags round it
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
+    g.save();
+    g.translate(Math.cos(a) * 12, Math.sin(a) * 12);
+    g.rotate(a + Math.PI / 2);
+    g.fillStyle = k % 2 ? '#a89470' : '#9a8662';
+    g.strokeStyle = 'rgba(40,30,15,0.6)';
+    g.lineWidth = 0.7;
+    g.beginPath();
+    g.ellipse(0, 0, 4.2, 2.4, 0, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.restore();
+  }
+});
 def('pip', 8, 5, (g) => {
   g.fillStyle = '#ffd34a';
   g.strokeStyle = '#3a2a00';

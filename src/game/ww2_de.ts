@@ -125,7 +125,7 @@ export const GERMAN: TowerDef[] = growAll([
 
   // ---- obstacles
   RT({
-    kind: 'teeth', slot: 'teeth', role: 'barricade', cat: 'maze', name: "Dragon's Teeth", short: 'Teeth', desc: 'Concrete obstacles: a cheap 1×1 wall for shaping the maze.',
+    kind: 'teeth', slot: 'teeth', role: 'barricade', cat: 'maze', name: "Dragon's Teeth", short: 'Teeth', desc: 'Concrete obstacles: a cheap 1×1 wall against vehicles. Infantry climb over, slowly.',
     size: 1, hitsGround: false, hitsAir: false, airMult: 0, color: 0xb0aca0, turret: null, aim: 'static', targeted: false, single: true,
     levels: [{ cost: 4, damage: 0, range: 0, rate: 0 }],
   }),
@@ -204,7 +204,7 @@ const HELP: Record<string, string> = {
   depot: 'Produces no damage. At every new wave it pays a fixed income plus interest on the money you are holding (up to a cap).',
   observer: 'An observation post with a scissors periscope. Artillery fires at anything it sees, Soviet snipers inside it are revealed, and guns nearby get extra range.',
   hq: 'A field headquarters with officers and radios: every emplacement in range fires faster.',
-  teeth: 'Concrete dragon\'s teeth: a cheap 1×1 obstacle that blocks the way. Shape the maze with it so tanks have to turn in front of your guns.',
+  teeth: 'Concrete dragon\'s teeth: a cheap 1×1 obstacle that blocks every vehicle. Shape the maze with it so tanks have to turn in front of your guns. Infantry can clamber over (at a third of their speed), so foot soldiers may take a short cut through a line of teeth — cover it with an MG.',
   wire: 'Barbed wire on the path. It never blocks the route; infantry get tangled and crawl through, while vehicles drive straight over it.',
   teller: 'Anti-tank mines buried in the path. Only a vehicle sets them off; the blast tears through the thin belly armour. They re-arm after a while.',
   smine: 'Bounding mines that leap up and burst at waist height. Only infantry set them off. They pin down whoever survives.',

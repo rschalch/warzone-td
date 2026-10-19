@@ -15,7 +15,7 @@ import { PARTNER } from './game/partner';
 import {
   Sim as SimClass,
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
-  AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, HERO_ABILITIES, MAX_UNITS, type Sim, type Tower,
+  AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, heroAbilities, MAX_UNITS, type Sim, type Tower,
 } from './game/sim';
 import { BATTLES } from './game/battles';
 import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, setsFor, towerIcon, type Atlas } from './render/atlas';
@@ -60,7 +60,7 @@ let unitSel: number[] = [];
 /** Enemy being inspected (slot + uid, so a recycled slot isn't mistaken for it). */
 let enemySel: { slot: number; uid: number } | null = null;
 /** A superweapon, item or hero ability waiting for its target click. */
-let targeting: { kind: 'super' | 'item' | 'ability'; index: number; r: number; color: number } | null = null;
+let targeting: { kind: 'super' | 'item' | 'ability' | 'mines'; index: number; r: number; color: number } | null = null;
 let aimX = 0;
 let aimY = 0;
 let hoverCol = -9;
@@ -125,6 +125,8 @@ const hud = new Hud({
   repair: () => repairSelected(),
   train: (unit) => selected && issue({ t: 'train', id: selected.id, unit }),
   stance: (stance) => unitSel.length && issue({ t: 'unitStance', ids: unitSel, stance }),
+  dig: () => unitSel.length && issue({ t: 'unitDig', ids: unitSel }),
+  mines: () => startMines(),
   fire: () => startSuper(),
   next: () => issue({ t: 'wave' }),
   speed: (s) => setSpeed(s),
@@ -294,7 +296,7 @@ function selectHero(): void {
 function startAbility(a: number): void {
   const s = sim();
   if (!s?.hero || session!.mode === 'replay') return;
-  if (s.hero.cd[a] > 0) return flash(`${HERO_ABILITIES[a].name} ready in ${Math.ceil(s.hero.cd[a])}s`);
+  if (s.hero.cd[a] > 0) return flash(`${heroAbilities()[a].name} ready in ${Math.ceil(s.hero.cd[a])}s`);
   if (a === 1) {
     issue({ t: 'heroAbility', ability: 1, x: s.hero.x, y: s.hero.y });
     return;
@@ -303,12 +305,26 @@ function startAbility(a: number): void {
   targeting = { kind: 'ability', index: a, r: a === 0 ? 90 : 70, color: a === 0 ? 0xff7a3a : 0xfff07a };
 }
 
+/** WW2: the selected engineers wait for a point to mine. */
+function startMines(): void {
+  const s = sim();
+  if (!s || session!.mode === 'replay') return;
+  const eng = unitSel.filter((id) => {
+    const u = s.unitSlot(id);
+    return u >= 0 && UNITS[s.uKind[u]].repair;
+  });
+  if (!eng.length) return flash('Select engineers to lay mines');
+  placing = -1;
+  targeting = { kind: 'mines', index: 0, r: 24 + 8 * Math.min(eng.length, 9), color: 0xc8a060 };
+}
+
 /** Fires whatever is waiting for a target at (x, y). */
 function fireTargeting(x: number, y: number): void {
   if (!targeting) return;
   const t = targeting;
   if (t.kind === 'super') issue({ t: 'fire', id: t.index, x, y });
   else if (t.kind === 'item') issue({ t: 'item', item: t.index, x, y });
+  else if (t.kind === 'mines') issue({ t: 'unitMines', ids: unitSel, x, y });
   else issue({ t: 'heroAbility', ability: t.index, x, y });
   targeting = null;
 }
@@ -420,6 +436,7 @@ function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
     };
   }
   hideMenus();
+  sound.setFaction(cfg.ww2?.side);
   sound.setMusic(true);
   if (opts.restore) flash('Game restored — paused. Press Space to continue.');
 }
@@ -903,6 +920,8 @@ function bindInput(): void {
     if (k >= '0' && k <= '9') return pick(k === '0' ? 9 : Number(k) - 1);
     if (k === 'g') return toggleGate();
     if (k === 'b' && WW2) return repairSelected();
+    if (k === 'd' && WW2 && unitSel.length) return void issue({ t: 'unitDig', ids: unitSel });
+    if (k === 'm' && WW2 && unitSel.length) return startMines();
     if (k === 'r') return startSuper();
     if (k === 'h') return selectHero();
     if (k === 'z') return startItem(0);
@@ -1006,7 +1025,7 @@ function handleEvents(s: Sim): void {
         sound.play(a === 2 ? 'coin' : 'item');
         break;
       case EV_ABILITY:
-        sound.play(['airstrike', 'rally', 'stun'][a]);
+        sound.play((WW2 ? ['arty', 'rally', 'recon'] : ['airstrike', 'rally', 'stun'])[a]);
         break;
       case EV_DENY:
         sound.play('deny');
@@ -1108,7 +1127,7 @@ function frame(): void {
     hud.update(s, {
       placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy, units,
       ground: cellCol >= 0 && cellRow >= 0 && cellCol < COLS && cellRow < ROWS ? s.map.grid[cellRow * COLS + cellCol] : -1,
-      aiming: targeting ? { kind: targeting.kind, index: targeting.index } : null,
+      aiming: targeting && targeting.kind !== 'mines' ? { kind: targeting.kind, index: targeting.index } : null,
     });
     minimap?.update(viewQuad());
     renderTimeAcc += performance.now() - t1;
@@ -1228,6 +1247,9 @@ async function boot(): Promise<void> {
     /** Tower type and unit kind by name, for scripted checks. */
     towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),
     towerDef: (type: number) => TOWERS[type],
+    get COLS() {
+      return COLS;
+    },
     BATTLES,
     enemyDef: (kind: number) => ENEMIES[kind],
     MAPS,

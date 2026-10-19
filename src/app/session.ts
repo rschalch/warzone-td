@@ -72,7 +72,7 @@ export class Session {
       this.link = opts.link;
       this.link.onMessage = (msg) => this.receive(msg);
     }
-    if (config.partner && !config.ww2 && !opts.replay && !opts.link) this.partner = new Partner(config.partner);
+    if (config.partner && !opts.replay && !opts.link) this.partner = new Partner(config.partner);
   }
 
   get mode(): 'local' | 'replay' | 'coop' {

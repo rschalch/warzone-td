@@ -36,12 +36,19 @@ Union**, the **Western Allies** or **Japan** — and hold the line against anoth
 - **The enemy fires back** at your emplacements and units: tanks halt to aim, emplacements have HP and
   fortification (sandbags, timber, concrete) and become rubble you can rebuild; workshops and engineers repair.
 - **Units**: barracks, motor pool and airfield train squads, MG and anti-tank teams, snipers, engineers, medics,
-  tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances.
+  tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances. Units dig in (foxholes, hull-down tanks),
+  earn veterancy ranks from their kills, and engineers lay anti-tank mines. Dragon's teeth stop vehicles; infantry
+  climb over them.
+- **Commander**: fire missions, Hold the Line (rallies suppressed crews) and recon flights that mark attackers.
 - **Stealth**: camouflaged guns are hidden until spotted or until they fire; recon units find them; Ambush mode.
 - **Enemy intelligence**: tanks and sappers breach long thin mazes, tanks pop smoke, artillery prepares the
   assault, waves adapt to your defence. Banzai charges and kamikazes for Japan.
 - **Super-weapons**: Stuka and V-2, Il-2 regiment and the B-4 howitzer, P-47s and Little Boy, Vals and the
   Type 98 spigot mortar.
+- **Music** of each side, arranged from period tunes in the public domain: Haydn's *Lied der Deutschen* and the
+  *Ride of the Valkyries*; *The Internationale* and *Korobeiniki*; *The Star-Spangled Banner* and *Yankee
+  Doodle*; *Kōjō no Tsuki* and *Sakura Sakura*.
+- **Co-op with AI** works in WW2 and in the campaign.
 
 ## Modes
 - **Campaign maps** and **random maps** (size, routes, rock density and terrain from a shareable code such as `M2-12-48213`).

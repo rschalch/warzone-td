@@ -176,7 +176,18 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `restore()` clears the constructor's towers before loading the saved ones), `airLocked()`, money and enemy
   speed; the ruleset applies the battle's roster and doctrine. Maps are painted with the `Painter` in that file
   and get a ground `theme` (terrain shader palette, theatre trees, ruins for rocks). `BATTLE=all npm run bot`.
-- The AI partner is off in WW2 for now.
+- Infantry climb dragon's teeth (`slot: 'teeth'`): `foot` flow fields (teeth passable at 1/`TEETH_CLIMB` cost),
+  rebuilt with the breach fields at the start of a tick, before enemies move. Vehicles use the normal fields.
+- Units dig in (`unitDig`, `uDig` 0→1 over `DIG_TIME`: half damage and suppression for soldiers, front armour only
+  for hull-down tanks, hidden while holding fire; a move order climbs out), gain veterancy from kills
+  (`unitVet()`, `VET_KILLS`), and engineers lay AT mines (`unitMines`, `uLay`, paid like a placed mine).
+- Commander abilities in WW2 are `WW2_ABILITIES` (read them through `heroAbilities()`): Fire Mission (shells as
+  `strikes`), Hold the Line (rally + clears suppression), Recon Flight (`eMarkT`: revealed, +20% damage taken).
+- AI partner: `Partner.chooseWW2()` picks arsenal slots by the next waves' armour / aircraft / infantry share, and
+  rebuilds its own rubble first.
+- Music: each faction's public-domain tunes (`src/audio/anthems.ts`, `ANTHEMS`) replace the score in its games
+  (`sound.setFaction(side)`). Tunes are bars of `note:length` in 16ths with chord symbols; `Track.steps` sets the
+  metre (12 for 3/4 and 6/8, 18 for 9/8).
 
 ## Balance notes
 

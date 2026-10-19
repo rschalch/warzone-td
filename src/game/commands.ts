@@ -15,6 +15,8 @@ export type Command =
   | { t: 'train'; id: number; unit: number }
   | { t: 'unitMove'; ids: number[]; x: number; y: number }
   | { t: 'unitStance'; ids: number[]; stance: number }
+  | { t: 'unitDig'; ids: number[] }
+  | { t: 'unitMines'; ids: number[]; x: number; y: number }
   | { t: 'fire'; id: number; x: number; y: number }
   | { t: 'wave' }
   | { t: 'undo' }

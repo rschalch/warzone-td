@@ -71,6 +71,12 @@ export const ABILITY_HELP = [
   'Throws a grenade (up to 260px away) that stops every ground unit near the impact for 2.5 seconds.',
 ];
 
+export const ABILITY_HELP_WW2 = [
+  'Calls a fire mission on the point you click: ten shells from the divisional artillery land around it after a short flight time. Good against massed infantry and light vehicles; heavy tanks shrug off all but direct hits on the engine deck. Grows with your commander\'s level.',
+  'Your commander walks the line: every emplacement within 160px shakes off its suppression and fires 40% faster for 8 seconds.',
+  'A spotter plane flies over the point you click. Every attacker within 180px is marked for 20 seconds (longer at higher levels): hidden snipers are revealed and your guns, correcting their aim, deal 20% more damage to them.',
+];
+
 export const HERO_HELP = 'Your commander: a unit you move around the battlefield. Select it (H or click it), then click the ground to walk there. It shoots anything in range, earns XP from its kills and gains damage and range with every level. It cannot be hurt.';
 
 export const HERO_HELP_WW2 = 'Your commander: an officer you move around the battlefield. Select it (H or click it), then click the ground to walk there. It shoots anything in range and earns XP. The enemy shoots back, and snipers hunt officers. When wounded it is out of action for 20 s and comes back at its command post. Wounds heal slowly.';

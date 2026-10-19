@@ -503,6 +503,16 @@ export class GameRenderer {
       if (TOWERS[tw.type].walkable || tw.open) this.drawDecal(tw, time);
       else sorter.add(this.depth(tw.x, tw.y), C_TOWER | t);
     }
+    if (WW2) {
+      // foxholes, and scrapes for hull-down tanks, growing as they dig
+      for (let u = 0; u < MAX_UNITS; u++) {
+        const dig = s.uDig[u];
+        if (!s.uAlive[u] || dig <= 0 || !this.visible(p.x(s.uX[u], s.uY[u]), p.y(s.uX[u], s.uY[u]))) continue;
+        const d = UNITS[s.uKind[u]];
+        const k = ((d.arm ? 1.5 : 1) * (0.4 + 0.6 * dig) * (d.radius * 2 + 14)) / 30;
+        this.decals.push(this.atlas.d_foxhole, s.uX[u], s.uY[u], d.arm ? s.uAng[u] : 0, k, d.arm ? k * 0.75 : k, 0xffffff, 0.5 + 0.5 * dig, 0.5);
+      }
+    }
     this.decals.end();
     for (let n = 0; n < s.liveCount; n++) {
       const i = s.live[n];
@@ -873,6 +883,12 @@ export class GameRenderer {
       this.world.push(this.unitTopTex[s.uKind[u]], sx, sy, ang, 1, 1, 0xffffff, a);
     }
     const f = s.uHp[u] / d.hp;
+    const vet = s.unitVet(u);
+    if (vet) {
+      // rank chevrons above the unit
+      const vy = sy - (this.iso ? this.unitTop[s.uKind[u]] + 10 : d.radius + 11);
+      for (let n = 0; n < vet; n++) this.bars.push(this.atlas.pip, sx, vy - n * 3, 0, 1, 1, 0xffffff, 1, 0.5);
+    }
     if (f < 0.999 || sel) {
       const w = d.radius * 2 + 4;
       const by = sy - (this.iso ? this.unitTop[s.uKind[u]] + 6 : d.radius + 7);

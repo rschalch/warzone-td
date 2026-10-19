@@ -148,6 +148,9 @@ try {
     plan.unshift([0, { t: 'place', type: barracks, col: bc, row: br }]);
     plan.push([12, { t: 'train', id: 1, unit: window.game.unitIndex('grenadier') }]);
     plan.push([900, { t: 'unitMove', ids: [1], x: 500, y: 600 }], [1300, { t: 'unitStance', ids: [1], stance: 2 }]);
+    // and the newer orders: pioneers laying mines, digging in, a recon flight
+    plan.push([1000, { t: 'train', id: 1, unit: window.game.unitIndex('pioneer') }], [1700, { t: 'unitMines', ids: [2], x: 520, y: 640 }]);
+    plan.push([2000, { t: 'unitDig', ids: [1] }], [2600, { t: 'heroAbility', ability: 2, x: 600, y: 500 }], [2700, { t: 'heroAbility', ability: 0, x: 600, y: 500 }]);
     for (let w = 0; w < 6; w++) plan.push([10 + w * 700, { t: 'wave' }]);
     plan.sort((p, q) => p[0] - q[0]);
     plan.push([1500, { t: 'upgrade', ids: [2] }]);
@@ -166,7 +169,32 @@ try {
       c.step();
     }
     const units = a.sim.nextUnitUid - 1;
-    return { unseen, spotted, units, shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
+    // dig-in, veterancy, mine-laying, the recon flight, infantry over dragon's teeth
+    const d = Sim.create(cfg);
+    const UI = window.game.unitIndex;
+    const gren = d.spawnUnit(UI('grenadier'), 400, 400, 10 * 60);
+    d.exec({ t: 'unitDig', ids: [d.uUid[gren]] });
+    for (let n = 0; n < 300; n++) d.step();
+    const dug = d.uDig[gren] >= 1;
+    d.uKills[gren] = 8;
+    const vet = d.unitVet(gren);
+    const pio = d.spawnUnit(UI('pioneer'), 300, 300, 9 * 60);
+    d.money = 1000;
+    const mineSlot = (t) => window.game.towerDef(t.type).slot === 'atmine';
+    d.exec({ t: 'unitMines', ids: [d.uUid[pio]], x: 340, y: 300 });
+    for (let n = 0; n < 900; n++) d.step();
+    const mines = d.towers.filter(mineSlot).length;
+    const foe = d.spawnEnemy(0, 1);
+    d.eX[foe] = 700; d.eY[foe] = 700; d.eSpeed[foe] = 0;
+    d.step(); // into the spatial hash
+    d.hero.cd[2] = 0;
+    d.exec({ t: 'heroAbility', ability: 2, x: 700, y: 700 });
+    const marked = d.eMarkT[foe] > 0;
+    const teeth = d.place(window.game.towerIndex('teeth'), 25, 25, true);
+    d.step();
+    const cell = 25 * window.game.COLS + 25;
+    const climb = !!teeth && d.fields[0].dist[cell] === Infinity && d.foot[0].dist[cell] < Infinity;
+    return { dug, vet, mines, marked, climb, unseen, spotted, units, shelled, repaired, mgHurt, atHurt, wave: a.sim.wave, kills: a.sim.totalKills, replay, restore: a.sim.stateHash() === c.stateHash() };
   });
   check(ww2.mgHurt === 0 && ww2.atHurt > 0, `WW2 armour: MG-42 bounces off a T-34 (${ww2.mgHurt}), Panzerschreck goes through (${Math.round(ww2.atHurt)})`);
   check(ww2.shelled && ww2.repaired, `WW2 return fire: a T-34 shells an MG nest (${ww2.shelled}), repair restores it (${ww2.repaired})`);
@@ -223,7 +251,26 @@ try {
   check(battle.preset >= 10 && battle.objective, `WW2 campaign: Omaha's bunkers are dug in (${battle.preset}), Stalingrad has its objective (${battle.objective})`);
   check(battle.replay && battle.restore, `WW2 battles replay (${battle.replay}) and restore (${battle.restore}) exactly`);
   check(ww2.unseen && ww2.spotted, `WW2 camouflage: a tank misses a hidden sniper (${ww2.unseen}), a recon jeep spots it (${ww2.spotted})`);
-  check(ww2.units >= 1, `WW2 units: the barracks trains a squad (${ww2.units})`);
+  check(ww2.units >= 2, `WW2 units: the barracks trains squads (${ww2.units})`);
+  check(ww2.dug && ww2.vet === 2 && ww2.mines >= 1, `WW2 units dig in (${ww2.dug}), gain veterancy (${ww2.vet}), pioneers lay mines (${ww2.mines})`);
+  check(ww2.marked && ww2.climb, `WW2 recon flight marks attackers (${ww2.marked}); infantry climb dragon's teeth, tanks can't (${ww2.climb})`);
+  // the AI partner in WW2: builds from the arsenal, and replays exactly
+  const ai2 = await page.evaluate(() => {
+    const { Session, Sim, session } = window.game;
+    const cfg = { ...session.config, seed: 8, partner: 0.5 };
+    const a = new Session(cfg);
+    a.speed = 4;
+    a.issue({ t: 'wave' });
+    while (a.sim.ticks < 3600) a.advance(1 / 240);
+    const owned = (s) => s.towers.filter((t) => t.owner === 1).map((t) => t.id).join(',');
+    const b = new Session(cfg, { replay: a.log });
+    b.speed = 4;
+    while (b.sim.ticks < a.sim.ticks) b.advance(1 / 240);
+    const c = Sim.restore(structuredClone(a.sim.snapshot()));
+    Sim.create(session.config);
+    return { built: a.sim.towers.filter((t) => t.owner === 1).length, replay: b.sim.stateHash() === a.sim.stateHash() && owned(b.sim) === owned(a.sim), restore: owned(c) === owned(a.sim) };
+  });
+  check(ai2.built >= 3 && ai2.replay && ai2.restore, `WW2 AI partner builds (${ai2.built} positions), replays (${ai2.replay}) and restores (${ai2.restore})`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);

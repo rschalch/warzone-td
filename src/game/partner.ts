@@ -7,7 +7,7 @@
 // No randomness: the same game state always gives the same decision.
 
 import type { Command } from './commands';
-import { COLS, ENEMIES, TILE, TOWERS, towerIndex, type TowerKind } from './defs';
+import { COLS, ENEMIES, TILE, TOWERS, WW2, towerIndex, type TowerKind } from './defs';
 import type { Sim, Tower } from './sim';
 
 /** Owner id of the partner's towers (the player's are 0). */
@@ -61,6 +61,8 @@ export class Partner {
   private spoken = new Set<string>();
   private greeted = false;
   private plan: Plan | null = null;
+  /** WW2: tick until which a position isn't asked for again (a rebuild fails while the enemy stands in the rubble). */
+  private repairWait = new Map<number, number>();
 
   constructor(private readonly share: number) {}
 
@@ -93,7 +95,7 @@ export class Partner {
       const cost = sim.cost(this.plan.type);
       if (cost > budget) return null;
       // spare money goes into upgrades while the placement is being worked out
-      if (sim.ticks % DECIDE_EVERY === 0) {
+      if (sim.ticks % DECIDE_EVERY === 0 && !WW2) {
         const own = sim.towers.filter((t) => t.owner === PARTNER);
         const up = own.length >= 8 ? this.bestUpgrade(sim, own, budget - cost) : null;
         if (up) return { t: 'upgrade', ids: [up.id] };
@@ -103,10 +105,22 @@ export class Partner {
     if (budget < 8 || sim.ticks % DECIDE_EVERY) return null;
     const own = sim.towers.filter((t) => t.owner === PARTNER);
     const threat = this.threat(sim);
+    if (WW2) {
+      // WW2: its own rubble rebuilt, and badly damaged positions patched, before anything new
+      const hurt = own
+        .filter((t) => sim.repairCost(t) > 0 && (t.wreck || t.hp < sim.maxHp(t) * 0.4) && (this.repairWait.get(t.id) ?? 0) <= sim.ticks)
+        .sort((a, b) => Number(b.wreck) - Number(a.wreck) || b.spent - a.spent)[0];
+      if (hurt && sim.repairCost(hurt) <= budget) {
+        this.repairWait.set(hurt.id, sim.ticks + 240);
+        if (hurt.wreck) this.say(`wreck${hurt.id}:${sim.wave}`, `Rebuilding my ${TOWERS[hurt.type].short}.`);
+        return { t: 'repair', ids: [hurt.id] };
+      }
+    }
 
     // upgrade every third action once the partner has a real defence
-    if (own.length >= 8 && this.actions % 3 === 2) {
-      const up = this.bestUpgrade(sim, own, Infinity);
+    // (WW2: the number of positions is the maze and the line, so upgrades come much later and cheaper)
+    if (WW2 ? own.length >= 16 && this.actions % 5 === 4 : own.length >= 8 && this.actions % 3 === 2) {
+      const up = this.bestUpgrade(sim, own, WW2 ? 90 : Infinity);
       if (up) {
         if (sim.upgradeCost(up) > budget) return null; // save up for it
         this.actions++;
@@ -175,6 +189,12 @@ export class Partner {
         if (e.air) th.air += hp;
         if (e.stealth) th.stealth += hp;
         if (e.shield || e.heal) th.shielded += hp;
+        if (WW2) {
+          // tanks and armoured cars by their front plate; infantry as the "swarm"
+          if (e.arm && e.arm[0] >= 20) th.armored += hp;
+          if (e.inf) th.swarm += hp;
+          continue;
+        }
         if (e.armor >= 3) th.armored += hp;
         if (e.hp < 60 && g.count >= 10) th.swarm += hp;
       }
@@ -201,7 +221,61 @@ export class Partner {
     return ok.length ? ok[this.actions % ok.length] : -1;
   }
 
+  /** WW2: arsenal slots (the same for every side), rotating like pick(). */
+  private pickSlot(sim: Sim, slots: string[]): number {
+    const ok = slots.map((sl) => TOWERS.findIndex((t) => t.slot === sl)).filter((i) => i >= 0 && sim.allowed(i) && !sim.airLocked(i));
+    return ok.length ? ok[this.actions % ok.length] : -1;
+  }
+
+  /** WW2: MGs as the backbone, anti-tank guns in step with the armour, flak with the aircraft, then artillery. */
+  private chooseWW2(sim: Sim, th: Threat): number {
+    const n = new Map<string, number>();
+    let total = 0;
+    for (const t of sim.towers) {
+      const sl = TOWERS[t.type].slot ?? '';
+      n.set(sl, (n.get(sl) ?? 0) + 1);
+      if (TOWERS[t.type].cat !== 'maze') total++;
+    }
+    const c = (sl: string) => n.get(sl) ?? 0;
+    const first = (slots: string[]) => {
+      for (const sl of slots) {
+        const t = this.pickSlot(sim, [sl]);
+        if (t >= 0) return t;
+      }
+      return -1;
+    };
+    if ((sim.wave >= 4 || th.air > 0.06) && c('lightaa') + 2 * c('heavyaa') < 1 + total / 7) {
+      if (th.air > 0.06) this.say(`air${sim.wave}`, 'Aircraft in the next waves. Setting up flak.');
+      const t = first(['lightaa', 'heavyaa']);
+      if (t >= 0) return t;
+    }
+    const at = c('atgun') + c('at') + 2 * c('tank') + 2 * c('heavyaa');
+    if ((sim.wave >= 2 || th.armored > 0.15) && at < 1 + total * (th.armored > 0.35 ? 0.33 : 0.25)) {
+      if (th.armored > 0.35) this.say(`armor${sim.wave}`, 'Heavy armour coming. More anti-tank guns.');
+      const t = sim.wave >= 10 && sim.money >= 200 ? first(this.actions % 2 ? ['tank', 'atgun'] : ['heavyaa', 'atgun']) : first(this.actions % 3 === 0 ? ['at', 'atgun'] : ['atgun', 'at']);
+      if (t >= 0) return t;
+    }
+    if (c('howitzer') > c('observer')) {
+      const t = first(['observer']);
+      if (t >= 0) return t;
+    }
+    if (sim.wave >= 5 && c('workshop') < total / 12) {
+      const t = first(['workshop']);
+      if (t >= 0) {
+        this.say('workshop', 'A repair workshop behind the line will keep our positions standing.');
+        return t;
+      }
+    }
+    if (sim.money >= 120 && total > 6) return this.pickSlot(sim, th.swarm > 0.6 ? ['mortar', 'mg', 'flamer', 'bunker'] : ['mortar', 'howitzer', 'rockets', 'mg', 'bunker']);
+    if (sim.money >= 40 && this.actions % 3 === 2) {
+      const t = first(['mortar']);
+      if (t >= 0) return t;
+    }
+    return first(['mg', 'atgun']);
+  }
+
   private chooseType(sim: Sim, th: Threat): number {
+    if (WW2) return this.chooseWW2(sim, th);
     let airDps = 0;
     let groundDps = 0;
     for (const t of sim.towers) {

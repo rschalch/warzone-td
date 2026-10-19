@@ -3,6 +3,7 @@
 // panned and attenuated by where they happen relative to the camera, through a convolution reverb.
 // The orchestral music (strings, brass, choir over taiko drums) is played live by oscillators.
 
+import { ANTHEMS } from './anthems';
 import { settings, onSettings } from '../app/settings';
 import { SR } from './dsp';
 
@@ -17,7 +18,7 @@ const THROTTLE: Record<string, number> = {
   gravity: 0.3, repulsor: 0.15, hacker: 0.2, blackhole: 0.5, orbital: 0.4, nukeLaunch: 0.5, hive: 0.07,
   boom: 0.04, bigboom: 0.1, nuke: 0.5, leak: 0.8, wave: 1, build: 0.05, sell: 0.08, upgrade: 0.08,
   deny: 0.2, click: 0.03, level: 0.5, item: 0.2, freeze: 0.1, shatter: 0.08, hack: 0.2, swallow: 0.12,
-  stun: 0.3, airstrike: 0.5, rally: 0.5, coin: 0.06, victory: 1, defeat: 1,
+  stun: 0.3, airstrike: 0.5, recon: 0.45, rally: 0.5, coin: 0.06, victory: 1, defeat: 1,
   mg42: 0.03, flak38: 0.06, pak40: 0.1, flak88: 0.12, tiger: 0.12, schreck: 0.1, mortar: 0.08, nebel: 0.6, stuka: 1, ricochet: 0.07,
   mosin: 0.05, ppsh: 0.04, dt: 0.04, f34: 0.1, rs82: 0.15, wreck: 0.15, katyusha: 1.5, v2: 2, maxim: 0.04, ptrd: 0.08, m1919: 0.035, type92: 0.06, bazooka: 0.1,
 };
@@ -49,7 +50,7 @@ const LIVE = new Set(['wave', 'level', 'rally', 'victory', 'defeat']);
 
 const mtof = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
-interface Voice {
+export interface Voice {
   wave?: OscillatorType;
   voices?: number;
   /** Detune spread across voices (cents). */
@@ -73,10 +74,10 @@ const CHOIR: Voice = { voices: 3, spread: 12, attack: 1.1, release: 1.8, gain: 0
 const HORN: Voice = { voices: 2, spread: 6, attack: 0.3, release: 1, gain: 0.045, cut: 500, peak: 1500, q: 0.8 };
 const CELLO: Voice = { voices: 3, spread: 10, attack: 0.35, release: 1.2, gain: 0.05, cut: 1600 };
 
-interface Track {
+export interface Track {
   bpm: number;
   /** Per bar: bass note and pad voicing (MIDI). */
-  chords: { bass: number; pad: number[] }[];
+  chords: Chord[];
   /** The lead line, two notes per bar, and who plays it (with an octave shift). */
   melody: number[][];
   lead: Voice;
@@ -92,11 +93,28 @@ interface Track {
   kick: [string, string];
   /** Brass stabs: [step, length in 16ths]. */
   brass: [number, number][];
-  /** Times through the 8 bars before the next piece. */
+  /** Times through the bars before the next piece. */
   loops: number;
+  /** 16ths per bar (default 16: 4/4; 12 for 3/4 and 6/8, 18 for 9/8). Patterns above are this long. */
+  steps?: number;
+  /** A real tune instead of `melody`: per bar, [MIDI (0 = rest), length in 16ths] (see anthems.ts). */
+  tune?: [number, number][][];
+  /** How the tune is played: plucked (koto), with tremolo (balalaika), and who doubles it in battle. */
+  pluck?: boolean;
+  tremolo?: boolean;
+  battleLead?: Voice;
+  /** The piece's name, for the settings and the HUD. */
+  name?: string;
 }
 
 const ch = (bass: number, ...pad: number[]) => ({ bass, pad });
+
+export interface Chord {
+  bass: number;
+  pad: number[];
+  /** A second chord from the middle of the bar. */
+  half?: { bass: number; pad: number[] };
+}
 
 const TRACKS: Track[] = [
   { // Last Stand: D minor, Dm Bb F C | Dm Bb Gm A
@@ -179,15 +197,34 @@ export class Sound {
   private timer = 0;
   private level = 0;
   /** The current piece; remembered so the next visit carries on with the following one. */
-  private track = (() => {
+  private track = this.savedTrack();
+  /** 0 calm (menu/build) … 1 heavy fighting. */
+  intensity = 0;
+  /** The pieces in turn: the score, or a WW2 faction's tunes. */
+  private playlist: Track[] = TRACKS;
+  private faction = '';
+
+  /** WW2: play the tunes of the faction the player defends with (none: the score). */
+  setFaction(f?: string): void {
+    if ((f ?? '') === this.faction) return;
+    this.faction = f ?? '';
+    this.playlist = (f && ANTHEMS[f]) || TRACKS;
+    this.track = this.playlist === TRACKS ? this.savedTrack() : 0;
+    this.step = 0;
+  }
+
+  private savedTrack(): number {
     try {
       return (Number(localStorage.getItem('wz-track')) || 0) % TRACKS.length;
     } catch {
       return 0;
     }
-  })();
-  /** 0 calm (menu/build) … 1 heavy fighting. */
-  intensity = 0;
+  }
+
+  /** The piece playing now (for the HUD). */
+  get trackName(): string {
+    return this.playlist[this.track]?.name ?? '';
+  }
 
   constructor() {
     onSettings(() => this.applyVolumes());
@@ -472,12 +509,14 @@ export class Sound {
     const battle = I > 0.6 ? 1 : 0;
     const vol = 0.55 + 0.45 * I;
     // the last beats of every 4th bar: a tom fill (calm) or a crescendo snare roll (battle)
-    const fill = bar % 4 === 3 && s >= 12;
-    if (fill && I > 0.35 && !(battle && bar === 7)) {
-      this.sample(bus, s < 14 ? 'm_tom' : 'm_toml', t, (0.4 + 0.05 * (s - 12)) * vol, 1, false);
-      if (I > 0.6) this.sample(bus, s < 14 ? 'm_tom' : 'm_toml', t + STEP / 2, 0.3 * vol, 1, false);
-    } else if (battle && bar === 7 && s >= 8) {
-      const g = (0.12 + (s - 8) * 0.05) * vol;
+    const n = tr.steps ?? 16;
+    const last = tr.chords.length - 1;
+    const fill = bar % 4 === 3 && s >= n - 4;
+    if (fill && I > 0.35 && !(battle && bar === last)) {
+      this.sample(bus, s < n - 2 ? 'm_tom' : 'm_toml', t, (0.4 + 0.05 * (s - n + 4)) * vol, 1, false);
+      if (I > 0.6) this.sample(bus, s < n - 2 ? 'm_tom' : 'm_toml', t + STEP / 2, 0.3 * vol, 1, false);
+    } else if (battle && bar === last && s >= n / 2) {
+      const g = (0.12 + (s - n / 2) * 0.4 / n) * vol;
       this.sample(bus, 'm_field', t, g, 1, false);
       this.sample(bus, 'm_field', t + STEP / 2, g, 1, false);
     } else {
@@ -497,6 +536,23 @@ export class Sound {
     if (k !== '-') this.sample(bus, 'm_kick', t, (k === 'O' ? 0.85 : 0.5) * vol, 1, false);
   }
 
+  /** A real tune: the notes starting on this 16th, doubled by the brass (an octave down) as the fighting grows. */
+  private tuneStep(bus: AudioNode, tr: Track, t: number, STEP: number, s: number, bar: number, I: number): void {
+    let at = 0;
+    for (const [m, len] of tr.tune![bar]) {
+      if (at === s && m > 0) {
+        const pitch = m + (tr.leadShift ?? 0);
+        const dur = len * STEP;
+        if (tr.tremolo && len >= 4) {
+          for (let k = 0; k < len; k++) this.note(bus, t + k * STEP, STEP * 0.6, pitch, tr.lead, k === 0 ? 1.2 : 0.75);
+        } else this.note(bus, t, tr.pluck ? Math.min(0.08, dur) : dur * 0.92, pitch, tr.lead);
+        if (I > 0.55 && tr.battleLead) this.note(bus, t, dur * 0.9, m - 12, tr.battleLead, Math.min(0.9, (I - 0.55) * 2.5));
+      }
+      at += len;
+      if (at > s) break;
+    }
+  }
+
   private schedule(): void {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running' || settings.music <= 0 || !this.banks.has('m_taiko')) {
@@ -505,27 +561,32 @@ export class Sound {
     }
     const bus = this.musicIn;
     while (this.nextStep < ctx.currentTime + 0.25) {
-      const tr = TRACKS[this.track];
+      const tr = this.playlist[this.track];
       const STEP = 60 / tr.bpm / 4;
+      const n = tr.steps ?? 16;
+      const bars = tr.chords.length;
       const t = this.nextStep;
-      const s = this.step % 16;
-      const bar = Math.floor(this.step / 16) % 8;
+      const s = this.step % n;
+      const bar = Math.floor(this.step / n) % bars;
       // intensity follows the battle over a few seconds, so layers don't flicker in and out
       this.level += (this.intensity - this.level) * 0.03;
       const I = this.level;
-      const ch = tr.chords[bar];
-      const barDur = STEP * 16;
+      const whole = tr.chords[bar];
+      const second = whole.half && s >= n / 2;
+      const ch = second ? whole.half! : whole;
 
-      if (s === 0) {
-        for (const m of ch.pad) this.note(bus, t, barDur - 0.2, m, { ...STRINGS, cut: 700 + 1600 * I });
-        this.note(bus, t, barDur - 0.2, ch.bass, { wave: 'sine', attack: 0.4, release: 1, gain: 0.16, cut: 400 });
-        this.note(bus, t, barDur - 0.2, ch.bass + 12, { ...STRINGS, gain: 0.045 + 0.03 * I });
-        if (I > 0.75) for (const m of ch.pad) this.note(bus, t, barDur - 0.3, m + 12, CHOIR, Math.min(1, (I - 0.75) * 5));
-        if (I > 0.4 && bar % 4 === 0) this.sample(bus, 'm_timp', t, 0.7, mtof(ch.bass + 12) / 73.4, false);
-        if (I > 0.7 && bar === 0) this.sample(bus, 'm_hit', t, 0.6, 1, false);
+      if (s === 0 || (whole.half && s === n / 2)) {
+        const dur = STEP * (whole.half ? n / 2 : n) - 0.2;
+        for (const m of ch.pad) this.note(bus, t, dur, m, { ...STRINGS, cut: 700 + 1600 * I });
+        this.note(bus, t, dur, ch.bass, { wave: 'sine', attack: 0.4, release: 1, gain: 0.16, cut: 400 });
+        this.note(bus, t, dur, ch.bass + 12, { ...STRINGS, gain: 0.045 + 0.03 * I });
+        if (I > 0.75) for (const m of ch.pad) this.note(bus, t, dur - 0.1, m + 12, CHOIR, Math.min(1, (I - 0.75) * 5));
+        if (s === 0 && I > 0.4 && bar % 4 === 0) this.sample(bus, 'm_timp', t, 0.7, mtof(ch.bass + 12) / 73.4, false);
+        if (s === 0 && I > 0.7 && bar === 0) this.sample(bus, 'm_hit', t, 0.6, 1, false);
       }
+      if (tr.tune) this.tuneStep(bus, tr, t, STEP, s, bar, I);
       // the lead line fades out once the brass takes over
-      if ((s === 0 || s === 8) && I < 0.85) {
+      else if ((s === 0 || s === 8) && I < 0.85) {
         this.note(bus, t, STEP * 7.5, tr.melody[bar][s === 0 ? 0 : 1] + (tr.leadShift ?? 0), tr.lead, 1 - Math.max(0, I - 0.55) * 3);
       }
 
@@ -541,8 +602,8 @@ export class Sound {
         const hits = tr.drums[I > 0.8 ? 2 : I > 0.55 ? 1 : 0];
         if (hits.includes(s)) this.sample(bus, s === 0 || s === hits[1] ? 'm_taiko' : s >= 14 ? 'm_tom' : 'm_taiko', t, (s === 0 ? 0.9 : 0.6) * Math.min(1, 0.5 + I), 1, false);
       }
-      if (I > 0.5 && (s === 4 || s === 12)) this.sample(bus, 'm_snare', t, 0.3, 1, false);
-      if (I > 0.8 && bar % 2 === 1 && s === 12) this.sample(bus, 'm_anvil', t, 0.22, 1, false);
+      if (I > 0.5 && (s === n / 4 || s === (3 * n) / 4)) this.sample(bus, 'm_snare', t, 0.3, 1, false);
+      if (I > 0.8 && bar % 2 === 1 && s === (3 * n) / 4) this.sample(bus, 'm_anvil', t, 0.22, 1, false);
       if (I > 0.6) {
         const brass = Math.min(1, (I - 0.6) * 4);
         for (const [at, len] of tr.brass) {
@@ -550,19 +611,21 @@ export class Sound {
         }
       }
       // into the next loop: a cymbal swell (rendered for 76 bpm) and a timpani roll on the last bass note
-      if (I > 0.5 && bar === 7 && s === 4) this.sample(bus, 'm_swell', t, 0.5, tr.bpm / 76, false);
-      if (I > 0.5 && bar === 7 && s >= 8) this.sample(bus, 'm_timp', t, 0.2 + (s - 8) * 0.06, mtof(ch.bass + 12) / 73.4, false);
+      if (I > 0.5 && bar === bars - 1 && s === n / 4) this.sample(bus, 'm_swell', t, 0.5, tr.bpm / 76, false);
+      if (I > 0.5 && bar === bars - 1 && s >= n / 2) this.sample(bus, 'm_timp', t, 0.2 + (s - n / 2) * 0.5 / n, mtof(ch.bass + 12) / 73.4, false);
 
       this.step++;
       this.nextStep += STEP;
       // pieces play in order; each starts over from its first bar
-      if (this.step >= 16 * 8 * tr.loops) {
+      if (this.step >= n * bars * tr.loops) {
         this.step = 0;
-        this.track = (this.track + 1) % TRACKS.length;
-        try {
-          localStorage.setItem('wz-track', String(this.track));
-        } catch {
-          /* private mode */
+        this.track = (this.track + 1) % this.playlist.length;
+        if (this.playlist === TRACKS) {
+          try {
+            localStorage.setItem('wz-track', String(this.track));
+          } catch {
+            /* private mode */
+          }
         }
       }
     }
