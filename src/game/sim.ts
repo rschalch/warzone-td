@@ -134,6 +134,14 @@ export interface Tower {
   build0: number;
   /** WW2: a headquarters the player must hold — its hit points multiplier (0 for everything else). */
   base: number;
+  /** WW2 supply: ammunition left, 0..1 of a full stock (a depot: its store). */
+  ammo: number;
+  /** WW2 morale: s the crew stays shaken after losses nearby (its suppression wears off slower). */
+  shakeT: number;
+  /** WW2 combined arms: s until an infantry position can close-assault a tank again. */
+  nadeCd: number;
+  /** WW2 counter-battery: the enemy's sound-ranging fix on this gun (it answers at 1). */
+  fix: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -164,7 +172,7 @@ export const EV_SELL = 5;
 export const EV_UPGRADE = 6;
 export const EV_WAVE = 7; // a = wave
 export const EV_HIT = 8; // a = damage (big single hits only)
-export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed, 5 ricochet, 6 tracked, 7 critical hit
+export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed, 5 ricochet, 6 tracked, 7 critical hit, 8 surrendered, 9 falling back, 10 officer down
 export const EV_NUKE = 10;
 export const EV_LEVEL = 11; // hero level up, a = level
 export const EV_ITEM = 12; // a = item
@@ -313,6 +321,60 @@ export const MODE_AMBUSH = 4;
 /** s an emplacement or unit stays revealed after firing, and stays known after being spotted. */
 const REVEAL_T = 3;
 const KNOWN_T = 4;
+/** WW2 supply: s of sustained fire in a full stock of ammunition, by role (artillery and AT guns run dry first). */
+const AMMO_S: Partial<Record<Role, number>> = { gun: 100, bunker: 100, sniper: 80, flame: 40, at: 60, cannon: 60, arty: 50 };
+/** Fire rate of a gun that has run dry: the crew scrounges what it can. */
+export const EMPTY_RATE = 0.4;
+/**
+ * Share of a full stock a depot or headquarters hands each gun in reach per s; crews out of reach scrounge this
+ * much under fire, and LULL_SUPPLY times as much while no attacker is on the field (carried up by hand).
+ */
+const RESUPPLY = 0.12;
+const SCROUNGE = 0.006;
+const LULL_SUPPLY = 5;
+/** How far our headquarters supplies the guns round it itself (px). */
+export const HQ_SUPPLY = 200;
+/** Full stocks of ammunition a depot's store holds; a truck from the headquarters fills it again. */
+const DEPOT_LOADS = 6;
+/** A depot below this share of its store calls for a truck; s between trucks leaving; trucks at once. */
+const DEPOT_CALL = 0.6;
+const TRUCK_GAP = 2;
+const MAX_TRUCKS = 8;
+/** WW2: the enemy's supply column: s between trucks, the supply each brings, what a wave uses, s a starved wave waits. */
+const CONVOY_EVERY = 12;
+const CONVOY_LOAD = 0.2;
+const WAVE_SUPPLY = 0.25;
+const STARVED_WAIT = 30;
+/** WW2 morale: below this the attacker breaks (falls back, or surrenders if pinned); losses that shake its neighbours and its wave. */
+const BREAK = 0.3;
+const LOSS_SHOCK = 0.07;
+const OFFICER_SHOCK = 0.35;
+/** WW2 morale, ours: suppression a knocked-out emplacement or a lost unit gives the crews round it, how far, s they stay shaken. */
+const LOSS_SUPP = 0.45;
+const LOSS_R = 160;
+const SHAKEN_T = 8;
+/** WW2 combined arms: escorts per tank, px within which a tank counts as escorted, damage bonus of infantry anti-tank
+ * weapons against an unescorted tank, and the infantry's close assault on one (satchels and grenades: damage, pen, reload). */
+const ESCORTS = 3;
+const ESCORT_R = 60;
+const CLOSE_BONUS = 1.5;
+const ASSAULT_DMG = 45;
+const ASSAULT_PEN = 70;
+const ASSAULT_CD = 7;
+const ASSAULT_SLOTS = new Set(['mg', 'at', 'flamer', 'bunker', 'sniper']);
+/** WW2 counter-battery: shots of ours before the enemy has a fix on a gun, how fast the fix fades (per s), its answer (shells, damage). */
+const FIX_SHOTS = 4;
+const FIX_FADE = 0.01;
+const CB_SHELLS = 5;
+const CB_DMG = 46;
+/** WW2 sight: how far our emplacements, units and commander see (at least), ticks between fog updates, s an attacker stays seen after firing. */
+const TOWER_SIGHT = 140;
+const UNIT_SIGHT = 130;
+const AIR_SIGHT = 220;
+const SIGHT_TICKS = 15;
+const FLASH_SEEN = 2.5;
+/** Ticks between supply rounds (depots, headquarters, trucks). */
+const SUPPLY_TICKS = 30;
 /** WW2 smoke screens at once; s they last; px radius. */
 export const MAX_SMOKE = 64;
 const SMOKE_T = 6;
@@ -352,6 +414,16 @@ export class Sim {
   private readonly moveCost = new Float32Array(COLS * ROWS);
   /** Impassable cells: rocks, mountains, forests and towers. */
   readonly blocked = new Uint8Array(COLS * ROWS);
+  /** WW2: cells that block sight and fire — forests, mountains, rocks and ruins (static per map). */
+  readonly sightBlock = new Uint8Array(COLS * ROWS);
+  /** WW2: per tower id, the cells round it that it can see (a square of 2r+1 cells), derived from the terrain. */
+  private readonly losMasks = new Map<number, { r: number; x: number; y: number; mask: Uint8Array }>();
+  /** WW2 fog of war: cells something of ours sees now (towers' part rebuilt when they change; units' every SIGHT_TICKS). */
+  readonly seenGrid = new Uint8Array(COLS * ROWS);
+  private readonly towerSight = new Uint8Array(COLS * ROWS);
+  private towerSightVersion = -1;
+  /** Bumped when the fog changes (the renderer redraws it). */
+  sightVersion = 0;
   private spawnCount = 0;
 
   readonly config: GameConfig;
@@ -374,6 +446,13 @@ export class Sim {
   garrisonAlive = 0;
   /** WW2 battles: s since the last wave was all in (relief arrives after RELIEF_T). */
   reliefT = 0;
+  /** WW2 supply: s until a headquarters can send the next truck; our trucks' unit kind (-1 none). */
+  truckCd = 0;
+  private readonly truckKind = UNITS.findIndex((u) => u.truck);
+  /** WW2: the enemy's supply for its next waves 0..1, s to its next truck, its trucks on the road. */
+  foeSupply = 1;
+  convoyT = CONVOY_EVERY;
+  convoyAlive = 0;
   money = 0;
   lives = 0;
   private readonly hpMult: number;
@@ -440,6 +519,25 @@ export class Sim {
   readonly eStunT = new Float32Array(MAX_ENEMIES);
   /** WW2: suppression 0..1 — pinned infantry crawl and keep their heads down. */
   readonly eSupp = new Float32Array(MAX_ENEMIES);
+  /** WW2 morale: 1 steady … 0 broken; falling back to their lines; the wave it came with; s spent pinned down. */
+  readonly eMorale = new Float32Array(MAX_ENEMIES);
+  readonly eRetreat = new Uint8Array(MAX_ENEMIES);
+  readonly eWave = new Int16Array(MAX_ENEMIES);
+  private readonly ePinT = new Float32Array(MAX_ENEMIES);
+  /** WW2 combined arms: the tank an infantry squad escorts (slot, -1 none, and its uid), escorts per tank, has infantry close by. */
+  readonly eLead = new Int32Array(MAX_ENEMIES).fill(-1);
+  private readonly eLeadUid = new Int32Array(MAX_ENEMIES);
+  private readonly eEscortN = new Uint8Array(MAX_ENEMIES);
+  readonly eEscort = new Uint8Array(MAX_ENEMIES);
+  /** WW2: smoke screens a wave has laid ahead of its assault (w & 63). */
+  private readonly smokeWave = new Uint8Array(64);
+  /** WW2: is the officer of wave w (w & 63) still alive? */
+  readonly officerAlive = new Uint8Array(64);
+  /** WW2: per route, the way back to the entry for attackers falling back (derived, rebuilt when the maze changes). */
+  private back: FlowField[] = [];
+  private backVersion = -1;
+  /** WW2: s an attacker stays seen after giving itself away by firing. */
+  readonly eSeenT = new Float32Array(MAX_ENEMIES);
   /** WW2: s left marked by the player's recon flight (seen everywhere, takes more damage). */
   readonly eMarkT = new Float32Array(MAX_ENEMIES);
   /** WW2 bases: the garrison position this is (-1: a wave attacker), s of construction left; grenade reload. */
@@ -530,6 +628,10 @@ export class Sim {
   private readonly uGoal = new Int32Array(MAX_UNITS).fill(-1);
   readonly uOrder = new Uint8Array(MAX_UNITS); // walking a player's order
   readonly uSupp = new Float32Array(MAX_UNITS);
+  /** WW2 combined arms: s until a soldier can close-assault a tank again. */
+  private readonly uNadeCd = new Float32Array(MAX_UNITS);
+  /** WW2 morale: s a unit stays shaken after losses round it. */
+  readonly uShakeT = new Float32Array(MAX_UNITS);
   readonly uLife = new Float32Array(MAX_UNITS); // aircraft: s of patrol left
   readonly uSeenT = new Float32Array(MAX_UNITS); // s it stays revealed after firing
   readonly uKnownT = new Float32Array(MAX_UNITS); // s the enemy keeps track of it after spotting it
@@ -541,11 +643,14 @@ export class Sim {
   readonly uLay = new Int32Array(MAX_UNITS).fill(-1);
   private readonly uWork = new Float32Array(MAX_UNITS);
   nextUnitUid = 1;
+  /** The tower whose line of sight findTarget() uses (sight 1). */
+  private sightTower: Tower | null = null;
   /** Stands in as the damage source for unit fire (id -2), and as the aim point of shots at a unit. */
   private readonly unitSrc: Tower = Sim.proxy(-2);
   private readonly aimProxy: Tower = Sim.proxy(-UNIT_ID0);
   private proxyRange = 0;
   private proxySupp = 0;
+  private proxyInf = false;
   /** Bumped when units appear or die (UI resync). */
   unitVersion = 0;
   private readonly bfsPrev = new Int32Array(COLS * ROWS);
@@ -611,7 +716,7 @@ export class Sim {
     return {
       id, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x: 0, y: 0, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
     };
   }
 
@@ -640,6 +745,7 @@ export class Sim {
       const t = map.grid[i];
       this.blocked[i] = t === T_ROCK || t === T_MOUNT || t === T_TREE ? 1 : 0;
       this.groundSlow[i] = t === T_WATER ? WATER_SLOW : 1;
+      this.sightBlock[i] = WW2 && (t === T_ROCK || t === T_MOUNT || t === T_TREE) ? 1 : 0;
       this.moveCost[i] = 1 / this.groundSlow[i];
     }
     this.tarGrid.set(this.groundSlow);
@@ -755,6 +861,8 @@ export class Sim {
         post(kind('mg'), cx, cy, ix, iy, 5, -3.5);
         post(kind('at'), cx, cy, ix, iy, 6.5, 7.5);
         post(kind('mg'), cx, cy, ix, iy, 7, 2);
+        post(kind('depot'), cx, cy, ix, iy, 1.5, 8.5); // their supply dump, behind the headquarters
+        post(kind('arty'), cx, cy, ix, iy, 1, -1); // and their guns, by the road in
       } else {
         post(kind('mg'), cx, cy, ix, iy, 4, 3);
         post(kind('at'), cx, cy, ix, iy, 5, -3.5);
@@ -799,9 +907,9 @@ export class Sim {
     return false;
   }
 
-  /** Attackers on the field, not counting the positions of the enemy's base. */
+  /** Attackers on the field, not counting the positions of the enemy's base and its supply trucks. */
   get attackers(): number {
-    return this.liveCount - this.garrisonAlive;
+    return this.liveCount - this.garrisonAlive - this.convoyAlive;
   }
 
   /** WW2: the headquarters in worst shape, 0..1 (1 when there is none). */
@@ -852,7 +960,12 @@ export class Sim {
 
   /** The spawn groups of wave n, after modifiers. */
   waveGroups(n: number): SpawnGroup[] {
-    const groups = WW2 ? this.adapt(n, buildWave(n)) : buildWave(n);
+    let groups = WW2 ? this.adapt(n, buildWave(n)) : buildWave(n);
+    // short of supply, the enemy sends what it can arm
+    if (WW2 && this.foeSupply < 1) {
+      const f = 0.5 + 0.5 * this.foeSupply;
+      groups = groups.map((g) => ({ ...g, count: Math.max(1, Math.round(g.count * f)) }));
+    }
     if (!this.config.modifiers.includes('airRaid')) return groups;
     // everything flies: aircraft in numbers matching the ground units' threat
     const air = ENEMIES.findIndex((e) => e.air);
@@ -870,7 +983,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth', 'back', 'backVersion', 'sightBlock', 'losMasks', 'sightVersion']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -922,6 +1035,10 @@ export class Sim {
       t.buildT ??= 0;
       t.build0 ??= 0;
       t.base ??= 0;
+      t.ammo ??= 1;
+      t.shakeT ??= 0;
+      t.nadeCd ??= 0;
+      t.fix ??= 0;
       sim.towers.push(t);
       sim.towerById.set(t.id, t);
     }
@@ -948,6 +1065,7 @@ export class Sim {
     for (const f of sim.fields) f.compute(sim.blocked);
     sim.auraVersion = -1;
     sim.breachVersion = -1;
+    sim.backVersion = -1;
     sim.checkKey = '';
     return sim;
   }
@@ -1058,7 +1176,7 @@ export class Sim {
         let any = false;
         for (const id of cmd.ids) {
           const u = this.unitSlot(id);
-          if (u < 0 || UNITS[this.uKind[u]].air) continue;
+          if (u < 0 || UNITS[this.uKind[u]].air || UNITS[this.uKind[u]].truck) continue;
           this.uStance[u] = cmd.stance;
           this.uPostX[u] = this.uX[u];
           this.uPostY[u] = this.uY[u];
@@ -1216,7 +1334,7 @@ export class Sim {
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
-      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0,
+      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -1319,7 +1437,8 @@ export class Sim {
       for (let k = 0; k < n; k++) {
         const i = this.qbuf[k];
         if (!this.eAlive[i]) continue;
-        const r = this.spotRange(this.eKind[i]) * f + t.size * 10;
+        // a tank with infantry round it has more eyes
+        const r = this.spotRange(this.eKind[i]) * f * (this.eEscort[i] ? 1.5 : 1) + t.size * 10;
         if ((this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2 <= r * r) {
           t.knownT = KNOWN_T;
           break;
@@ -1340,6 +1459,497 @@ export class Sim {
         }
       }
     }
+  }
+
+  // ============================================================ WW2: combined arms
+
+  /** Riflemen and assault squads go with the tanks (not snipers, medics, sappers or officers). */
+  private escortKind(def: EnemyDef): boolean {
+    return !!def.inf && !def.stealth && !def.heal && !def.officer && !def.fixed && (def.gun?.fx === 'rifle' || def.gun?.fx === 'smg');
+  }
+
+  /** Infantry squad i joins the nearest tank of its wave and route that still needs escorts. */
+  private findLeader(i: number): void {
+    let best = -1;
+    let bestD = Infinity;
+    for (let n = 0; n < this.liveCount; n++) {
+      const j = this.live[n];
+      const e = ENEMIES[this.eKind[j]];
+      if (!this.eAlive[j] || !e.arm || e.air || e.fixed || this.eRetreat[j] || this.eWave[j] !== this.eWave[i] || this.eRoute[j] !== this.eRoute[i] || this.eEscortN[j] >= ESCORTS) continue;
+      const d = Math.abs(this.eRemain[j] - this.eRemain[i]);
+      if (d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    if (best < 0) return;
+    this.eLead[i] = best;
+    this.eLeadUid[i] = this.eUid[best];
+    this.eEscortN[best]++;
+  }
+
+  /** Speed factor that keeps an escort with its tank: it waits when ahead, hurries when behind. */
+  private escortPace(i: number): number {
+    const j = this.eLead[i];
+    if (!this.eAlive[j] || this.eUid[j] !== this.eLeadUid[i]) {
+      this.eLead[i] = -1;
+      return 1;
+    }
+    const behind = this.eRemain[i] - this.eRemain[j];
+    return behind > 50 ? 1.35 : behind < -30 ? 0.45 : 1;
+  }
+
+  /**
+   * A tank every few ticks: is infantry close round it (else our infantry can close-assault it), and,
+   * leading an assault on a strongpoint, does the wave lay smoke ahead of it?
+   */
+  private checkEscort(i: number, def: EnemyDef): void {
+    const x = this.eX[i];
+    const y = this.eY[i];
+    let n = 0;
+    this.forEachInRange(x, y, ESCORT_R, false, true, (j) => {
+      if (j !== i && ENEMIES[this.eKind[j]].inf) n++;
+    });
+    this.eEscort[i] = n > 0 ? 1 : 0;
+    if (def.fixed || this.eRetreat[i] || this.smokeWave[this.eWave[i] & 63] >= 2 || this.smCount >= MAX_SMOKE) return;
+    // a strongpoint ahead (concrete, a dug-in tank, our headquarters) that they know about
+    for (const t of this.towers) {
+      if (t.wreck || (!t.base && this.fortOf(t) < 25) || this.towerHidden(t)) continue;
+      const d2 = (t.x - x) ** 2 + (t.y - y) ** 2;
+      if (d2 > 230 * 230 || d2 < 90 * 90) continue;
+      const k = this.smCount++;
+      this.smX[k] = x + (t.x - x) * 0.65;
+      this.smY[k] = y + (t.y - y) * 0.65;
+      this.smT[k] = SMOKE_T * 1.5;
+      this.smokeWave[this.eWave[i] & 63]++;
+      for (let s = 0; s < 8; s++) this.fx(FX_SMOKE, 0, this.smX[k], this.smY[k], this.vr.range(-60, 60), this.vr.range(-60, 60), 1.8, 12, 44, 0.8, 0xe8e8e0, 1.2, 6);
+      this.ev(EV_BOOM, this.smX[k], this.smY[k], 0.5);
+      return;
+    }
+  }
+
+  /** Is this an infantry anti-tank weapon (a team with a rocket launcher, a soldier) that profits from a lone tank? */
+  private closeAssaulter(src: Tower): boolean {
+    if (src === this.unitSrc) return this.proxyInf;
+    if (src.id < 0) return false;
+    const d = TOWERS[src.type];
+    return d.slot === 'at';
+  }
+
+  /** Our infantry close-assaults an unescorted tank next to it: satchel charges and grenades on its deck. */
+  private closeAssault(x: number, y: number, reach: number, src: Tower): boolean {
+    let best = -1;
+    let bestD = reach * reach;
+    const n = this.hash.query(x, y, reach, this.qbuf);
+    for (let k = 0; k < n; k++) {
+      const i = this.qbuf[k];
+      const e = ENEMIES[this.eKind[i]];
+      if (!this.eAlive[i] || !e.arm || e.air || e.fixed || this.eEscort[i]) continue;
+      const d2 = (this.eX[i] - x) ** 2 + (this.eY[i] - y) ** 2;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = i;
+      }
+    }
+    if (best < 0) return false;
+    const ex = this.eX[best];
+    const ey = this.eY[best];
+    this.damage(best, ASSAULT_DMG * (1 + 0.05 * this.wave), false, src, false, ASSAULT_PEN, true);
+    this.explosion(ex, ey, 0.8, 6);
+    return true;
+  }
+
+  // ============================================================ WW2: counter-battery
+
+  /**
+   * The enemy has a fix on gun t: its battery (if it stands and is ready) answers with a few shells
+   * on that position, and its muzzle flashes give it away for a moment.
+   */
+  private counterBattery(t: Tower): void {
+    let g = -1;
+    for (let k = 0; k < MAX_GARRISON; k++) if (this.gKind[k] >= 0 && ENEMIES[this.gKind[k]].fixed === 'arty' && this.gSlot[k] >= 0 && this.eBuild[this.gSlot[k]] <= 0) g = k;
+    if (g < 0) return; // no guns to answer with: the fix stays until they have
+    t.fix = 0;
+    const i = this.gSlot[g];
+    this.eSeenT[i] = 6;
+    const dmg = CB_DMG * (0.6 + 0.4 * this.hpMult);
+    for (let k = 0; k < CB_SHELLS && this.rkCount < MAX_ROCKETS; k++) {
+      const r = this.rkCount++;
+      const a = this.rng.next() * TWO_PI;
+      const d = Math.sqrt(this.rng.next()) * 26;
+      this.rkSx[r] = this.gX[g];
+      this.rkSy[r] = this.gY[g];
+      this.rkTx[r] = t.x + Math.cos(a) * d;
+      this.rkTy[r] = t.y + Math.sin(a) * d;
+      this.rkWait[r] = 1.5 + k * 0.5;
+      this.rkT[r] = this.rkT0[r] = 1.4 + Math.hypot(t.x - this.gX[g], t.y - this.gY[g]) / 900;
+      this.rkDmg[r] = dmg;
+      this.rkShell[r] = 1;
+    }
+    for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, this.gX[g], this.gY[g], this.vr.range(-40, 40), this.vr.range(-40, 40), 1.4, 8, 30, 0.6, 0xb8b0a0, 1.5, 8);
+    this.ev(EV_ESHOT, this.gX[g], this.gY[g], ENEMY_FX.indexOf('barrage'));
+  }
+
+  // ============================================================ WW2: line of sight and fog of war
+
+  /** Does a straight line from (x0, y0) to (x1, y1) stay clear of forests, mountains and ruins? */
+  clearLine(x0: number, y0: number, x1: number, y1: number): boolean {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const n = Math.ceil(Math.hypot(dx, dy) / (TILE * 0.5));
+    for (let k = 1; k < n; k++) {
+      const c = ((x0 + (dx * k) / n) / TILE) | 0;
+      const r = ((y0 + (dy * k) / n) / TILE) | 0;
+      if (c >= 0 && r >= 0 && c < COLS && r < ROWS && this.sightBlock[r * COLS + c]) return false;
+    }
+    return true;
+  }
+
+  /** Which cells within `range` px tower t can see, cached per tower (the terrain doesn't change). */
+  private losMask(t: Tower, range: number): { r: number; x: number; y: number; mask: Uint8Array } {
+    const r = Math.ceil(range / TILE) + 1;
+    const m = this.losMasks.get(t.id);
+    if (m && m.r >= r && m.x === t.x && m.y === t.y) return m;
+    const side = 2 * r + 1;
+    const mask = new Uint8Array(side * side);
+    const c0 = Math.floor(t.x / TILE);
+    const r0 = Math.floor(t.y / TILE);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > (r + 0.5) * (r + 0.5)) continue;
+        const c = c0 + dx;
+        const row = r0 + dy;
+        if (c < 0 || row < 0 || c >= COLS || row >= ROWS) continue;
+        if (this.clearLine(t.x, t.y, (c + 0.5) * TILE, (row + 0.5) * TILE)) mask[(dy + r) * side + dx + r] = 1;
+      }
+    }
+    const out = { r, x: t.x, y: t.y, mask };
+    this.losMasks.set(t.id, out);
+    return out;
+  }
+
+  /** Can tower t see cell c (within `range`)? */
+  private towerSeesCell(t: Tower, c: number, range: number): boolean {
+    const m = this.losMask(t, range);
+    const dx = (c % COLS) - Math.floor(t.x / TILE);
+    const dy = ((c / COLS) | 0) - Math.floor(t.y / TILE);
+    if (dx < -m.r || dx > m.r || dy < -m.r || dy > m.r) return false;
+    return m.mask[(dy + m.r) * (2 * m.r + 1) + dx + m.r] === 1;
+  }
+
+  /** Can tower t (with a gun of `range`) see the cell under unit i? Aircraft are always in sight. */
+  private towerSees(t: Tower, i: number, range: number): boolean {
+    if (this.eAir[i]) return true;
+    const m = this.losMask(t, range);
+    const dx = ((this.eX[i] / TILE) | 0) - Math.floor(t.x / TILE);
+    const dy = ((this.eY[i] / TILE) | 0) - Math.floor(t.y / TILE);
+    if (dx < -m.r || dx > m.r || dy < -m.r || dy > m.r) return false;
+    return m.mask[(dy + m.r) * (2 * m.r + 1) + dx + m.r] === 1;
+  }
+
+  /** WW2 fog of war: is attacker i seen by anything of ours (or marked, or just gave itself away by firing)? Always in classic games. */
+  seen(i: number): boolean {
+    // (the positions of their base are known, but for their guns, which must be found)
+    return !WW2 || this.eAir[i] === 1 || (this.eGar[i] >= 0 && ENEMIES[this.eKind[i]].fixed !== 'arty') || this.eMarkT[i] > 0 || this.eSeenT[i] > 0 || this.seenGrid[this.eGCell[i]] === 1;
+  }
+
+  /**
+   * The fog of war: what our emplacements see (rebuilt when they change), plus what our units and the
+   * commander see now (raycast round each). Gameplay: the guns fire at what can be seen.
+   */
+  private updateSight(): void {
+    if (this.towerSightVersion !== this.towerVersion) {
+      this.towerSightVersion = this.towerVersion;
+      this.towerSight.fill(0);
+      for (const t of this.towers) {
+        if (t.wreck) continue;
+        const range = Math.max(TOWERS[t.type].levels[t.level].range * t.rangeMult, TOWER_SIGHT);
+        const m = this.losMask(t, range);
+        const side = 2 * m.r + 1;
+        const c0 = Math.floor(t.x / TILE);
+        const r0 = Math.floor(t.y / TILE);
+        const rc = range / TILE + 0.5;
+        for (let dy = -m.r; dy <= m.r; dy++) {
+          const row = r0 + dy;
+          if (row < 0 || row >= ROWS) continue;
+          for (let dx = -m.r; dx <= m.r; dx++) {
+            const c = c0 + dx;
+            if (c >= 0 && c < COLS && dx * dx + dy * dy <= rc * rc && m.mask[(dy + m.r) * side + dx + m.r]) this.towerSight[row * COLS + c] = 1;
+          }
+        }
+      }
+    }
+    this.seenGrid.set(this.towerSight);
+    const look = (x: number, y: number, range: number, ray: boolean) => {
+      const r = Math.ceil(range / TILE);
+      const c0 = Math.floor(x / TILE);
+      const r0 = Math.floor(y / TILE);
+      for (let dy = -r; dy <= r; dy++) {
+        const row = r0 + dy;
+        if (row < 0 || row >= ROWS) continue;
+        for (let dx = -r; dx <= r; dx++) {
+          const c = c0 + dx;
+          const i = row * COLS + c;
+          if (c < 0 || c >= COLS || this.seenGrid[i] || dx * dx + dy * dy > r * r) continue;
+          if (!ray || this.clearLine(x, y, (c + 0.5) * TILE, (row + 0.5) * TILE)) this.seenGrid[i] = 1;
+        }
+      }
+    };
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u]) continue;
+      if (this.uAir[u]) look(this.uX[u], this.uY[u], AIR_SIGHT, false);
+      else look(this.uX[u], this.uY[u], Math.max(UNIT_SIGHT, UNITS[this.uKind[u]].gun?.range ?? 0), true);
+    }
+    const h = this.hero;
+    if (h && h.downT <= 0) look(h.x, h.y, UNIT_SIGHT, true);
+    this.sightVersion++;
+  }
+
+  // ============================================================ WW2: morale
+
+  /**
+   * An attacker's nerve, a few times a second: heavy losses (low hp) and being pinned down for long
+   * wear it down, quiet moments and a living officer bring it back. Broken, it falls back or surrenders.
+   */
+  private updateMorale(i: number, def: EnemyDef): void {
+    if (this.eRetreat[i] || def.fixed) return;
+    const dt = 10 * DT;
+    const h = this.eHp[i] / this.eMaxHp[i];
+    const led = !def.officer && this.officerAlive[this.eWave[i] & 63] === 1;
+    let loss = h < 0.4 ? (0.4 - h) * 1.2 : 0;
+    if (this.eSupp[i] > 0.8) {
+      if ((this.ePinT[i] += dt) > 3) loss += 0.12;
+    } else this.ePinT[i] = Math.max(0, this.ePinT[i] - dt);
+    // a banzai charge holds; an officer steadies his men
+    let m = this.eMorale[i] - loss * (def.banzai ? 0.35 : 1) * (led ? 0.6 : 1) * dt;
+    if (this.eSupp[i] < 0.2) m += (0.04 + (led ? 0.05 : 0)) * dt;
+    this.eMorale[i] = Math.min(1, m);
+    if (m < BREAK) this.breakUnit(i);
+  }
+
+  /** Broken: pinned down (or cut off), it surrenders and the bounty is paid; otherwise it falls back to its lines. */
+  private breakUnit(i: number): void {
+    const x = this.eX[i];
+    const y = this.eY[i];
+    if (this.eSupp[i] > 0.6 || this.backField(this.eRoute[i]).dist[this.eCell[i]] === Infinity) {
+      this.money += this.eReward[i];
+      this.totalKills++;
+      this.ev(EV_STATUS, x, y, 8);
+      this.freeEnemy(i);
+      return;
+    }
+    this.eRetreat[i] = 1;
+    this.eBreach[i] = 0;
+    this.eWall[i] = 0;
+    this.eTgt[i] = 0;
+    this.eAimT[i] = 0;
+    this.ev(EV_STATUS, x, y, 9);
+  }
+
+  /** A man down shakes the infantry round him; the officer's fall shakes his whole wave. */
+  private lossShock(i: number): void {
+    const def = ENEMIES[this.eKind[i]];
+    if (!def.inf || def.fixed) return;
+    const x = this.eX[i];
+    const y = this.eY[i];
+    if (def.officer) {
+      const w = this.eWave[i];
+      for (let n = 0; n < this.liveCount; n++) {
+        const j = this.live[n];
+        const e = ENEMIES[this.eKind[j]];
+        if (j !== i && this.eAlive[j] && this.eWave[j] === w && e.inf && !e.fixed) this.eMorale[j] -= OFFICER_SHOCK * (e.banzai ? 0.4 : 1);
+      }
+      this.ev(EV_STATUS, x, y, 10);
+    }
+    this.forEachInRange(x, y, 70, false, true, (j) => {
+      const e = ENEMIES[this.eKind[j]];
+      if (j !== i && e.inf && !e.fixed) this.eMorale[j] -= LOSS_SHOCK * (e.banzai ? 0.4 : 1);
+    });
+  }
+
+  /** The way back to the entry of route r, for attackers falling back (rebuilt when the maze changes). */
+  private backField(r: number): FlowField {
+    if (this.backVersion !== this.towerVersion) {
+      if (!this.back.length) this.back = this.map.routes.map((rt) => new FlowField(rt.entry, this.moveCost));
+      for (const f of this.back) f.compute(this.blocked);
+      this.backVersion = this.towerVersion;
+    }
+    return this.back[r];
+  }
+
+  /** Our losses: a position knocked out or a unit lost shakes the crews and soldiers round it (seasoned ones less). */
+  private shakeDefence(x: number, y: number, f: number): void {
+    for (const t of this.towers) {
+      if (t.wreck || !this.maxHp(t) || (t.x - x) ** 2 + (t.y - y) ** 2 > LOSS_R * LOSS_R) continue;
+      t.supp = Math.min(1, t.supp + LOSS_SUPP * f * (1 - 0.05 * t.level));
+      t.shakeT = SHAKEN_T;
+    }
+    for (let u = 0; u < MAX_UNITS; u++) {
+      if (!this.uAlive[u] || this.uAir[u] || (this.uX[u] - x) ** 2 + (this.uY[u] - y) ** 2 > LOSS_R * LOSS_R) continue;
+      const steady = 1 - 0.25 * this.unitVet(u);
+      if (UNITS[this.uKind[u]].inf) this.uSupp[u] = Math.min(1, this.uSupp[u] + LOSS_SUPP * f * steady);
+      this.uShakeT[u] = SHAKEN_T * steady;
+    }
+  }
+
+  // ============================================================ WW2: supply
+
+  /** Does this emplacement fire ammunition that runs out? */
+  usesAmmo(t: Tower): boolean {
+    return WW2 && !t.base && AMMO_S[t.kind] !== undefined && TOWERS[t.type].targeted;
+  }
+
+  /** A shot (or `n` s of a flamethrower's spray) out of tower t's stock. */
+  private spend(t: Tower, rate: number, n = 1): void {
+    const s = AMMO_S[t.kind];
+    if (s && !t.base) t.ammo = Math.max(0, t.ammo - n / (s * Math.max(0.05, rate)));
+  }
+
+  /** How far depot or headquarters t supplies the guns round it (0: it doesn't). */
+  supplyRange(t: Tower): number {
+    if (!WW2 || t.wreck || t.buildT > 0) return 0;
+    if (t.base) return HQ_SUPPLY;
+    return t.kind === 'depot' ? TOWERS[t.type].levels[t.level].range : 0;
+  }
+
+  /** Is gun t within reach of a depot (whatever its store holds: a truck refills it) or of a headquarters? */
+  supplied(t: Tower): boolean {
+    for (const s of this.towers) {
+      const r = this.supplyRange(s);
+      if (r && (s.x - t.x) ** 2 + (s.y - t.y) ** 2 <= r * r) return true;
+    }
+    return false;
+  }
+
+  /** Our trucks on the road to (or back from) depot `id`, or all of them (id 0). */
+  private trucksFor(id: number): number {
+    let n = 0;
+    for (let u = 0; u < MAX_UNITS; u++) if (this.uAlive[u] && this.uKind[u] === this.truckKind && (!id || this.uTask[u] === id)) n++;
+    return n;
+  }
+
+  /**
+   * WW2 supply, a couple of times a second: depots hand ammunition from their store to the guns in
+   * reach, our headquarters (an endless store) to the guns round it, crews out of reach scrounge a
+   * little; a depot running low calls a truck from the nearest headquarters.
+   */
+  private updateSupply(): void {
+    const dt = SUPPLY_TICKS * DT;
+    for (const t of this.towers) if (t.fix > 0) t.fix = Math.max(0, t.fix - FIX_FADE * dt);
+    const scrounge = SCROUNGE * dt * (this.attackers > 0 ? 1 : LULL_SUPPLY);
+    for (const t of this.towers) if (t.ammo < 1 && !t.wreck && this.usesAmmo(t)) t.ammo = Math.min(1, t.ammo + scrounge);
+    for (const s of this.towers) {
+      const r = this.supplyRange(s);
+      if (!r) continue;
+      const depot = !s.base;
+      for (const t of this.towers) {
+        if (t.ammo >= 1 || t.wreck || !this.usesAmmo(t) || (t.x - s.x) ** 2 + (t.y - s.y) ** 2 > r * r) continue;
+        let give = Math.min(1 - t.ammo, RESUPPLY * dt);
+        if (depot) {
+          give = Math.min(give, s.ammo * DEPOT_LOADS);
+          s.ammo -= give / DEPOT_LOADS;
+        }
+        t.ammo += give;
+        if (depot && s.ammo <= 0) break;
+      }
+    }
+    if (this.truckKind < 0) return;
+    if (this.truckCd > 0) {
+      this.truckCd -= dt;
+      return;
+    }
+    if (this.trucksFor(0) >= MAX_TRUCKS) return;
+    for (const d of this.towers) {
+      if (d.kind !== 'depot' || d.ammo >= DEPOT_CALL || !this.supplyRange(d) || this.trucksFor(d.id)) continue;
+      // from the nearest headquarters still standing
+      let hq: Tower | null = null;
+      let best = Infinity;
+      for (const h of this.towers) {
+        const d2 = (h.x - d.x) ** 2 + (h.y - d.y) ** 2;
+        if (h.base && !h.wreck && d2 < best) {
+          best = d2;
+          hq = h;
+        }
+      }
+      if (!hq) return;
+      const u = this.spawnUnit(this.truckKind, hq.x, hq.y + hq.size * TILE * 0.5 + 6, -1);
+      if (u < 0) return;
+      this.uTask[u] = d.id;
+      this.uWork[u] = 0; // loaded
+      this.uStance[u] = ST_HOLD;
+      if (!this.towardsTower(u, d)) {
+        this.uAlive[u] = 0; // no way there
+        continue;
+      }
+      this.truckCd = TRUCK_GAP;
+      return;
+    }
+  }
+
+  /** Path for unit u to the cells round tower t. */
+  private towardsTower(u: number, t: Tower): boolean {
+    return this.unitPathTo(u, t.col - 1, t.row - 1, t.col + t.size, t.row + t.size, t.col, t.row, t.col + t.size - 1, t.row + t.size - 1);
+  }
+
+  /** A supply truck: to its depot, unload (the store is full again), back to the headquarters, gone. */
+  private truckWork(u: number): void {
+    if (this.uPathI[u] < this.uPathLen[u]) return;
+    const x = this.uX[u];
+    const y = this.uY[u];
+    if (this.uWork[u] === 0) {
+      const d = this.towerById.get(this.uTask[u]);
+      if (d && !d.wreck && (d.x - x) ** 2 + (d.y - y) ** 2 <= (d.size * TILE * 0.5 + 24) ** 2) {
+        d.ammo = 1;
+        this.burst(d.x, d.y, 0xffd84a, 6, FX_GLOW, 1);
+      } else if (d && !d.wreck && this.towardsTower(u, d)) return; // not there yet: on its way again
+      this.uWork[u] = 1;
+      let hq: Tower | null = null;
+      for (const h of this.towers) if (h.base && !h.wreck && (!hq || (h.x - x) ** 2 + (h.y - y) ** 2 < (hq.x - x) ** 2 + (hq.y - y) ** 2)) hq = h;
+      if (hq && this.towardsTower(u, hq)) return;
+    }
+    // home (or nowhere to go): unloaded and parked
+    this.uAlive[u] = 0;
+    this.unitVersion++;
+  }
+
+  /**
+   * WW2: the enemy's supply column. A truck sets off from behind their headquarters every so often
+   * and drives to their supply dump; each one that gets there tops up the stocks for the next waves.
+   */
+  private updateConvoy(): void {
+    if (this.wave < 1 || this.gSlot[0] < 0) return;
+    if ((this.convoyT -= DT) > 0) return;
+    this.convoyT = CONVOY_EVERY * this.rng.range(0.8, 1.2);
+    const kind = ENEMIES.findIndex((e) => e.supply);
+    if (kind < 0) return;
+    const i = this.spawnEnemy(kind, this.wave);
+    if (i < 0) return;
+    // out of the rear, behind their headquarters
+    const [ix, iy] = this.map.routes[0].inDir;
+    this.eX[i] = this.ePx[i] = Math.min(MAP_W - 4, Math.max(4, this.gX[0] - ix * TILE * 7 + this.rng.range(-20, 20)));
+    this.eY[i] = this.ePy[i] = Math.min(MAP_H - 4, Math.max(4, this.gY[0] - iy * TILE * 7 + this.rng.range(-20, 20)));
+    this.eAng[i] = this.ePang[i] = Math.atan2(iy, ix);
+    this.eRoute[i] = 0;
+  }
+
+  /** An enemy supply truck drives to their dump (or their headquarters if the dump is down) and unloads. */
+  private driveConvoy(i: number, sp: number): void {
+    let g = -1;
+    for (let k = 0; k < MAX_GARRISON; k++) if (this.gKind[k] >= 0 && ENEMIES[this.gKind[k]].fixed === 'depot' && this.gSlot[k] >= 0) g = k;
+    const tx = g >= 0 ? this.gX[g] : this.gX[0];
+    const ty = g >= 0 ? this.gY[g] : this.gY[0];
+    const dx = tx - this.eX[i];
+    const dy = ty - this.eY[i];
+    const d = Math.hypot(dx, dy);
+    if (d < 18) {
+      this.foeSupply = Math.min(1, this.foeSupply + CONVOY_LOAD * (g >= 0 ? 1 : 0.5));
+      this.freeEnemy(i);
+      return;
+    }
+    this.eAng[i] += Math.max(-3 * DT, Math.min(3 * DT, angleDiff(this.eAng[i], Math.atan2(dy, dx))));
+    this.eX[i] += (dx / d) * sp * DT;
+    this.eY[i] += (dy / d) * sp * DT;
+    this.eRemain[i] = 1e6; // never the "first" target of a wave
   }
 
   /** What patching it up (or rebuilding the rubble) costs right now; 0 if it needs nothing. */
@@ -1380,6 +1990,7 @@ export class Sim {
   /** The emplacement is knocked out: it becomes rubble that units can climb through (slowly). */
   private wreckTower(t: Tower): void {
     t.hp = 0;
+    t.fix = 0;
     t.wreck = true;
     t.supp = 0;
     t.beam = -1;
@@ -1391,6 +2002,7 @@ export class Sim {
     this.explosion(t.x, t.y, 1.2 + t.size * 0.5, 4);
     for (let k = 0; k < 10; k++) this.fx(FX_DEBRIS, 0, t.x, t.y, this.vr.range(-110, 110), this.vr.range(-110, 110), 0.9, 4, 3, 1, 0x7a6a50, 3, 8);
     this.ev(EV_WRECK, t.x, t.y, t.type);
+    this.shakeDefence(t.x, t.y, 1);
     if (t.id === this.objectiveId || t.base > 0) {
       // the objective (our headquarters) has fallen: the battle is lost
       this.lives = 0;
@@ -1546,6 +2158,7 @@ export class Sim {
 
   private enemyShot(i: number, def: EnemyDef, g: EnemyGun, t: Tower): void {
     this.eGunCd[i] = (1 / g.rate) * this.rng.range(0.85, 1.15);
+    this.eSeenT[i] = FLASH_SEEN; // the muzzle flash gives it away
     const air = this.eAir[i] === 1;
     const x = this.eX[i];
     const y = this.eY[i];
@@ -1768,7 +2381,10 @@ export class Sim {
       }
       switch (t.kind) {
         case 'radar':
-          cover(t, lv.range, (c) => (this.radarGrid[c] = 1));
+          // WW2: an observer sees what isn't behind trees, hills or ruins
+          cover(t, lv.range, (c) => {
+            if (!WW2 || this.towerSeesCell(t, c, lv.range)) this.radarGrid[c] = 1;
+          });
           for (const o of this.towers) if (Math.hypot(o.x - t.x, o.y - t.y) <= lv.range) o.rangeMult = Math.max(o.rangeMult, 1 + buff);
           break;
         case 'command':
@@ -1855,6 +2471,8 @@ export class Sim {
       for (const t of this.towers) if (t.kind === 'depot' && !t.wreck) this.burst(t.x, t.y, 0xffd84a, 10, FX_GLOW, 1);
     }
     this.wave++;
+    this.smokeWave[this.wave & 63] = 0;
+    this.officerAlive[this.wave & 63] = 0;
     this.ev(EV_WAVE, 0, 0, this.wave);
     // before an armoured assault, the guns prepare the ground
     if (WW2 && this.wave >= 6 && (this.wave % 4 === 3 || this.wave % 10 === 0)) this.barrage(this.wave);
@@ -1868,22 +2486,27 @@ export class Sim {
       t: 0,
     });
     this.nextWaveTimer = dur + WAVE_GAP;
+    if (WW2) {
+      // the wave uses up stocks; a starved enemy needs longer to get the next one ready
+      this.nextWaveTimer += STARVED_WAIT * Math.max(0, 0.5 - this.foeSupply) * 2;
+      this.foeSupply = Math.max(0, this.foeSupply - WAVE_SUPPLY);
+    }
   }
 
   /** Sandbox: build a serpentine maze of maxed towers and flood it with enemies. */
   stress(count: number): void {
-    const pool = TOWERS.map((d, i) => (d.size === 2 && !d.walkable && !d.manual && d.kind !== 'gate' ? i : -1)).filter((i) => i >= 0);
+    const pool = TOWERS.map((d, i) => (d.size === 2 && !d.walkable && !d.manual && d.role !== 'gate' ? i : -1)).filter((i) => i >= 0);
     let wall = 0;
     for (let c = 5; c + 2 < COLS - 3; c += 4, wall++) {
       const gapTop = wall % 2 === 0;
       for (let r = 0; r + 2 <= ROWS; r += 2) {
         if (gapTop ? r < 4 : r >= ROWS - 4) continue;
         const t = this.place(pool[this.rng.int(pool.length)], c, r, true);
-        if (t) t.level = 2;
+        if (t) t.level = Math.min(2, TOWERS[t.type].levels.length - 1);
       }
     }
     this.towerVersion++;
-    const kinds = ENEMIES.map((e, k) => (e.boss ? -1 : k)).filter((k) => k >= 0);
+    const kinds = ENEMIES.map((e, k) => (e.boss || e.fixed || e.supply ? -1 : k)).filter((k) => k >= 0);
     const groups: SpawnGroup[] = kinds.map((kind) => ({
       kind, count: Math.floor(count / kinds.length), interval: 6 / (count / kinds.length), delay: 0,
     }));
@@ -1918,7 +2541,7 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
     };
     level = Math.min(HERO_MAX_LEVEL, level);
     this.hero = {
@@ -2084,7 +2707,7 @@ export class Sim {
     h.src.y = h.y;
     // shooting
     h.fireCd -= DT;
-    const tgt = this.findTarget(h.x, h.y, this.heroRange(), true, true, 0, -1, 0, WW2 ? HERO_PEN : 0);
+    const tgt = this.findTarget(h.x, h.y, this.heroRange(), true, true, 0, -1, 0, WW2 ? HERO_PEN : 0, false, this.heroRange(), WW2 ? 2 : 0);
     if (tgt < 0) return;
     if (!h.path.length) h.ang += angleDiff(h.ang, Math.atan2(this.eY[tgt] - h.y, this.eX[tgt] - h.x)) * Math.min(1, 14 * DT);
     if (h.fireCd > 0) return;
@@ -2416,6 +3039,8 @@ export class Sim {
     this.uGoal[u] = d.air ? -1 : cell;
     this.uOrder[u] = 0;
     this.uSupp[u] = 0;
+    this.uShakeT[u] = 0;
+    this.uNadeCd[u] = 0;
     this.uLife[u] = 0;
     this.uSeenT[u] = 0;
     this.uKnownT[u] = 0;
@@ -2432,7 +3057,8 @@ export class Sim {
     const d = UNITS[this.uKind[u]];
     this.uAlive[u] = 0;
     this.unitVersion++;
-    if (d.arm || d.air) this.explosion(this.uX[u], this.uY[u], 1.4, d.air ? AIR_Z : 4);
+    this.shakeDefence(this.uX[u], this.uY[u], d.truck ? 0.3 : 0.6);
+    if (d.arm || d.air || d.truck) this.explosion(this.uX[u], this.uY[u], 1.4, d.air ? AIR_Z : 4);
     else this.burst(this.uX[u], this.uY[u], 0x8a3a2a, 5, FX_SMOKE, 0);
   }
 
@@ -2454,7 +3080,8 @@ export class Sim {
       if (a <= 0 && dmg >= 20 && !top) this.fx(FX_SPARK, 1, this.uX[u], this.uY[u], this.vr.range(-120, 120), this.vr.range(-120, 120), 0.25, 6, 1, 1, 0xffe0a0, 4, 8);
     } else if (d.inf) {
       const dug = this.uDig[u] >= 1;
-      this.uSupp[u] = Math.min(1, this.uSupp[u] + supp * (dug ? 0.5 : 1));
+      // veterans keep their heads
+      this.uSupp[u] = Math.min(1, this.uSupp[u] + supp * (dug ? 0.5 : 1) * (1 - 0.2 * this.unitVet(u)));
       a *= (1 - 0.35 * this.uSupp[u]) * (dug ? 0.5 : 1);
     }
     a *= 1 - 0.08 * this.unitVet(u);
@@ -2531,7 +3158,7 @@ export class Sim {
     let k = 0;
     for (const id of ids) {
       const u = this.unitSlot(id);
-      if (u < 0) continue;
+      if (u < 0 || UNITS[this.uKind[u]].truck) continue; // trucks drive their own rounds
       const side = Math.ceil(Math.sqrt(ids.length));
       const ox = ((k % side) - (side - 1) / 2) * 16;
       const oy = (Math.floor(k / side) - (side - 1) / 2) * 16;
@@ -2555,7 +3182,8 @@ export class Sim {
       this.uPang[u] = this.uAng[u];
       if (this.uSeenT[u] > 0) this.uSeenT[u] -= DT;
       if (this.uKnownT[u] > 0) this.uKnownT[u] -= DT;
-      if (this.uSupp[u] > 0) this.uSupp[u] = Math.max(0, this.uSupp[u] - 0.45 * DT);
+      if (this.uSupp[u] > 0) this.uSupp[u] = Math.max(0, this.uSupp[u] - (this.uShakeT[u] > 0 ? 0.2 : 0.45) * DT);
+      if (this.uShakeT[u] > 0) this.uShakeT[u] -= DT;
       if (this.uCd[u] > 0) this.uCd[u] -= DT * (1 - 0.5 * this.uSupp[u]);
       if (this.uAir[u]) this.updatePlane(u);
       else this.updateGroundUnit(u);
@@ -2618,6 +3246,12 @@ export class Sim {
     else if (this.uDig[u] > 0 && this.uDig[u] < 1) this.uDig[u] = Math.min(1, this.uDig[u] + DT / DIG_TIME);
     const dug = this.uDig[u] > 0;
 
+    // ---- supply trucks drive by themselves
+    if (d.truck) {
+      this.truckWork(u);
+      if (!this.uAlive[u]) return;
+      moving = this.uPathI[u] < this.uPathLen[u];
+    }
     // ---- support roles: engineers repair (or lay the mines they were told to), medics heal
     if (this.uLay[u] >= 0) this.layMine(u, moving);
     else if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
@@ -2629,7 +3263,7 @@ export class Sim {
     if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
     if (g && think) {
       const look = stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range;
-      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range);
+      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range, 2);
       this.uTgt[u] = t;
       if (t >= 0) this.uTuid[u] = this.eUid[t];
       if (!this.uOrder[u] && this.uTask[u] < 0 && this.uLay[u] < 0 && !dug) {
@@ -2689,6 +3323,20 @@ export class Sim {
       }
     }
 
+    // ---- soldiers rush a tank that comes close without its infantry
+    if (d.inf && g) {
+      if (this.uNadeCd[u] > 0) this.uNadeCd[u] -= DT;
+      else if ((this.ticks + u) % 15 === 0) {
+        const src = this.unitSrc;
+        src.x = this.uX[u];
+        src.y = this.uY[u];
+        this.proxyRange = g.range;
+        this.proxySupp = 0;
+        this.proxyInf = true;
+        if (this.closeAssault(src.x, src.y, 32, src)) this.uNadeCd[u] = ASSAULT_CD;
+      }
+    }
+
     // ---- fire
     if (!g || t < 0) return;
     const tx = this.eX[t];
@@ -2730,6 +3378,7 @@ export class Sim {
     src.y = y;
     this.proxyRange = g.range;
     this.proxySupp = g.supp ?? 0;
+    this.proxyInf = !!d.inf;
     const airMult = this.eAir[t] ? (g.hitsAir ? 1 : 0) : 1;
     if (airMult > 0 && this.damage(t, g.dmg * bonus * airMult * (1 + 0.15 * vet), false, src, false, g.pen, false)) {
       if (++this.uKills[u] === VET_KILLS[vet]) this.ev(EV_LEVEL, x, y, -1); // promoted
@@ -2994,6 +3643,8 @@ export class Sim {
       if (this.smCount) this.updateSmoke();
       this.updateUnits();
       if (this.ticks % 10 === 0) this.updateSpotting();
+      if (this.ticks % SUPPLY_TICKS === 0) this.updateSupply();
+      if (this.ticks % SIGHT_TICKS === 0 || this.towerSightVersion !== this.towerVersion) this.updateSight();
     }
     this.updateHero();
     this.updateStrikes();
@@ -3015,6 +3666,7 @@ export class Sim {
     }
     if (WW2) {
       this.updateGarrison();
+      this.updateConvoy();
       // the HUD's lives counter shows what is left of our headquarters
       this.lives = Math.ceil(100 * this.baseHealth);
     }
@@ -3072,6 +3724,15 @@ export class Sim {
     this.eStunT[i] = 0;
     this.eSupp[i] = 0;
     this.eMarkT[i] = 0;
+    this.eSeenT[i] = 0;
+    this.eMorale[i] = 1;
+    this.eRetreat[i] = 0;
+    this.eLead[i] = -1;
+    this.eEscortN[i] = 0;
+    this.eEscort[i] = 0;
+    this.eWave[i] = wave;
+    this.ePinT[i] = 0;
+    if (def.officer) this.officerAlive[wave & 63] = 1;
     this.eGar[i] = -1;
     this.eBuild[i] = 0;
     this.eNadeCd[i] = 0;
@@ -3110,6 +3771,7 @@ export class Sim {
     this.eAng[i] = this.ePang[i] = Math.atan2(iy, ix);
     this.eRemain[i] = 1e6;
     this.live[this.liveCount++] = i;
+    if (def.supply) this.convoyAlive++;
     return i;
   }
 
@@ -3120,9 +3782,17 @@ export class Sim {
       this.eGar[i] = -1;
       this.gSlot[g] = -1;
       this.garrisonAlive--;
-      if (ENEMIES[this.gKind[g]].fixed === 'hq') this.victory = true;
+      const fixed = ENEMIES[this.gKind[g]].fixed;
+      if (fixed === 'hq') this.victory = true;
       else this.gT[g] = GARRISON_REBUILD;
+      // their supply dump goes up: the stocks for the next waves burn with it
+      if (fixed === 'depot') this.foeSupply = Math.max(0, this.foeSupply - 0.4);
     }
+    if (ENEMIES[this.eKind[i]].supply) this.convoyAlive--;
+    if (ENEMIES[this.eKind[i]].officer) this.officerAlive[this.eWave[i] & 63] = 0;
+    const lead = this.eLead[i];
+    if (lead >= 0 && this.eAlive[lead] && this.eUid[lead] === this.eLeadUid[i] && this.eEscortN[lead] > 0) this.eEscortN[lead]--;
+    this.eLead[i] = -1;
     this.eAlive[i] = 0;
     this.eBurnBy[i] = null;
     this.eFree[this.eFreeTop++] = i;
@@ -3220,6 +3890,7 @@ export class Sim {
       gr = gr < 0 ? 0 : gr >= ROWS ? ROWS - 1 : gr;
       const g = (this.eGCell[i] = gr * COLS + gc);
       this.eSeen[i] = this.radarGrid[g];
+      if (this.eSeenT[i] > 0) this.eSeenT[i] -= DT;
       if (this.eMarkT[i] > 0) {
         this.eMarkT[i] -= DT;
         this.eSeen[i] = 1;
@@ -3269,6 +3940,18 @@ export class Sim {
         if ((this.eWork[i] += DT) > GARRISON_QUIET) this.eHp[i] = Math.min(this.eMaxHp[i], this.eHp[i] + this.eMaxHp[i] * GARRISON_REPAIR * DT);
         continue;
       }
+      if (def.supply) {
+        this.driveConvoy(i, this.eSpeed[i] * (this.eSlowT[i] > 0 ? this.eSlowF[i] : 1) * (this.eStunT[i] > 0 ? 0 : 1));
+        if (this.eStunT[i] > 0) this.eStunT[i] -= DT;
+        if (this.eSlowT[i] > 0) this.eSlowT[i] -= DT;
+        continue;
+      }
+
+      // WW2 morale: infantry that lose most of their men, or stay pinned down, break
+      if (WW2 && def.inf && (this.ticks + i) % 10 === 0) {
+        this.updateMorale(i, def);
+        if (!this.eAlive[i]) continue; // surrendered
+      }
 
       // hacked: stand still and shoot the nearest unit of its own wave
       if (this.eHackT[i] > 0) {
@@ -3284,6 +3967,14 @@ export class Sim {
       }
 
       let sp = this.eSpeed[i];
+      if (WW2 && !air) {
+        // combined arms: tanks know whether infantry is round them; riflemen pair up with a tank and keep pace
+        if (def.arm && (this.ticks + i) % 15 === 0) this.checkEscort(i, def);
+        if (def.inf && !this.eRetreat[i]) {
+          if (this.eLead[i] < 0 && (this.ticks + i) % 60 === 0 && this.escortKind(def)) this.findLeader(i);
+          if (this.eLead[i] >= 0) sp *= this.escortPace(i);
+        }
+      }
       if (this.eSlowT[i] > 0) {
         sp *= this.eSlowF[i];
         this.eSlowT[i] -= DT;
@@ -3296,7 +3987,7 @@ export class Sim {
         sp = 0;
       }
       if (!air) sp *= this.tarGrid[g];
-      if (WW2 && def.gun && this.enemyFire(i, def, def.gun)) sp = 0; // halted to fire
+      if (WW2 && def.gun && !this.eRetreat[i] && this.enemyFire(i, def, def.gun)) sp = 0; // halted to fire
       if (!this.eAlive[i]) continue; // a kamikaze dived in
       if (def.inf) {
         sp *= this.wireGrid[g];
@@ -3326,18 +4017,28 @@ export class Sim {
         else if (cx >= COLS) cx = COLS - 1;
         if (y < 0) cy = 0;
         else if (cy >= ROWS) cy = ROWS - 1;
-        const breaching = this.eBreach[i] === 1;
-        const onFoot = this.hasTeeth && def.inf && !breaching;
-        const field = breaching ? this.breach[this.eRoute[i]] : onFoot ? this.foot[this.eRoute[i]] : this.fields[this.eRoute[i]];
+        const retreat = this.eRetreat[i] === 1;
+        const breaching = !retreat && this.eBreach[i] === 1;
+        const onFoot = this.hasTeeth && def.inf && !breaching && !retreat;
+        const field = retreat ? this.backField(this.eRoute[i]) : breaching ? this.breach[this.eRoute[i]] : onFoot ? this.foot[this.eRoute[i]] : this.fields[this.eRoute[i]];
         let cell = cy * COLS + cx;
         // brushing a tower corner can put us in a blocked cell: steer from the last good one
         if ((onFoot ? this.footBlocked : this.blocked)[cell] || field.dist[cell] === Infinity) cell = this.eCell[i];
         else this.eCell[i] = cell;
         if (onFoot && this.blocked[cell]) sp *= TEETH_CLIMB; // clambering over the teeth
-        if (WW2 && (this.ticks + i) % 60 === 0 && this.canBreach(def)) this.thinkBreach(i, def, cell);
+        if (WW2 && !retreat && (this.ticks + i) % 60 === 0 && this.canBreach(def)) this.thinkBreach(i, def, cell);
         if (def.gun?.fx === 'satchel' && (this.ticks + i) % 6 === 0) this.sapperWork(i);
         const dist = field.dist[cell];
         this.eRemain[i] = dist * TILE;
+        if (retreat) {
+          // falling back: last in line for our guns; gone once back at their lines
+          this.eRemain[i] += 1e5;
+          sp *= 1.15;
+          if (dist === 0) {
+            this.freeEnemy(i);
+            continue;
+          }
+        }
         let wall = 0;
         if (breaching && dist > 0) {
           // the next step is into an emplacement: stop and break it
@@ -3410,6 +4111,7 @@ export class Sim {
       if (this.eMarkT[i] > 0) a *= 1.2;
       a = this.ballistics(i, a, src, pen, top);
       if (a <= 0) return false;
+      if (src && this.eEscort[i] === 0 && this.closeAssaulter(src) && ENEMIES[this.eKind[i]].arm && !this.eAir[i] && !ENEMIES[this.eKind[i]].fixed) a *= CLOSE_BONUS;
       pierce = true; // armour has been dealt with
     }
     if (this.eFrozenT[i] > 0) a *= shatter ? 2.5 : 1.25;
@@ -3435,6 +4137,7 @@ export class Sim {
     if (this.eHp[i] > 0) return false;
     if (src) src.kills++;
     this.totalKills++;
+    if (WW2) this.lossShock(i);
     const reward = Math.round(this.eReward[i] * (1 + this.salvageGrid[this.eGCell[i]]));
     this.money += reward;
     if (src && this.hero && src === this.hero.src) this.gainHeroXp(reward);
@@ -3546,7 +4249,10 @@ export class Sim {
     const spot = t.kind === 'arty' ? 140 : 0;
     let inRange = 0;
     let unseen = 0;
+    let blind = 0;
+    let fog = 0;
     let smoke = 0;
+    const sight = !WW2 ? 0 : t.kind === 'arty' || t.kind === 'cannon' ? 3 : 1;
     let armoured = -1;
     let armD = Infinity;
     for (let n = 0; n < this.liveCount; n++) {
@@ -3556,7 +4262,9 @@ export class Sim {
       if (d2 > range * range) continue;
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       inRange++;
-      if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) unseen++;
+      if (sight === 1 && !this.towerSees(t, i, range)) blind++;
+      else if (sight === 3 && !this.seen(i)) fog++;
+      else if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
       else if (this.eSmoked[i] && d2 > 50 * 50) smoke++;
       else if (pen > 0 && !this.canHurt(i, pen, top, t.x, t.y, range)) {
         if (d2 < armD) {
@@ -3568,6 +4276,8 @@ export class Sim {
         : '';
     }
     if (!inRange) return '';
+    if (blind && blind === inRange) return `No line of sight: ${blind} in range behind trees, hills or ruins.`;
+    if (fog && fog === inRange) return `Can't see them: ${fog} in range that nothing of ours has in sight (behind cover, or in the fog).`;
     if (unseen) return `Needs a spotter: ${unseen} in range that nobody sees. It fires at what an observation post sees, or within ${spot} px of itself.`;
     if (armoured >= 0) {
       const e = ENEMIES[this.eKind[armoured]];
@@ -3582,9 +4292,10 @@ export class Sim {
   /**
    * Best target in range by targeting mode. `skip` excludes one slot; `spot` > 0 means the unit must
    * be within `spot` px or under radar cover (artillery). WW2: with `pen`, only what it can get
-   * through from here (`gunRange`: the range its penetration falls off over, if not `range`).
+   * through from here (`gunRange`: the range its penetration falls off over, if not `range`). `sight`: WW2
+   * line of sight — 1 what `sightTower` sees, 2 a clear line from (x, y), 3 anything we see (indirect fire).
    */
-  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0, pen = 0, top = false, gunRange = range): number {
+  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0, pen = 0, top = false, gunRange = range, sight = 0): number {
     const n = this.hash.query(x, y, range, this.qbuf);
     const r2 = range * range;
     let best = -1;
@@ -3599,9 +4310,11 @@ export class Sim {
       if (d2 > r2) continue;
       // stealth: radar reveals it everywhere; otherwise only point-blank
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
-      if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
+      if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
       if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
       if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
+      // WW2 sight: the shooter's own line of sight (1: a tower's mask, 2: a raycast), or anyone's (3: indirect fire)
+      if (sight === 1 ? !this.towerSees(this.sightTower!, i, range) : sight === 2 ? !this.eAir[i] && !this.clearLine(x, y, this.eX[i], this.eY[i]) : sight === 3 && !this.seen(i)) continue;
       let s: number;
       switch (mode) {
         case 0: s = -this.eRemain[i]; break;
@@ -3680,18 +4393,26 @@ export class Sim {
         }
         continue;
       }
-      if (t.supp > 0) t.supp = Math.max(0, t.supp - 0.35 * DT);
+      // a shaken crew (losses round it) takes longer to get back to its gun
+      if (t.supp > 0) t.supp = Math.max(0, t.supp - (t.shakeT > 0 ? 0.15 : 0.35) * DT);
+      if (t.shakeT > 0) t.shakeT -= DT;
       // a pinned crew keeps its head down: slower to serve the gun
       t.cd -= DT * (1 - 0.5 * t.supp);
+      // WW2: infantry positions go for a tank that comes close without its infantry
+      if (WW2) {
+        if (t.nadeCd > 0) t.nadeCd -= DT;
+        else if ((this.ticks + t.id) % 15 === 0 && ASSAULT_SLOTS.has(TOWERS[t.type].slot ?? '') && this.closeAssault(t.x, t.y, t.size * TILE * 0.5 + TILE * 1.8, t)) t.nadeCd = ASSAULT_CD;
+      }
       this.updateTower(t);
     }
   }
 
   /** WW2: our headquarters' garrison fires its machine guns at whatever comes close. */
   private baseGuns(t: Tower): void {
+    this.sightTower = t;
     if ((t.charge -= DT) <= 0) {
       // the anti-tank gun: tanks that reach the headquarters
-      const tank = this.findTarget(t.x, t.y, BASE_GUN_RANGE + 30, false, true, 0, -1, 0, BASE_AT[1], false, TOWERS[t.type].levels[t.level].range * t.rangeMult);
+      const tank = this.findTarget(t.x, t.y, BASE_GUN_RANGE + 30, false, true, 0, -1, 0, BASE_AT[1], false, TOWERS[t.type].levels[t.level].range * t.rangeMult, 1);
       if (tank >= 0 && ENEMIES[this.eKind[tank]].arm) {
         t.charge = BASE_AT[2];
         this.streak(t.x, t.y, 10, this.eX[tank], this.eY[tank], 8, 0.12, 0xffd080, 2);
@@ -3701,7 +4422,7 @@ export class Sim {
       } else t.charge = 0.5;
     }
     if (t.cd > 0) return;
-    const tgt = this.findTarget(t.x, t.y, BASE_GUN_RANGE, false, true, 0);
+    const tgt = this.findTarget(t.x, t.y, BASE_GUN_RANGE, false, true, 0, -1, 0, 0, false, BASE_GUN_RANGE, 1);
     if (tgt < 0) return;
     const a = Math.atan2(this.eY[tgt] - t.y, this.eX[tgt] - t.x);
     const ca = Math.cos(a);
@@ -3720,7 +4441,9 @@ export class Sim {
     const rallied = h !== null && h.rallyT > 0 && (t.x - h.x) ** 2 + (t.y - h.y) ** 2 < 160 * 160;
     if (rallied && WW2) t.supp = 0;
     if (t.base) this.baseGuns(t);
-    const rate = lv.rate * t.rateMult * (rallied ? 1.4 : 1);
+    // WW2: a gun out of ammunition fires what its crew can scrounge
+    const dry = WW2 && t.ammo <= 0 && this.usesAmmo(t);
+    const rate = lv.rate * t.rateMult * (rallied ? 1.4 : 1) * (dry ? EMPTY_RATE : 1);
     let dmg = lv.damage * t.dmgMult;
     const airMult = def.airMult * t.airBonus;
     const ca = Math.cos(t.angle);
@@ -3868,7 +4591,10 @@ export class Sim {
     // WW2: crews don't waste rounds on armour they can't get through (blasts count against the top)
     const pen = WW2 ? lv.pen ?? 0 : 0;
     const ambush = t.mode === MODE_AMBUSH;
-    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, ambush ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at');
+    // WW2: direct fire needs its own line of sight; mortars and artillery fire at what anyone of ours sees
+    const sight = !WW2 ? 0 : t.kind === 'arty' || t.kind === 'cannon' ? 3 : 1;
+    this.sightTower = t;
+    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, ambush ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at', range, sight);
     if (tgt < 0) {
       if (t.kind === 'gatling') t.spin = Math.max(0, t.spin - DT * 0.5);
       if (t.kind === 'gatling') t.heat = Math.max(0, t.heat - DT * 0.4);
@@ -3902,6 +4628,9 @@ export class Sim {
       return;
     }
     if (t.kind === 'flame') {
+      // out of fuel: a short burst now and then
+      if (dry && this.ticks % 30 >= 10) return;
+      if (WW2) this.spend(t, 1, DT);
       if (t.firing <= 0) this.ev(EV_SHOT, t.x, t.y, t.type);
       if (WW2) t.seenT = REVEAL_T;
       t.firing = 0.12;
@@ -3948,7 +4677,7 @@ export class Sim {
         break;
       case 'bunker': {
         this.spawnProjectile(P_BULLET, t.x + ca * 12 - sa * 5, t.y + sa * 12 + ca * 5, ca, sa, 900, dmg, 0, 1, tgt, t, 1);
-        const second = this.findTarget(t.x, t.y, range, false, true, t.mode, tgt, 0, pen);
+        const second = this.findTarget(t.x, t.y, range, false, true, t.mode, tgt, 0, pen, false, range, sight);
         this.spawnProjectile(P_BULLET, t.x + ca * 12 + sa * 5, t.y + sa * 12 - ca * 5, ca, sa, 900, dmg, 0, 1, second >= 0 ? second : tgt, t, 1);
         this.muzzleFlash(mx, my, 9, 0xffe7a0);
         break;
@@ -4088,6 +4817,11 @@ export class Sim {
       }
     }
     t.cd = cd;
+    if (WW2) {
+      this.spend(t, lv.rate);
+      // the enemy's sound rangers take a bearing on every salvo of our artillery (camouflage muffles it)
+      if ((t.kind === 'arty' || t.kind === 'cannon') && (t.fix += (1 - 0.7 * this.camoOf(t)) / FIX_SHOTS) >= 1) this.counterBattery(t);
+    }
     this.ev(EV_SHOT, t.x, t.y, t.type);
     // the muzzle flash gives it away (a sniper's less)
     if (WW2) t.seenT = Math.max(t.seenT, t.kind === 'sniper' ? 1.2 : REVEAL_T);

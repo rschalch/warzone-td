@@ -44,6 +44,20 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
   tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances. Units dig in (foxholes, hull-down tanks),
   earn veterancy ranks from their kills, and engineers lay anti-tank mines. Dragon's teeth stop vehicles; infantry
   climb over them.
+- **Supply**: guns use up their ammunition (artillery and anti-tank guns fastest) and fire slowly when empty.
+  Depots keep the guns round them supplied and trucks from your HQ refill the depots — the enemy shoots them.
+  The enemy has its own supply dump and truck column: cut it and its next waves come smaller and later.
+- **Morale**: shattered or pinned squads fall back or surrender (the bounty is paid); every infantry wave has an
+  officer, and his fall shakes the whole wave. Your crews are shaken by losses near them; veterans hold better.
+- **Line of sight and fog of war**: forests, hills and ruins block sight and fire; guns only shoot what they can
+  see, mortars and artillery what anything of yours sees. Attackers out of sight vanish into the fog, leaving a
+  faded mark where they were last seen.
+- **Combined arms**: riflemen advance with the tanks. A tank caught without its infantry is easy prey for
+  rocket teams and gets satchel charges from the infantry positions and soldiers it passes; escorted tanks spot
+  better, and the enemy lays smoke before assaulting a strongpoint.
+- **Counter-battery fire**: the enemy's sound rangers take a bearing on every salvo of your artillery and their
+  hidden battery answers once it has a fix; find it with observers or a recon flight, or catch it firing, and
+  shell it back. Camouflage muffles your guns; moving a gun starts the count again.
 - **Commander**: fire missions, Hold the Line (rallies suppressed crews) and recon flights that mark attackers.
 - **Stealth**: camouflaged guns are hidden until spotted or until they fire; recon units find them; Ambush mode.
 - **Enemy intelligence**: tanks and sappers breach long thin mazes, tanks pop smoke, artillery prepares the

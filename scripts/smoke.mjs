@@ -328,13 +328,19 @@ try {
     const zone = !s.canPlace(0, Math.floor(s.gX[0] / 20), Math.floor(s.gY[0] / 20) + 2);
     s.exec({ t: 'wave' });
     let leaked = 0;
+    let reached = false;
     for (let n = 0; n < 60 * 90; n++) {
       s.step();
       for (let k = 0; k < s.events.length; k += 5) if (s.events[k] === 3) leaked++;
       s.events.length = 0;
+      for (let m = 0; m < s.liveCount; m++) {
+        const i = s.live[m];
+        if (s.eGar[i] < 0 && Math.hypot(s.eX[i] - hq.x, s.eY[i] - hq.y) < 70) reached = true;
+      }
     }
-    const hurt = hq.hp < s.maxHp(hq);
-    const fieldOk = s.attackers === s.liveCount - s.garrisonAlive;
+    // they got to it and fought (its own guns may cut them down before they do it any harm)
+    const hurt = hq.hp < s.maxHp(hq) || reached;
+    const fieldOk = s.attackers === s.liveCount - s.garrisonAlive - s.convoyAlive;
     const i = s.gSlot[0];
     s.damage(i, 1e9, true, null, false, 999);
     s.step();
@@ -344,6 +350,216 @@ try {
   check(bases.leaked === 0 && bases.hurt && bases.fieldOk, `WW2 bases: attackers march on the HQ and fight it (hurt ${bases.hurt}, ${bases.leaked} leaked)`);
   check(bases.building && bases.built && bases.zone, `WW2 bases: emplacements take time to build (${bases.building} → ${bases.built}), none on the enemy's ground (${bases.zone})`);
   check(bases.won, 'WW2 bases: destroying the enemy headquarters wins');
+
+  // supply: a gun out of reach runs dry, a depot refills it, the depot calls a truck from the HQ; the enemy's dump and convoy
+  const supply = await page.evaluate(() => {
+    const { Sim, session, towerIndex, enemyDef } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const hq = s.towers.find((t) => t.base);
+    let mortar = null;
+    for (let k = 0; k < 2000 && !mortar; k++) {
+      const c = 10 + (k % 60);
+      const r = 8 + Math.floor(k / 60);
+      if (Math.hypot((c + 1) * 20 - hq.x, (r + 1) * 20 - hq.y) > 500) mortar = s.place(towerIndex('mortar'), c, r, true);
+    }
+    const e = s.spawnEnemy(0, 5);
+    let shots = 0;
+    for (let n = 0; n < 60 * 120 && mortar.ammo > 0; n++) {
+      s.eX[e] = mortar.x + 120; s.eY[e] = mortar.y; s.eHp[e] = s.eMaxHp[e]; s.eSpeed[e] = 0;
+      mortar.fix = 0; // (no counter-battery fire in this test)
+      s.step();
+      for (let k = 0; k < s.events.length; k += 5) if (s.events[k] === 0 && s.events[k + 1] === mortar.x) shots++;
+      s.events.length = 0;
+    }
+    const dry = mortar.ammo <= 0 && !s.supplied(mortar);
+    s.eHp[e] = 0; s.damage(e, 1e9, true, null);
+    let depot = null;
+    for (let k = 0; k < 200 && !depot; k++) depot = s.place(towerIndex('depot'), mortar.col + 3 + (k % 10), mortar.row - 4 + Math.floor(k / 10), true);
+    for (let n = 0; n < 600; n++) s.step();
+    const refilled = mortar.ammo > 0.5;
+    depot.ammo = 0.3;
+    let truck = false;
+    for (let n = 0; n < 60 * 150 && depot.ammo < 1; n++) {
+      s.step();
+      for (let u = 0; u < 192; u++) if (s.uAlive[u] && s.uTask[u] === depot.id) truck = true;
+    }
+    // the enemy: burning their dump cuts their supply, and a starved wave is smaller
+    const f = Sim.create(cfg);
+    let dump = -1;
+    for (let g = 0; g < 16; g++) if (f.gKind[g] >= 0 && enemyDef(f.gKind[g]).fixed === 'depot') dump = g;
+    const size = () => f.waveGroups(8).reduce((a, g) => a + g.count, 0);
+    const full = size();
+    f.damage(f.gSlot[dump], 1e9, true, null, false, 999);
+    f.step();
+    f.foeSupply = 0;
+    const starved = size();
+    f.exec({ t: 'wave' });
+    let convoy = 0;
+    for (let n = 0; n < 60 * 40; n++) {
+      f.step();
+      convoy = Math.max(convoy, f.convoyAlive);
+    }
+    return { shots, dry, refilled, truck, store: depot.ammo, dump: dump >= 0, full, starved, convoy, cleared: f.attackers === f.liveCount - f.garrisonAlive - f.convoyAlive };
+  });
+  check(supply.dry && supply.shots > 5 && supply.refilled, `WW2 supply: a mortar out of reach runs dry (${supply.shots} rounds), a depot refills it (${supply.refilled})`);
+  check(supply.truck && supply.store >= 1, `WW2 supply: the depot calls a truck from the HQ and is refilled (${supply.truck}, store ${supply.store.toFixed(2)})`);
+  check(supply.dump && supply.starved < supply.full && supply.convoy > 0 && supply.cleared, `WW2 supply: their dump stands, a starved wave is smaller (${supply.full} → ${supply.starved}), their trucks drive (${supply.convoy})`);
+
+  // morale: a shattered squad falls back and leaves, a pinned one surrenders, the officer's fall shakes his wave, our losses shake our crews
+  const morale = await page.evaluate(() => {
+    const { Sim, session, towerIndex, enemyDef } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const officer = Array.from({ length: 40 }, (_, k) => k).find((k) => enemyDef(k)?.officer);
+    const a = s.spawnEnemy(0, 5);
+    for (let n = 0; n < 60; n++) s.step();
+    s.eHp[a] = s.eMaxHp[a] * 0.1;
+    let fell = false;
+    const lives = s.lives;
+    for (let n = 0; n < 60 * 120 && s.eAlive[a]; n++) {
+      s.eSupp[a] = 0;
+      s.step();
+      if (s.eRetreat[a]) fell = true;
+    }
+    const gone = !s.eAlive[a] && s.lives === lives;
+    const b = s.spawnEnemy(0, 5);
+    for (let n = 0; n < 60; n++) s.step();
+    const money = s.money;
+    s.eHp[b] = s.eMaxHp[b] * 0.1;
+    for (let n = 0; n < 60 * 20 && s.eAlive[b]; n++) {
+      s.eSupp[b] = 1;
+      s.step();
+    }
+    const surrendered = !s.eAlive[b] && s.money > money;
+    const o = s.spawnEnemy(officer, 7);
+    const men = [s.spawnEnemy(0, 7), s.spawnEnemy(0, 7)];
+    s.step();
+    const before = s.eMorale[men[0]];
+    s.damage(o, 1e9, true, null);
+    const shaken = before - s.eMorale[men[0]] >= 0.3;
+    const t1 = s.place(towerIndex('mg42'), 30, 30, true);
+    const t2 = s.place(towerIndex('mg42'), 33, 30, true);
+    s.exec({ t: 'sell', ids: [] });
+    t1.hp = 1;
+    s.hitDefender?.(t1.id, 100, 99, 0, false);
+    s.step();
+    return { officer: officer >= 0, fell, gone, surrendered, shaken, crew: t2.supp > 0.2 && t2.shakeT > 0 };
+  });
+  check(morale.fell && morale.gone && morale.surrendered, `WW2 morale: a shattered squad falls back and leaves (${morale.fell}, ${morale.gone}), a pinned one surrenders (${morale.surrendered})`);
+  check(morale.officer && morale.shaken && morale.crew, `WW2 morale: the officer's fall shakes his wave (${morale.shaken}), a lost position shakes the crews nearby (${morale.crew})`);
+
+  // line of sight and fog: an MG holds fire at a soldier behind trees and fires at one in the open; out of sight, they're in the fog
+  const los = await page.evaluate(() => {
+    const { Sim, session, towerIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const cols = window.game.COLS;
+    let mg = null;
+    let hid = null;
+    let open = null;
+    for (let k = 0; k < 4000 && !(mg && hid && open); k++) {
+      const c = 4 + (k % (cols - 8));
+      const r = 4 + Math.floor(k / (cols - 8));
+      mg = s.place(towerIndex('mg42'), c, r, true);
+      if (!mg) continue;
+      hid = open = null;
+      const range = s.stats(mg).range;
+      for (let a = 0; a < 64 && !(hid && open); a++) {
+        const x = mg.x + Math.cos(a / 10) * range * 0.8;
+        const y = mg.y + Math.sin(a / 10) * range * 0.8;
+        const cell = Math.floor(y / 20) * cols + Math.floor(x / 20);
+        if (s.blocked[cell] || s.sightBlock[cell]) continue;
+        if (s.clearLine(mg.x, mg.y, x, y)) open ??= [x, y];
+        else hid ??= [x, y];
+      }
+      if (!(hid && open)) {
+        s.exec({ t: 'sell', ids: [mg.id] });
+        mg = null;
+      }
+    }
+    if (!mg) return { found: false };
+    const fire = (at) => {
+      const e = s.spawnEnemy(0, 3);
+      let shots = 0;
+      let why = '';
+      for (let n = 0; n < 120; n++) {
+        s.eX[e] = s.ePx[e] = at[0]; s.eY[e] = s.ePy[e] = at[1]; s.eSpeed[e] = 0; s.eHp[e] = s.eMaxHp[e]; s.eSeenT[e] = 0;
+        s.step();
+        for (let k = 0; k < s.events.length; k += 5) if (s.events[k] === 0 && s.events[k + 1] === mg.x) shots++;
+        s.events.length = 0;
+        if (n === 60) why = s.fireStatus(mg);
+      }
+      const seen = s.seen(e);
+      s.damage(e, 1e9, true, null);
+      return { shots, why, seen };
+    };
+    const a = fire(hid);
+    const b = fire(open);
+    return { found: true, blindShots: a.shots, why: a.why, openShots: b.shots, openSeen: b.seen };
+  });
+  check(los.found && los.blindShots === 0 && los.openShots > 0 && los.why.startsWith('No line of sight') && los.openSeen,
+    `WW2 line of sight: an MG holds fire at a soldier behind trees (${los.blindShots} shots: ${los.why?.slice(0, 18)}…) and fires in the open (${los.openShots})`);
+
+  // combined arms: riflemen pair up with a tank; a lone tank gets close-assaulted by an MG nest; smoke ahead of an assault on a bunker
+  const arms = await page.evaluate(() => {
+    const { Sim, session, towerIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const tank = s.spawnEnemy(7, 6);
+    const men = [s.spawnEnemy(0, 6), s.spawnEnemy(1, 6), s.spawnEnemy(0, 6)];
+    for (let n = 0; n < 60 * 6; n++) s.step();
+    const paired = men.filter((m) => s.eLead[m] === tank).length;
+    const escorted = s.eEscort[tank] === 1;
+    const f = Sim.create(cfg);
+    f.hero = null;
+    const mg = f.place(towerIndex('mg42'), 30, 30, true);
+    const t = f.spawnEnemy(7, 6);
+    const hp = f.eHp[t];
+    for (let n = 0; n < 120; n++) {
+      f.eX[t] = mg.x + 30; f.eY[t] = mg.y; f.eSpeed[t] = 0;
+      f.step();
+    }
+    const assaulted = f.eHp[t] < hp;
+    const g = Sim.create(cfg);
+    g.hero = null;
+    const bunker = g.place(towerIndex('bunker'), 30, 30, true);
+    bunker.knownT = 99; bunker.seenT = 99;
+    const k = g.spawnEnemy(7, 6);
+    for (let n = 0; n < 30; n++) {
+      g.eX[k] = bunker.x + 160; g.eY[k] = bunker.y; g.eSpeed[k] = 0;
+      g.step();
+    }
+    return { paired, escorted, assaulted, smoke: g.smCount > 0 };
+  });
+  check(arms.paired >= 2 && arms.escorted, `WW2 combined arms: riflemen escort the tank (${arms.paired} paired, escorted ${arms.escorted})`);
+  check(arms.assaulted && arms.smoke, `WW2 combined arms: an MG nest close-assaults a lone tank (${arms.assaulted}), smoke ahead of an assault on a bunker (${arms.smoke})`);
+
+  // counter-battery: their battery is hidden; after a few salvos of our mortar it answers on it and gives itself away
+  const cb = await page.evaluate(() => {
+    const { Sim, session, towerIndex, enemyDef } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    let g = -1;
+    for (let k = 0; k < 16; k++) if (s.gKind[k] >= 0 && enemyDef(s.gKind[k]).fixed === 'arty') g = k;
+    const battery = s.gSlot[g];
+    const hidden = !s.seen(battery);
+    const mortar = s.place(towerIndex('mortar'), 30, 30, true);
+    const e = s.spawnEnemy(0, 3);
+    let answered = false;
+    for (let n = 0; n < 60 * 30 && !answered; n++) {
+      s.eX[e] = mortar.x + 100; s.eY[e] = mortar.y; s.eHp[e] = s.eMaxHp[e]; s.eSpeed[e] = 0;
+      s.step();
+      for (let r = 0; r < s.rkCount; r++) if (Math.hypot(s.rkTx[r] - mortar.x, s.rkTy[r] - mortar.y) < 40) answered = true;
+    }
+    return { battery: g >= 0, hidden, answered, revealed: s.seen(battery) };
+  });
+  check(cb.battery && cb.hidden && cb.answered && cb.revealed, `WW2 counter-battery: their hidden battery (${cb.hidden}) answers our mortar (${cb.answered}) and gives itself away (${cb.revealed})`);
 
   // weapon ranges: one gun per role fires at a soldier at 95% of the range it shows; an MG holds fire at a tank's front and says why
   const ranges = await page.evaluate(() => {

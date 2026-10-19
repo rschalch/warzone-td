@@ -1,4 +1,4 @@
-import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, type Texture } from 'pixi.js';
+import { BitmapFont, BitmapText, Container, Graphics, Particle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 import { palette, settings } from '../app/settings';
 import { COLS, DT, ENEMIES, LOOK, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from '../game/defs';
 import type { FlowField } from '../game/flow';
@@ -108,10 +108,15 @@ const C_DRONE = 3 << 16;
 const C_HERO = 4 << 16;
 const C_SCENERY = 5 << 16;
 const C_UNIT = 6 << 16;
+const C_GHOST = 7 << 16;
+/** WW2 fog of war: s an attacker's last known position stays marked; how dark the unseen ground gets. */
+const GHOST_T = 7;
+const FOG_ALPHA = 105;
 
 const STATUS_WORDS = [
   ['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff],
   ['BOUNCED', 0xc8ccd0], ['TRACKED', 0xfff07a], ['AMMO RACK!', 0xff7a3a],
+  ['SURRENDERED', 0xf0f0e0], ['FALLING BACK', 0xa8d8ff], ['OFFICER DOWN', 0xffd84a],
 ] as const;
 const MAX_WRECKS = 220;
 const MAX_SCORCH = 260;
@@ -230,6 +235,13 @@ export class GameRenderer {
   private readonly ghostTurret = new Sprite();
 
   private readonly sorter = new DepthSorter();
+  /** WW2 fog of war: the dark wash over ground nothing of ours sees, and the last known positions of attackers. */
+  private readonly fogCanvas: HTMLCanvasElement | null = null;
+  private readonly fogTex: Texture | null = null;
+  private fogVersion = -1;
+  private readonly lastSeen = new Map<number, { x: number; y: number; ang: number; kind: number; t: number }>();
+  private readonly ghosts: { x: number; y: number; ang: number; kind: number; a: number }[] = [];
+  private readonly aliveUids = new Set<number>();
   private readonly airSorter = new DepthSorter();
   // iso: one frame per heading; top: a single frame rotated at runtime
   private readonly enemyFrames: Texture[][];
@@ -324,7 +336,19 @@ export class GameRenderer {
     bg.width = MAP_W;
     bg.height = MAP_H;
     this.ground.setFromMatrix(projection.groundMatrix());
-    this.ground.addChild(bg, this.scorchLayer.view, this.decals.view, this.overlay, this.shadows.view, this.groundFx.view);
+    this.ground.addChild(bg, this.scorchLayer.view, this.decals.view);
+    if (WW2) {
+      // one pixel per cell, stretched smooth over the map
+      this.fogCanvas = document.createElement('canvas');
+      this.fogCanvas.width = COLS;
+      this.fogCanvas.height = ROWS;
+      this.fogTex = Texture.from(this.fogCanvas);
+      const fog = new Sprite(this.fogTex);
+      fog.width = MAP_W;
+      fog.height = MAP_H;
+      this.ground.addChild(fog);
+    }
+    this.ground.addChild(this.overlay, this.shadows.view, this.groundFx.view);
 
     this.root.addChild(
       this.ground,
@@ -366,7 +390,8 @@ export class GameRenderer {
         this.floatText(`${Math.round(a)}`, x, y, b ? 0xffb070 : 0xffffff, a >= 500 ? 1.4 : 1.05, 14);
       } else if (type === EV_STATUS && settings.numbers) {
         const [word, color] = STATUS_WORDS[a];
-        this.floatText(word, x, y, color, 0.85, 16);
+        // morale calls float above the bounty of the same kill
+        this.floatText(word, x, y, color, 0.85, a >= 8 ? 30 : 16);
       } else if (type === EV_LEVEL) {
         this.floatText(`LEVEL ${a}!`, x, y, 0xffd84a, 1.3, 24);
       }
@@ -518,13 +543,19 @@ export class GameRenderer {
       }
     }
     this.decals.end();
+    if (WW2) this.updateFog(time);
     for (let n = 0; n < s.liveCount; n++) {
       const i = s.live[n];
       if (!s.eAlive[i]) continue;
       const x = s.ePx[i] + (s.eX[i] - s.ePx[i]) * alpha;
       const y = s.ePy[i] + (s.eY[i] - s.ePy[i]) * alpha;
+      if (WW2 && !s.seen(i)) continue; // in the fog: its last known position is marked instead
       if (!this.visible(p.x(x, y), p.y(x, y))) continue;
       (s.eAir[i] ? airSorter : sorter).add(this.depth(x, y), C_ENEMY | i);
+    }
+    for (let k = 0; k < this.ghosts.length; k++) {
+      const gh = this.ghosts[k];
+      if (this.visible(p.x(gh.x, gh.y), p.y(gh.x, gh.y))) sorter.add(this.depth(gh.x, gh.y), C_GHOST | k);
     }
 
     for (let u = 0; u < MAX_UNITS; u++) {
@@ -737,6 +768,13 @@ export class GameRenderer {
         const pal = palette();
         this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0, f)) / 4, 0.5, f > 0.6 ? pal.hpHigh : f > 0.3 ? pal.hpMid : pal.hpLow, 1, 0);
       }
+      if (WW2 && t.ammo < 0.999 && !t.wreck && (s.usesAmmo(t) || def.role === 'depot')) {
+        // ammunition (a depot: its store), under the emplacement; red once empty
+        const w = t.size * TILE * 0.7;
+        const by = sy + (this.iso ? 14 : t.size * TILE * 0.5 + 3);
+        this.bars.push(this.atlas.px, sx - w / 2 - 1, by, 0, (w + 2) / 4, 1.3, 0x111111, 0.85, 0);
+        this.bars.push(this.atlas.px, sx - w / 2, by, 0, (w * Math.max(0.04, t.ammo)) / 4, 0.75, t.ammo <= 0 ? 0xff4a3a : t.ammo < 0.3 ? 0xffa030 : 0xd8c070, 1, 0);
+      }
       if (def.manual) {
         // charge gauge; glows when ready to fire
         const c = s.chargeLevel(t);
@@ -776,6 +814,15 @@ export class GameRenderer {
     }
     if (kind === C_UNIT) {
       this.drawUnit(idx, alpha, time);
+      return;
+    }
+    if (kind === C_GHOST) {
+      // last known position of an attacker now in the fog: a faint grey silhouette
+      const gh = this.ghosts[idx];
+      const sx = p.x(gh.x, gh.y);
+      const sy = p.y(gh.x, gh.y);
+      if (this.iso) this.world.push(this.enemyFrames[gh.kind][dirIndex(gh.ang)], sx, sy, 0, 1, 1, 0x8a96a8, gh.a);
+      else this.world.push(this.enemyTopTex[gh.kind], sx, sy, gh.ang, 1, 1, 0x8a96a8, gh.a);
       return;
     }
     if (kind === C_DRONE) {
@@ -1222,6 +1269,50 @@ export class GameRenderer {
         const r = s.stats(t).range;
         if (r > 14) g.circle(t.x, t.y, r).stroke({ width: 1.5, color: 0xffffff, alpha: 0.35 });
       }
+    }
+  }
+
+  /**
+   * WW2 fog of war: redraws the wash over unseen ground when the sim's sight changes, and keeps the
+   * last known positions of attackers that slipped into it (fading out).
+   */
+  private updateFog(time: number): void {
+    const s = this.sim;
+    if (this.fogCanvas && this.fogTex && this.fogVersion !== s.sightVersion) {
+      this.fogVersion = s.sightVersion;
+      const g = this.fogCanvas.getContext('2d')!;
+      const img = g.createImageData(COLS, ROWS);
+      const d = img.data;
+      for (let c = 0; c < COLS * ROWS; c++) {
+        d[c * 4] = 12;
+        d[c * 4 + 1] = 18;
+        d[c * 4 + 2] = 28;
+        d[c * 4 + 3] = s.seenGrid[c] ? 0 : FOG_ALPHA;
+      }
+      g.putImageData(img, 0, 0);
+      this.fogTex.source.update();
+    }
+    const alive = this.aliveUids;
+    alive.clear();
+    for (let n = 0; n < s.liveCount; n++) {
+      const i = s.live[n];
+      if (!s.eAlive[i] || s.eGar[i] >= 0) continue;
+      alive.add(s.eUid[i]);
+      if (!s.seen(i)) continue;
+      const m = this.lastSeen.get(s.eUid[i]);
+      if (m) {
+        m.x = s.eX[i];
+        m.y = s.eY[i];
+        m.ang = s.eAng[i];
+        m.t = time;
+      } else this.lastSeen.set(s.eUid[i], { x: s.eX[i], y: s.eY[i], ang: s.eAng[i], kind: s.eKind[i], t: time });
+    }
+    this.ghosts.length = 0;
+    for (const [uid, m] of this.lastSeen) {
+      const age = time - m.t;
+      // dead, or long gone: forget it
+      if (!alive.has(uid) || age > GHOST_T || age < 0) this.lastSeen.delete(uid);
+      else if (age > 0) this.ghosts.push({ x: m.x, y: m.y, ang: m.ang, kind: m.kind, a: 0.45 * (1 - age / GHOST_T) });
     }
   }
 

@@ -63,7 +63,7 @@ export class Minimap {
     g.fillStyle = '#ff4030';
     for (let n = 0; n < s.liveCount; n++) {
       const i = s.live[n];
-      if (!s.eAlive[i] || s.eAir[i] || s.hidden(i)) continue;
+      if (!s.eAlive[i] || s.eAir[i] || s.hidden(i) || !s.seen(i)) continue;
       g.fillRect(s.eX[i] * k - 1, s.eY[i] * k - 1, 2.5, 2.5);
     }
     g.fillStyle = '#ffe28a';

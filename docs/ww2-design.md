@@ -153,6 +153,60 @@ Okinawa (1945, Japan: Shuri Line).
   thinks every N ticks); breach fields recomputed only when the maze changes.
 - The bot, the AI partner, smoke test and gauntlet need WW2 variants.
 
+## 8. Realism features (October 2026)
+
+### 8.1 Supply
+- Every gun has an ammunition stock (`Tower.ammo`): seconds of sustained fire by role — MGs 100, snipers 80,
+  AT guns, mortars and rockets 60, howitzers 50, flamethrowers 40. Empty guns fire at 40% of their rate.
+- Depots supply the guns in their radius (180 px) from a store of six full stocks; our headquarters supplies the
+  guns within 200 px from an endless one; guns out of reach scrounge 0.6%/s under fire and five times that while
+  no attacker is on the field. A depot below 60% calls a truck from the
+  nearest headquarters (one per depot, eight at most); trucks path round the maze and can be shot.
+- The enemy: a supply dump behind its headquarters (a garrison position, rebuilt like the others) and a truck every
+  ~12 s from the rear (+0.2 supply each, half if the dump is down). A wave uses 0.25; the counts scale with
+  0.5 + 0.5 × supply, and below 0.5 the next wave waits up to 30 s longer. Destroying the dump burns 0.4.
+
+### 8.2 Morale
+- Infantry attackers have morale (`eMorale`). It falls with heavy losses (below 40% of their strength), with every
+  man killed within 70 px (−0.07) and after 3 s pinned down; it comes back when they're not under fire, faster with
+  their officer alive. Banzai troops lose it at a third of the rate.
+- Every infantry wave brings an officer (ARole `officer`). His death costs the whole wave 0.35 morale.
+- Under 0.3 a squad breaks: pinned (suppression over 60%) it surrenders — removed, bounty paid, "SURRENDERED" —
+  otherwise it falls back along a flow field to its entry and leaves the field (no leak, no bounty), holding fire.
+- Our side: a knocked-out position or lost unit adds suppression to the crews and soldiers within 160 px and
+  leaves them shaken for 8 s (their suppression wears off at less than half the rate); veterans (`unitVet`) and
+  higher-level crews feel it less.
+
+### 8.3 Line of sight and fog of war
+- Forests, mountains and rocks (ruins in the city battles) block sight. Direct-fire guns (MGs, AT guns, snipers,
+  flamethrowers, bunkers, tanks dug in) need their own line of sight: a per-tower mask of the cells they see, built
+  once from the terrain. Units and the commander raycast when they pick a target. Mortars, rockets and artillery fire
+  at anything something of ours sees; artillery still needs an observer (whose coverage respects sight) or a target
+  within 140 px. Aircraft are always seen and never blocked.
+- Fog of war (gameplay state, saved): our emplacements see max(their range, 140 px), units max(their gun, 130 px),
+  the commander 130 px, aircraft 220 px. An attacker that fires is seen for 2.5 s; marked ones stay seen; the enemy's
+  base positions are known. Out of sight, attackers aren't drawn, picked or shown on the minimap; the renderer marks
+  their last known position for 7 s. The wave preview stays.
+- The panel says when a gun can't fire for lack of sight.
+
+### 8.4 Combined arms
+- Rifle and assault squads join the nearest tank of their wave on their route (three per tank) and keep pace
+  with it along the flow field (they wait when they get ahead, hurry when they fall behind).
+- A tank with no infantry within 60 px is unescorted: rocket teams (the `at` slot) and our soldiers do 1.5× damage
+  to it, and our infantry positions (MG, rocket team, flamethrower, bunker, sniper) and soldiers within reach throw
+  satchel charges on its deck (45 dmg growing with the waves, 70 mm against the top, every 7 s). Escorted tanks
+  spot camouflaged positions 1.5× further.
+- When its tanks close on a strongpoint they know about (fortification ≥ 25 mm or a headquarters, 90–230 px away)
+  a wave lays smoke 65% of the way to it, twice at most.
+
+### 8.5 Counter-battery
+- Each shot of our mortars, rocket launchers and howitzers gives the enemy a quarter of a fix on that gun (less the
+  better it is camouflaged: × (1 − 0.7 × camo)); the fix fades by 1% a second. At a full fix the enemy's battery —
+  a garrison position built from its arsenal's howitzer — fires five shells on the gun (46 damage each, scattered
+  over 26 px) and the fix starts again. Selling and rebuilding elsewhere starts from nothing.
+- Their battery is hidden (not drawn, not targetable) until something of ours sees it — an observation post in
+  sight, a recon flight's mark (which also counts as spotting for our artillery) — or until it fires (6 s).
+
 ## 7. Phases
 
 Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:

@@ -21,6 +21,7 @@ export const SU_IL2 = 11;
 export const SU_YAK = 12;
 export const SU_KATYUSHA = 13;
 export const SU_SAPPER = 14;
+export const SU_OFFICER = 15;
 
 export const SOVIET: EnemyDef[] = [
   { name: 'Rifle Squad', hp: 30, speed: 44, reward: 2, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_rifle', bio: 2, inf: true, gun: { dmg: 2.5, range: 110, rate: 0.7, pen: 7, supp: 0.03, fx: 'rifle' } },
@@ -40,6 +41,8 @@ export const SOVIET: EnemyDef[] = [
     gun: { dmg: 22, range: 340, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 16, fx: 'katyusha' } },
   { name: 'Sapper Squad', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_sapper', bio: 2, inf: true,
     gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+  { name: 'Lieutenant', hp: 40, speed: 44, reward: 8, armor: 0, air: false, radius: 6, lives: 1, tex: 'su_officer', bio: 2, inf: true, officer: true, spot: 160,
+    gun: { dmg: 3, range: 80, rate: 0.6, pen: 6, supp: 0.02, fx: 'smg' } },
 ];
 
 
@@ -59,6 +62,7 @@ const ARMY_HELP: UnitHelp[] = [
   { text: 'A fast, unarmoured fighter.', counter: 'Flak 38, the 88, and MG-42s.' },
   { text: 'The Katyusha — "Stalin\'s organ": sixteen rockets rippled off a truck, howling down on your positions from long range. The blasts hit sandbagged positions from above.', counter: 'It is a soft truck: anything kills it if it reaches it. Long-range guns (88, Flak 38) or artillery spotted by an observation post; concrete bunkers shrug off the rockets.' },
   { text: 'Assault engineers with satchel charges. When your maze makes the way round long, they go straight for the weakest wall and blow it up; on the way they lift mines and cut wire.', counter: 'MG-42s and S-mines before they reach the wall; deep mazes of strong, covered emplacements are not worth breaching.' },
+  { text: 'A Red Army lieutenant leading the infantry of the wave, pistol in hand. While he lives his men press on; if he falls, the wave loses heart and more of it breaks and falls back.', counter: 'Snipers pick officers off first; anything that reaches him early in the wave.' },
 ];
 
 export const RED_ARMY: Army = {
@@ -66,7 +70,7 @@ export const RED_ARMY: Army = {
   roster: {
     rifle: SU_RIFLE, assault: SU_SMG, sniper: SU_SNIPER, medic: SU_MEDIC, sapper: SU_SAPPER,
     recon: SU_GAZ, armcar: SU_BA64, light: SU_T70, medium: SU_T34, medium2: SU_T3485, heavy: SU_KV1, boss: SU_IS2,
-    attack: SU_IL2, fighter: SU_YAK, rockets: SU_KATYUSHA,
+    attack: SU_IL2, fighter: SU_YAK, rockets: SU_KATYUSHA, officer: SU_OFFICER,
   },
   help: ARMY_HELP,
 };
@@ -100,7 +104,7 @@ export const SOVIET_TOWERS: TowerDef[] = growAll([
     lv: { cost: 105, damage: 175, splash: 62, rate: 0.16 } }),
   derive(G('rockets'), { kind: 'bm13', name: 'BM-13 Katyusha Battery', short: 'Katyusha', desc: '"Stalin\'s organ": sixteen rockets per salvo, howling over the target area.', turret: 'su_katyusha', sfx: 'katyusha',
     lv: { cost: 145, damage: 30, rate: 0.08, splash: 32, salvo: 16 } }),
-  derive(G('depot'), { kind: 'su_depot', name: 'Supply Dump', short: 'Depot', desc: 'Pays out at every wave, plus interest on the money you keep.', turret: 'su_w_depot' }),
+  derive(G('depot'), { kind: 'su_depot', name: 'Supply Dump', short: 'Depot', desc: 'Keeps the guns in range supplied with ammunition (trucks from the HQ refill it), and pays out at every wave.', turret: 'su_w_depot' }),
   derive(G('observer'), { kind: 'su_observer', name: 'Observation Post', short: 'Observer', desc: 'Spots for artillery, reveals snipers and extends the range of guns nearby.', turret: 'su_w_observer' }),
   derive(G('hq'), { kind: 'su_hq', name: 'Regimental HQ', short: 'HQ', desc: 'The commissar and the radio: emplacements in range fire faster.', turret: 'su_w_hq', lv: { cost: 80 } }),
   derive(G('workshop'), { kind: 'su_workshop', name: 'Repair Workshop', short: 'Workshop', desc: 'Engineers patch up damaged emplacements in range, even under fire.', turret: 'su_w_workshop' }),
@@ -154,7 +158,7 @@ const SOVIET_HELP: Record<string, string> = {
   pm41: 'An 82 mm mortar: bombs that burst among infantry and pin them down.',
   m30: 'The 122 mm M-30 howitzer: a huge blast at long range, but it only sees 140px by itself — build observation posts.',
   bm13: 'The Katyusha on a Studebaker truck: sixteen rockets per salvo, scattered over the target area with their famous howl. Devastating against infantry and soft vehicles.',
-  su_depot: 'Produces no damage. At every wave it pays a fixed income plus interest on the money you are holding.',
+  su_depot: 'Every gun has an ammunition stock that firing uses up (artillery and anti-tank guns fastest, machine guns slowest); empty guns fire at a third of their rate. Guns in the depot\'s radius are refilled from its store, and the headquarters sends a truck to refill the store when it runs low (the enemy shoots at the trucks). The headquarters also supplies the guns near it. Produces no damage. At every wave it pays a fixed income plus interest on the money you are holding.',
   su_observer: 'An observation post: artillery fires at anything it sees, enemy snipers inside it are revealed, guns nearby get extra range.',
   su_hq: 'A regimental headquarters: every emplacement in range fires faster.',
   su_workshop: 'Engineers with spare parts: they patch up every emplacement in range. Rebuilding rubble (B) costs money.',

@@ -111,6 +111,19 @@ function decide(sim: Sim, built: Map<number, number>): void {
     let fixed = false;
     for (const t of hurt) if (sim.money >= sim.repairCost(t) && sim.exec({ t: 'repair', ids: [t.id] })) fixed = true;
     if (fixed) return;
+    // keep the guns in ammunition: a depot among the guns no depot or headquarters reaches
+    const dry = sim.towers.filter((t) => sim.usesAmmo(t) && !t.wreck && !sim.supplied(t));
+    if (dry.length >= 3) {
+      // next to the gun with the most dry guns round it (saving up for it if need be)
+      const dep = slot('depot');
+      const r = TOWERS[dep].levels[0].range * 0.8;
+      const around = (t: (typeof dry)[number]) => dry.filter((o) => Math.hypot(o.x - t.x, o.y - t.y) < r).length;
+      const at = dry.reduce((a, t) => (around(t) > around(a) ? t : a));
+      if (around(at) >= 3) {
+        if (sim.money < sim.cost(dep)) return;
+        for (const d of [30, 50, 70, 90]) if (placeAround(sim, dep, at.x, at.y, d, built)) return;
+      }
+    }
     // one workshop per dozen emplacements once the enemy shoots back in earnest
     const shops = built.get(slot('workshop')) ?? 0;
     if (sim.wave >= 5 && shops < sim.towers.length / 12 && sim.money < sim.cost(slot('workshop'))) return;

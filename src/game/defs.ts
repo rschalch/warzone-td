@@ -61,7 +61,11 @@ export interface EnemyDef {
   /** WW2: a banzai charge — suppression doesn't slow it down. */
   banzai?: boolean;
   /** WW2: a position of the enemy's base (it never moves): its headquarters, or a gun guarding it. */
-  fixed?: 'hq' | 'mg' | 'at';
+  fixed?: 'hq' | 'mg' | 'at' | 'depot' | 'arty';
+  /** WW2: an officer leading the wave's infantry; its fall shakes the whole wave. */
+  officer?: boolean;
+  /** WW2: a supply truck of the enemy's, driving ammunition to its supply dump (not part of any wave). */
+  supply?: boolean;
   /** WW2: emplacement base drawn under a fixed position (atlas name without the view suffix). */
   base?: string;
 }
@@ -549,7 +553,9 @@ export interface UnitDef {
   short: string;
   tex: string;
   /** Where it comes from: the tower role that trains it. */
-  from: 'barracks' | 'motorpool' | 'airfield';
+  from: 'barracks' | 'motorpool' | 'airfield' | 'supply';
+  /** WW2: an ammunition truck (from: 'supply'): sent by the headquarters to the depots, never trained or ordered. */
+  truck?: boolean;
   cost: number;
   manpower: number;
   train: number; // s

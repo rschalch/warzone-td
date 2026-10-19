@@ -259,6 +259,16 @@ export class Partner {
       const t = first(['observer']);
       if (t >= 0) return t;
     }
+    // guns out of reach of any depot or headquarters run dry
+    let dry = 0;
+    for (const t of sim.towers) if (t.ammo < 0.5 && sim.usesAmmo(t) && !t.wreck && !sim.supplied(t)) dry++;
+    if (dry >= 3) {
+      const t = first(['depot']);
+      if (t >= 0) {
+        this.say(`supply${sim.wave}`, 'Our guns are running out of ammunition. Setting up a supply depot.');
+        return t;
+      }
+    }
     if (sim.wave >= 5 && c('workshop') < total / 12) {
       const t = first(['workshop']);
       if (t >= 0) {

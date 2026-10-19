@@ -34,7 +34,7 @@ export const JP_TOWERS: TowerDef[] = growAll([
     lv: { rate: 0.17 } }),
   derive(G('rockets'), { kind: 'type4', name: 'Type 4 Rocket Launcher', short: 'Type 4', desc: 'Six 20 cm rockets per salvo, each one a heavy blast.', turret: 'jp_type4', sfx: 'nebel',
     lv: { cost: 120, damage: 80, rate: 0.1, splash: 40, salvo: 6 } }),
-  derive(G('depot'), { kind: 'jp_depot', name: 'Supply Dump', short: 'Depot', desc: 'Pays out at every wave, plus interest on the money you keep.', turret: 'jp_w_depot' }),
+  derive(G('depot'), { kind: 'jp_depot', name: 'Supply Dump', short: 'Depot', desc: 'Keeps the guns in range supplied with ammunition (trucks from the HQ refill it), and pays out at every wave.', turret: 'jp_w_depot' }),
   derive(G('observer'), { kind: 'jp_observer', name: 'Observation Post', short: 'Observer', desc: 'Spots for artillery, reveals snipers and extends the range of guns nearby.', turret: 'jp_w_observer' }),
   derive(G('hq'), { kind: 'jp_hq', name: 'Regimental HQ', short: 'HQ', desc: 'Officers and runners: emplacements in range fire faster.', turret: 'jp_w_hq' }),
   derive(G('workshop'), { kind: 'jp_workshop', name: 'Field Workshop', short: 'Workshop', desc: 'Engineers patch up damaged emplacements in range, even under fire.', turret: 'jp_w_workshop' }),
@@ -88,7 +88,7 @@ const JP_HELP: Record<string, string> = {
   type97_81: 'An 81 mm mortar: bombs that burst among infantry and pin them down.',
   type91: 'The 105 mm howitzer: a big blast at long range, but it needs observers to see.',
   type4: 'Type 4 rocket launchers: six 20 cm rockets per salvo, each warhead a heavy blast.',
-  jp_depot: 'Produces no damage. At every wave it pays a fixed income plus interest on the money you are holding.',
+  jp_depot: 'Every gun has an ammunition stock that firing uses up (artillery and anti-tank guns fastest, machine guns slowest); empty guns fire at a third of their rate. Guns in the depot\'s radius are refilled from its store, and the headquarters sends a truck to refill the store when it runs low (the enemy shoots at the trucks). The headquarters also supplies the guns near it. Produces no damage. At every wave it pays a fixed income plus interest on the money you are holding.',
   jp_observer: 'An observation post: artillery fires at anything it sees, enemy snipers are revealed, guns nearby get extra range.',
   jp_hq: 'A regimental headquarters: every emplacement in range fires faster.',
   jp_workshop: 'Engineers with spare parts patch up every emplacement in range. Rebuilding rubble (B) costs money.',
@@ -154,6 +154,8 @@ const JP_ARMY_UNITS: EnemyDef[] = [
     gun: { dmg: 60, range: 300, rate: 1 / 14, pen: 35, supp: 0.6, halt: 1.2, splash: 40, salvo: 4, fx: 'katyusha' } },
   { name: 'Engineers', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'jp_engineer', bio: 2, inf: true,
     gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+  { name: 'Shōi', hp: 40, speed: 44, reward: 8, armor: 0, air: false, radius: 6, lives: 1, tex: 'jp_officer', bio: 2, inf: true, officer: true, spot: 160,
+    gun: { dmg: 3, range: 80, rate: 0.6, pen: 6, supp: 0.02, fx: 'smg' } },
 ];
 
 const JP_ARMY_HELP: UnitHelp[] = [
@@ -172,13 +174,14 @@ const JP_ARMY_HELP: UnitHelp[] = [
   { text: 'An A6M Zero fighter: it hunts your aircraft.', counter: 'Anti-aircraft guns and machine guns.' },
   { text: 'A Type 4 rocket truck: four heavy rockets per salvo from long range.', counter: 'An unarmoured truck: long-range guns or artillery with an observer.' },
   { text: 'Engineers with charges: they blow the weakest wall of a long maze, lift mines and cut wire.', counter: 'Machine guns and AP mines before they reach the wall.' },
+  { text: 'A sword-carrying second lieutenant leading the infantry of the wave. While he lives his men press on; if he falls, the wave loses heart (banzai troops less so).', counter: 'Snipers pick officers off first; anything that reaches him early in the wave.' },
 ];
 
 export const JP_ARMY: Army = {
   enemies: JP_ARMY_UNITS,
   roster: {
     rifle: 0, assault: 1, sniper: 2, medic: 3, recon: 4, armcar: 5, light: 6, medium: 7, medium2: 8, heavy: 9, boss: 10,
-    attack: 11, fighter: 12, rockets: 13, sapper: 14,
+    attack: 11, fighter: 12, rockets: 13, sapper: 14, officer: 15,
   },
   doctrine: { inf: 1.4, armour: 0.6 },
   help: JP_ARMY_HELP,

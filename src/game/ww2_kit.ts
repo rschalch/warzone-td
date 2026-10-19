@@ -44,7 +44,7 @@ export interface Arsenal {
 
 /** What a unit is for in an offensive; the wave builder asks for roles, each army fills them. */
 export type ARole =
-  | 'rifle' | 'assault' | 'sniper' | 'medic' | 'sapper'
+  | 'rifle' | 'assault' | 'sniper' | 'medic' | 'sapper' | 'officer'
   | 'recon' | 'armcar' | 'light' | 'medium' | 'medium2' | 'heavy' | 'boss'
   | 'attack' | 'fighter' | 'rockets';
 
@@ -63,7 +63,7 @@ export interface Army {
   help: UnitHelp[];
 }
 
-const INF: ARole[] = ['rifle', 'assault', 'sniper', 'medic', 'sapper'];
+const INF: ARole[] = ['rifle', 'assault', 'sniper', 'medic', 'sapper', 'officer'];
 const AIR: ARole[] = ['attack', 'fighter'];
 
 /**
@@ -116,6 +116,8 @@ export function assault(n: number, army: Army): SpawnGroup[] {
         break;
     }
   }
+  // an officer leads the infantry: if he falls, the wave loses heart (see Sim.updateMorale)
+  if (R.officer !== undefined && g.some((x) => x.kind === R.rifle || x.kind === R.assault)) g.push({ kind: R.officer, count: 1, interval: 1, delay: 2 });
   // assault engineers go ahead of the armour: they blow walls, lift mines and cut wire
   if (n >= 6 && n % 10 !== 0 && n % 5 !== 0 && n % 4 !== 1) add('sapper', 2 + n * 0.12, 1.4, 3);
   // rocket artillery shells the positions ahead of the armour

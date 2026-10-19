@@ -214,7 +214,7 @@ function enemyUnder(e: { clientX: number; clientY: number }): number {
   let bestD = Infinity;
   for (let n = 0; n < s.liveCount; n++) {
     const i = s.live[n];
-    if (!s.eAlive[i] || s.hidden(i)) continue;
+    if (!s.eAlive[i] || s.hidden(i) || !s.seen(i)) continue;
     const ex = projection.x(s.eX[i], s.eY[i]);
     const ey = projection.y(s.eX[i], s.eY[i]) - (s.eAir[i] ? AIR_Z : 6) * projection.lift;
     const d = Math.hypot(ex - sx, ey - sy);
@@ -975,7 +975,7 @@ function bindInput(): void {
 const SHOT_SOUND: Record<string, string> = {
   nuke: 'nukeLaunch', mine: '',
 };
-const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom'];
+const STATUS_SOUND = ['freeze', 'hack', 'shatter', 'stun', 'swallow', 'ricochet', 'stun', 'boom', '', '', ''];
 /** WW2: the attackers' weapons, by ENEMY_FX index. */
 const ENEMY_SOUND = ['mosin', 'ppsh', 'dt', 'f34', 'rs82', 'katyusha', '', '', 'stuka'];
 
@@ -1018,7 +1018,7 @@ function handleEvents(s: Sim): void {
         void saveGame();
         break;
       case EV_STATUS:
-        sound.play(STATUS_SOUND[a], x, y);
+        if (STATUS_SOUND[a]) sound.play(STATUS_SOUND[a], x, y);
         break;
       case EV_HIT:
         if (ev[k + 4]) sound.play('shatter', x, y);

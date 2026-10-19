@@ -150,6 +150,7 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 #banner.show { display: flex; }
 #banner button { padding: 2px 8px; font-size: 12px; }
 #banner .bad, .bad { color: var(--bad); }
+.good { color: var(--good); }
 #report { position: absolute; top: 12px; left: 12px; z-index: 3; width: 250px; background: rgba(20,22,16,0.92); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 12px; opacity: 0; transform: translateY(-8px); transition: opacity 0.3s, transform 0.3s; pointer-events: none; }
 #report.show { opacity: 1; transform: none; }
 #report .wt { font-weight: 700; margin-bottom: 5px; }
@@ -171,6 +172,8 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 #wavebox .wt { font-weight: 700; display: flex; justify-content: space-between; margin-bottom: 3px; }
 #wavebox .hp { color: var(--dim); font-weight: 400; }
 #wavebox .tip { color: #f0b860; font-size: 11px; }
+#wavebox .sup { color: var(--dim); font-size: 11px; margin-top: 3px; }
+#wavebox .sup.low { color: var(--good); }
 .tb.locked { opacity: 0.3; }
 #info .abil button { font-size: 11px; }
 #gear { padding: 6px 10px; }

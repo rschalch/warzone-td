@@ -49,53 +49,46 @@ Three problems the user reported (October 2026). Do these before the realism fea
 
 # Realism features
 
-## 1. Supply
+## 1. Supply — done
 
-- [ ] Guns need ammunition. Each emplacement has an ammo stock that firing uses up (artillery and AT guns
-  fastest, MGs slowly); empty guns fire at a fraction of their rate.
-- [ ] Depots (`depot` slot) resupply positions in range; trucks drive from the HQ to the depots along a road
-  (a unit kind that paths with `unitPathTo`), and the enemy can shoot them.
-- [ ] The enemy's waves are supplied from their base too: shelling their supply column (or their depot
-  near the HQ) makes the next wave smaller or later.
-- Notes: ammo as a `Float32Array` per tower slot or a `Tower` field (saved automatically); show it in the
-  tower panel and as a small bar. Keep it cheap: resupply checks every few ticks, not per frame.
+- [x] Ammunition per emplacement (`Tower.ammo`, seconds of fire by role: artillery and AT guns run dry first),
+  empty guns at 40% of their rate; ammo bar under the gun and a row in the panel (with "no supply").
+- [x] Depots (radius 180) refill guns from their store; the HQ supplies its surroundings; crews out of reach scrounge
+  (five times faster between waves). A depot running low calls a supply truck from the HQ (a unit kind of every
+  arsenal, `unitPathTo`), which the enemy can shoot.
+- [x] The enemy: a supply dump behind its HQ and a truck column from the rear; `foeSupply` shrinks the next waves and
+  delays them when low; shown in the wave preview. The bot and the AI partner build depots for dry guns.
+- Bot: Easy wins Open Field and Crossfire; Normal: Crossfire 37 (was 24), Open Field 19 (was 25).
 
-## 2. Morale
+## 2. Morale — done
 
-- [ ] Enemy squads that lose most of their men, or stay pinned (`eSupp` near 1) for long, fall back towards
-  their entry or surrender (removed, bounty paid, maybe a "surrendered" floating text).
-- [ ] A wave whose officer or command vehicle dies loses heart: more of it falls back. Add an officer to
-  infantry waves (a role in `ARole`, filled by every army).
-- [ ] Our own units and crews: heavy losses nearby make crews suppressed for longer; veterans hold better
-  (`unitVet`).
-- Notes: retreating attackers walk the flow field backwards (`next` towards higher `dist`, or a field to
-  the entry); they must not count as "on the field" for wave clear once they leave.
+- [x] Infantry morale: heavy losses, long pins and deaths nearby wear it down; broken squads surrender when pinned
+  (bounty, floating "SURRENDERED") or fall back along a flow field to the entry and leave (not a leak, not counted
+  once gone).
+- [x] An officer (new ARole `officer`, filled by every army, a model per side) leads each infantry wave; his death
+  shakes the whole wave ("OFFICER DOWN").
+- [x] Our crews and units are suppressed and stay shaken after losses nearby; veterans and seasoned crews hold better.
 
-## 3. Line of sight and fog of war
+## 3. Line of sight and fog of war — done
 
-- [ ] Forests (`T_TREE`), mountains and ruins block sight lines; a tower or unit only fires at what it can
-  see (a cheap grid raycast, cached per tower and refreshed when the maze changes).
-- [ ] Fog of war: enemies are only drawn where something of ours sees them (towers, units, observers, the
-  recon flight); the rest of the map shows the last known positions. The wave preview stays.
-- Notes: visibility is gameplay (targeting), so compute it in the sim deterministically; the fog drawing is
-  renderer-only. Mind performance on the biggest map (stress test must stay at 60 fps).
+- [x] Forests, mountains and rocks/ruins block sight; towers use a cached per-tower mask, units a raycast; indirect
+  fire needs anything of ours to see the target; observers' coverage respects sight; the panel explains.
+- [x] Fog of war in the sim (`seenGrid`, saved; updated every 15 ticks); the renderer darkens unseen ground and marks
+  last known positions; minimap and picking ignore unseen attackers; the wave preview stays. WW2 stress test: 60 fps.
 
-## 4. Combined arms
+## 4. Combined arms — done
 
-- [ ] Enemy tanks move with infantry escorts: armoured waves get riflemen assigned to a tank (a leader id
-  per attacker), who keep near it.
-- [ ] A tank with no infantry within ~60 px is vulnerable: our infantry positions (Schreck, MG with grenades,
-  units) get a close-assault bonus against it; escorted tanks spot camouflaged positions better.
-- [ ] The enemy lays smoke ahead of an assault on a strongpoint (reuse `popSmoke` / the `sm*` arrays).
+- [x] Escorts: riflemen pair with a tank of their wave (`eLead`) and keep pace with it.
+- [x] Unescorted tanks: +50% from infantry AT weapons, satchel charges from infantry positions and soldiers;
+  escorted tanks spot better. The panel tells whether a tank is escorted.
+- [x] Smoke ahead of an assault on a known strongpoint (the `sm*` arrays).
 
-## 5. Counter-battery fire
+## 5. Counter-battery fire — done
 
-- [ ] Each time our artillery (mortar, howitzer, rockets) fires, the enemy gains a "sound ranging" fix on it;
-  after a few salvos their artillery (the `barrage` shells in the `rk*` arrays) answers on that position.
-- [ ] Moving (selling and rebuilding elsewhere) or camouflage resets it; observers and the recon flight can
-  find the enemy's own guns (an artillery position in their base) for our counter-battery.
-- Notes: per-tower counter (`Tower` field). The enemy needs artillery pieces in its base (`garrison()` in
-  `ww2.ts` builds the base from its arsenal: add the `howitzer` slot as a fixed position).
+- [x] `Tower.fix` grows with each salvo of our artillery (camouflage muffles it); at a full fix the enemy's battery
+  (a new garrison position from its arsenal's howitzer) answers with shells on that gun; the panel shows the fix.
+- [x] Their battery is hidden until an observer sees it, a recon flight marks it (marks also spot for our
+  artillery) or it fires; then our howitzers can take it on.
 
 ## 6. Wrecks stay on the field
 

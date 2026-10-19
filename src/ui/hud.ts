@@ -70,7 +70,7 @@ const num = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n
 const pct = (f: number) => `${Math.round(f * 100)}%`;
 /** Kinds whose damage figure is per second rather than per shot. */
 const DPS_KINDS = new Set(['laser', 'flame', 'napalm', 'gas', 'gravity', 'spikes', 'hacker', 'orbital', 'blackhole']);
-const AURA_KINDS = new Set(['jammer', 'radar', 'command', 'salvage', 'workshop']);
+const AURA_KINDS = new Set(['jammer', 'radar', 'command', 'salvage', 'workshop', 'depot']);
 
 /** Stat rows for a tower level; `eff` overrides damage/range/rate with buffed values. */
 function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string][] {
@@ -114,6 +114,11 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
 function fortName(mm: number): string {
   const what = mm >= 90 ? 'tank armour' : mm >= 60 ? 'concrete' : mm >= 25 ? 'timber & earth' : mm >= 12 ? 'sandbags' : 'gun shield';
   return `${what} (${mm} mm)`;
+}
+
+/** WW2: an attacker's morale in words. */
+function moraleWord(m: number): string {
+  return m > 0.75 ? 'steady' : m > 0.5 ? 'shaken' : `<span class="good">wavering</span>`;
 }
 
 /** WW2: what an attacker fires back with. */
@@ -419,7 +424,8 @@ export class Hud {
 
   private updateWaveBox(sim: Sim): void {
     const n = sim.wave + 1;
-    const key = `${n}:${sim.canCallWave}`;
+    const supply = WW2 ? Math.round(sim.foeSupply * 20) * 5 : 100;
+    const key = `${n}:${sim.canCallWave}:${supply}`;
     if (this.cache.get(this.waveBox) === key) return;
     this.cache.set(this.waveBox, key);
     if (!sim.canCallWave) {
@@ -433,7 +439,9 @@ export class Hud {
       const tip = threatTip(ENEMIES[k]);
       return `<div><b>${c}×</b> ${ENEMIES[k].name}${tip ? ` <span class="tip">${tip}</span>` : ''}</div>`;
     }).join('');
-    this.waveBox.innerHTML = `<div class="wt">Next: wave ${n} <span class="hp">HP ×${hp.toFixed(1)}</span></div>${rows}`;
+    // WW2: what their supply column has brought up decides how much of the wave they can arm
+    const foe = WW2 ? `<div class="sup${supply < 60 ? ' low' : ''}">Enemy supply ${supply}%${supply < 100 ? ` — wave cut to ${Math.round(50 + supply / 2)}%` : ''}</div>` : '';
+    this.waveBox.innerHTML = `<div class="wt">Next: wave ${n} <span class="hp">HP ×${hp.toFixed(1)}</span></div>${rows}${foe}`;
   }
 
   private updateTactical(sim: Sim, ui: UiState): void {
@@ -477,7 +485,7 @@ export class Hud {
     let key: string;
     if (what) key = `i${what.kind}:${what.index}:${what === ui.aiming}:${sim.money >= (what.kind === 'tower' ? sim.cost(what.index) : 0)}:${sim.items.join()}:${sim.hero?.cd.map(Math.ceil).join()}`;
     else if (ui.units.length) key = `u${ui.units.map((u) => `${u}:${Math.ceil(sim.uHp[u])}:${sim.uStance[u]}:${sim.uKills[u]}:${sim.unitHidden(u)}`).join(',')}`;
-    else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}`;
+    else if (ui.enemy >= 0 && sim.eAlive[ui.enemy] && sim.seen(ui.enemy)) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}:${moraleWord(sim.eMorale[ui.enemy])}`;
     else if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
     else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}:${Math.ceil(sim.hero.hp)}:${Math.ceil(sim.hero.downT)}`;
     else if (t) {
@@ -485,7 +493,7 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
       const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
-      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}:${sim.fireStatus(t)}`;
+      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}:${sim.fireStatus(t)}:${Math.round(t.ammo * 20)}:${WW2 && sim.usesAmmo(t) && sim.supplied(t)}:${Math.round(t.fix * 10)}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -504,7 +512,7 @@ export class Hud {
       this.info.innerHTML = this.explain(sim, what, what === ui.aiming);
     } else if (ui.units.length) {
       this.info.innerHTML = this.unitPanel(sim, ui.units, ro);
-    } else if (ui.enemy >= 0 && sim.eAlive[ui.enemy]) {
+    } else if (ui.enemy >= 0 && sim.eAlive[ui.enemy] && sim.seen(ui.enemy)) {
       this.info.innerHTML = this.enemyPanel(sim, ui.enemy);
     } else if (ui.multi.length) {
       const cost = this.multiCost(sim, ui.multi);
@@ -540,12 +548,25 @@ export class Hud {
       const up = sim.upgradeCost(t);
       const nextRows = up ? stats(def, def.levels[t.level + 1]) : [];
       const rows = stats(def, lv, sim.stats(t))
-        .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1].replace(/ (mm|HP)$/, '') : ''}</td></tr>`)
+        .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1].replace(/ (mm|HP)$| \(max .*\)$/, '') : ''}</td></tr>`)
         .join('');
       // WW2: camouflaged guns can also wait in ambush
       const modeNames: string[] = [...TARGET_MODES, ...(WW2 && def.camo ? ['Ambush'] : [])];
       const modes = !def.targeted ? '' : `<div class="row modes">${modeNames.map((m, i) => `<button data-mode="${i}" class="${t.mode === i ? 'on' : ''}" ${ro}${m === 'Ambush' ? ' title="Hold fire until a tank shows its flank or comes point-blank; the first shot hits 50% harder"' : ''}>${m}</button>`).join('')}</div>`;
       const camo = sim.camoOf(t);
+      // WW2 supply: what is left in the gun's stock (or the depot's store) and whether anything brings more
+      let supplyRow = '';
+      if (sim.usesAmmo(t)) {
+        const out = t.ammo <= 0 ? '<span class="bad">out — a third of its rate</span>' : pct(t.ammo);
+        supplyRow = `<tr><td>Ammunition</td><td>${out}${sim.supplied(t) ? '' : ' · <span class="bad">no supply</span>'}</td><td></td></tr>`;
+      } else if (WW2 && def.role === 'depot') {
+        supplyRow = `<tr><td>Store</td><td><span class="${t.ammo < 0.25 ? 'bad' : ''}">${pct(t.ammo)}</span>${t.ammo < 0.6 ? ' · truck called' : ''}</td><td></td></tr>`;
+      }
+      // WW2 counter-battery: how close the enemy's sound rangers are to a fix on this gun
+      if (WW2 && (def.role === 'arty' || def.role === 'cannon')) {
+        const f = Math.min(1, t.fix);
+        supplyRow += `<tr><td>Enemy fix</td><td><span class="${f > 0.6 ? 'bad' : ''}">${pct(f)}</span>${f > 0.6 ? ' · counter-battery soon' : ''}</td><td></td></tr>`;
+      }
       const camoRow = WW2 && camo ? `<tr><td>Camouflage</td><td>${pct(camo)} · ${t.seenT > 0 ? 'revealed by its fire' : t.knownT > 0 ? '<span class="bad">spotted</span>' : 'hidden'}</td><td></td></tr>` : '';
       const combos = t.combos.map((name) => {
         const c = COMBOS.find((o) => o.name === name)!;
@@ -596,7 +617,7 @@ export class Hud {
         ${actions}
         ${t.owner ? '<div class="desc partner">Built by your AI partner. It upgrades its own towers; you can still upgrade or sell it.</div>' : ''}
         ${special}
-        <table>${condition}${camoRow}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
+        <table>${condition}${supplyRow}${camoRow}${rows}${hits ? `<tr><td>Targets</td><td>${hits}</td><td></td></tr>` : ''}${record}</table>
         ${penRows(lv)}
         ${combos}
         <div class="help">${towerHelp(def)}</div>`;
@@ -677,6 +698,10 @@ export class Hud {
     else if (sim.eBreach[i]) tags.push('going for a breach');
     if (sim.eSmoked[i]) tags.push('in smoke');
     if (sim.eAimT[i] > 0) tags.push('halted, aiming');
+    if (sim.eRetreat[i]) tags.push('<span class="good">falling back</span>');
+    const e = ENEMIES[sim.eKind[i]];
+    if (WW2 && e.arm && !e.air && !e.fixed) tags.push(sim.eEscort[i] ? 'escorted by infantry' : '<span class="good">no infantry with it: open to close assault</span>');
+    else if (WW2 && sim.eLead[i] >= 0) tags.push('escorting a tank');
     return tags.join(', ');
   }
 
@@ -692,6 +717,7 @@ export class Hud {
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
         <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
         ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def)}</td></tr>` : ''}
+        ${WW2 && def.inf && !def.fixed ? `<tr><td>Morale</td><td>${moraleWord(sim.eMorale[i])}${def.officer ? ' · leads the wave' : sim.officerAlive[sim.eWave[i] & 63] ? ' · officer alive' : ''}</td></tr>` : ''}
         ${def.fixed ? (sim.eBuild[i] > 0 ? `<tr><td>Status</td><td>being built (${Math.ceil(sim.eBuild[i])} s)</td></tr>` : '') : `<tr><td>Speed</td><td>${def.speed}</td></tr>`}
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
         ${WW2 ? '' : `<tr><td>Lives if it leaks</td><td>${def.lives}</td></tr>`}
@@ -722,6 +748,7 @@ export class Hud {
     const d = UNITS[sim.uKind[units[0]]];
     const stance = units.every((u) => sim.uStance[u] === sim.uStance[units[0]]) ? sim.uStance[units[0]] : -1;
     const air = units.every((u) => sim.uAir[u]);
+    const trucks = units.every((u) => UNITS[sim.uKind[u]].truck);
     const fighters = units.filter((u) => UNITS[sim.uKind[u]].gun && !sim.uAir[u]);
     const dugAll = fighters.length > 0 && fighters.every((u) => sim.uDig[u] > 0);
     const digging = fighters.some((u) => sim.uDig[u] > 0 && sim.uDig[u] < 1);
@@ -730,7 +757,7 @@ export class Hud {
       fighters.length ? `<button data-act="dig" class="${dugAll ? 'on' : ''}" title="Foxholes for soldiers (half damage and suppression), hull-down for tanks (only the front armour shows). Dug-in units are hidden while they hold fire and can't move; any move order climbs out. Takes ${4}s." ${ro}>${dugAll ? (digging ? 'Digging…' : 'Dug in') : 'Dig in'} <span class="k">D</span></button>` : '',
       engineers ? `<button data-act="mines" title="Each selected engineer buries an anti-tank mine around the point you click (paid as one built there)." ${ro}>Lay mines <span class="k">M</span></button>` : '',
     ].join('');
-    const buttons = air ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>${orders ? `<div class="row modes">${orders}</div>` : ''}`;
+    const buttons = air || trucks ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>${orders ? `<div class="row modes">${orders}</div>` : ''}`;
     let body: string;
     if (one >= 0) {
       const g = d.gun;
@@ -750,7 +777,7 @@ export class Hud {
     } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
     return `<div class="title">${one >= 0 ? d.name : `${units.length} units`}<span class="lvl">${air ? 'aircraft' : 'unit'}</span></div>
       ${buttons}${body}
-      <div class="desc" style="margin-top:8px">${air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
+      <div class="desc" style="margin-top:8px">${trucks ? 'Supply trucks drive their own rounds: headquarters → depot → back.' : air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
   }
 
   /** Cost of upgrading every tower in the selection by one level. */

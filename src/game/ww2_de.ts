@@ -87,9 +87,9 @@ export const GERMAN: TowerDef[] = growAll([
 
   // ---- support
   RT({
-    kind: 'depot', slot: 'depot', role: 'depot', cat: 'support', name: 'Supply Depot', short: 'Depot', desc: 'Pays out at every wave, plus interest on the money you keep.',
+    kind: 'depot', slot: 'depot', role: 'depot', cat: 'support', name: 'Supply Depot', short: 'Depot', desc: 'Keeps the guns in range supplied with ammunition (trucks from the HQ refill it), and pays out at every wave.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0xd0b050, turret: 'w_depot', aim: 'static', targeted: false,
-    levels: [{ cost: 80, damage: 0, range: 0, rate: 0, income: 12, interest: 0.02, cap: 40, hp: 310, fort: 10 }],
+    levels: [{ cost: 80, damage: 0, range: 180, rate: 0, income: 12, interest: 0.02, cap: 40, hp: 310, fort: 10 }],
   }),
   RT({
     kind: 'observer', slot: 'observer', role: 'radar', cat: 'support', name: 'Observation Post', short: 'Observer', desc: 'Spots for artillery, reveals snipers and extends the range of guns nearby.',
@@ -201,7 +201,7 @@ const HELP: Record<string, string> = {
   mortar: 'Lobs high-explosive bombs that burst among infantry and pin them down. Blasts hit the thin top armour, but a mortar bomb is too small for any tank.',
   lefh18: 'The 10.5 cm field howitzer: huge range and a big blast, but it can only see 140px by itself — build observation posts and it fires at everything they see. Its shells can break a tank\'s track, and go through light armour from above.',
   nebel: 'Six rockets per salvo, howling as they come down, scattered over the target area. Devastating against infantry columns; slow to reload.',
-  depot: 'Produces no damage. At every new wave it pays a fixed income plus interest on the money you are holding (up to a cap).',
+  depot: 'Every gun has an ammunition stock that firing uses up (artillery and anti-tank guns fastest, machine guns slowest); empty guns fire at a third of their rate. Guns in the depot\'s radius are refilled from its store, and the headquarters sends a truck to refill the store when it runs low (the enemy shoots at the trucks). The headquarters also supplies the guns near it. Produces no damage. At every new wave it pays a fixed income plus interest on the money you are holding (up to a cap).',
   observer: 'An observation post with a scissors periscope. Artillery fires at anything it sees, Soviet snipers inside it are revealed, and guns nearby get extra range.',
   hq: 'A field headquarters with officers and radios: every emplacement in range fires faster.',
   teeth: 'Concrete dragon\'s teeth: a cheap 1×1 obstacle that blocks every vehicle. Shape the maze with it so tanks have to turn in front of your guns. Infantry can clamber over (at a third of their speed), so foot soldiers may take a short cut through a line of teeth — cover it with an MG.',
@@ -268,6 +268,8 @@ const WEHRMACHT: EnemyDef[] = [
     gun: { dmg: 24, range: 330, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 10, fx: 'katyusha' } },
   { name: 'Pioniere', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_pioneer', bio: 2, inf: true,
     gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+  { name: 'Leutnant', hp: 40, speed: 44, reward: 8, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_officer', bio: 2, inf: true, officer: true, spot: 160,
+    gun: { dmg: 3, range: 80, rate: 0.6, pen: 6, supp: 0.02, fx: 'smg' } },
 ];
 
 const WEHRMACHT_HELP: UnitHelp[] = [
@@ -286,13 +288,14 @@ const WEHRMACHT_HELP: UnitHelp[] = [
   { text: 'A Bf 109 fighter: it goes after your aircraft.', counter: 'Anti-aircraft guns and machine guns.' },
   { text: 'The Panzerwerfer: ten rockets per salvo from long range, howling down on your positions.', counter: 'A lightly armoured half-track: long-range guns or artillery with an observer.' },
   { text: 'Pioneers with satchel charges: they blow the weakest wall of a long maze, lift mines and cut wire.', counter: 'Machine guns and AP mines before they reach the wall.' },
+  { text: 'A platoon leader with his map case and pistol, leading the infantry of the wave. While he lives his men press on; if he falls, the wave loses heart and more of it breaks and falls back.', counter: 'Snipers pick officers off first; anything that reaches him early in the wave.' },
 ];
 
 export const WEHRMACHT_ARMY: Army = {
   enemies: WEHRMACHT,
   roster: {
     rifle: 0, assault: 1, sniper: 2, medic: 3, recon: 4, armcar: 5, light: 6, medium: 7, medium2: 8, heavy: 9, boss: 10,
-    attack: 11, fighter: 12, rockets: 13, sapper: 14,
+    attack: 11, fighter: 12, rockets: 13, sapper: 14, officer: 15,
   },
   doctrine: { inf: 0.85, armour: 0.85 },
   help: WEHRMACHT_HELP,

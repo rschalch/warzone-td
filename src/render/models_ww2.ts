@@ -40,11 +40,13 @@ export interface Style {
 
 // ---------------------------------------------------------------- soldiers
 
-type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'ptrd' | 'bazooka' | 'lunge' | 'none';
+type Gear = 'rifle' | 'smg' | 'scoped' | 'mg' | 'tube' | 'ptrd' | 'bazooka' | 'lunge' | 'pistol' | 'none';
 export interface Soldier {
   tunic: string[];
   helmet: string;
-  cap?: 'helmet' | 'pilotka' | 'hood' | 'fieldcap';
+  cap?: 'helmet' | 'pilotka' | 'hood' | 'fieldcap' | 'peaked';
+  /** An officer's visor cap: its band colour. */
+  band?: string;
   hk?: Helmet;
   gear: Gear;
   pack?: 'roll' | 'medic' | 'satchel' | 'none';
@@ -119,6 +121,11 @@ export function soldier(o: Soldier): Part[] {
       box(g, -6, -2.6, 15, 2, 0.9, grad(g, 0, -2.6, 0, -0.6, [[0, '#6a7052'], [1, '#383c2a']]), null); // Panzerschreck on the shoulder
       box(g, 0.5, -3.4, 3, 3.6, 0.4, '#4a4e3a', null); // blast shield
     }));
+  } else if (o.gear === 'pistol') {
+    parts.push(P(5.5, 6.5, (g) => {
+      box(g, 2.4, 0.6, 3.2, 1, 0.3, BLACK, null); // pistol held out
+      box(g, -1.4, -3.4, 2.2, 1.6, 0.4, '#5a4026', null); // map case at the hip
+    }));
   } else if (o.gear === 'smg') {
     parts.push(P(5.5, 6.5, (g) => {
       box(g, 0.6, 0.2, 7, 1.2, 0.4, '#5a3c22', null);
@@ -141,6 +148,16 @@ export function soldier(o: Soldier): Part[] {
       g.ellipse(0, 0, 2.1, 1.7, 0, 0, Math.PI * 2);
       finish(g, o.helmet);
       star(g, 1.5, 0, 0.55, '#e8c840', null);
+    } else if (o.cap === 'peaked') {
+      // an officer's visor cap: crown, coloured band, black peak forward
+      circ(g, 0.3, 0, 2.2, SKIN);
+      box(g, 1.4, -1.7, 1.6, 3.4, 0.8, '#151512');
+      circ(g, -0.1, 0, 2.5, rgrad(g, -0.1, 0, 2.5, [[0, o.helmet], [1, '#2a2a22']]));
+      g.beginPath();
+      g.arc(-0.1, 0, 2.5, 0, Math.PI * 2);
+      g.strokeStyle = o.band ?? RED;
+      g.lineWidth = 0.7;
+      g.stroke();
     } else if (o.cap === 'hood') {
       circ(g, 0.3, 0, 2.6, rgrad(g, 0.3, 0, 2.6, [[0, '#7a8a50'], [1, '#3e4a26']]));
     } else if (o.hk) {
@@ -1427,3 +1444,64 @@ model('de_tiger', 22, DIRS, panzer({ len: 30, wid: 24, tr: 8, gun: 17, seed: 14 
 model('de_fw190', 18, DIRS, plane({ span: 24, len: 17, body: ['#9aa0a0', '#6a7272', '#3e4646'], seats: 1, german: true }), false);
 
 setModelSet('classic');
+
+// ---------------------------------------------------------------- supply trucks (every side's ammunition lorries)
+
+/**
+ * A cargo truck facing +x: bonnet and cab at the front, a canvas tilt over the load bed. Drives the
+ * ammunition from a headquarters to the depots (and the enemy's to its supply dump).
+ */
+export function cargoTruck(paint: string[], tilt: string[], roundNose: boolean): Part[] {
+  return [
+    P(0, 4, (g) => {
+      for (const [x, y] of [[-12, -7], [-6, -7], [7, -7], [-12, 4.4], [-6, 4.4], [7, 4.4]]) wheel(g, x, y, 4.2, 2.6);
+    }),
+    P(3, 6, (g) => {
+      box(g, -15, -5, 29, 10, 0.8, '#2e2e26'); // chassis
+      const nose = roundNose ? [7, -4.6, 12, -4.6, 14.5, -2.6, 14.5, 2.6, 12, 4.6, 7, 4.6] : [7, -4.6, 14.5, -4.6, 14.5, 4.6, 7, 4.6];
+      poly(g, nose, grad(g, 7, -5, 14.5, 5, [[0, paint[0]], [1, paint[2]]])); // bonnet
+      for (let x = 13; x < 14.4; x += 0.6) line(g, [x, -2.4, x, 2.4], 'rgba(0,0,0,0.3)'); // grille
+      // mudguards
+      box(g, 5.6, -6.2, 4.4, 1.4, 0.5, paint[2]);
+      box(g, 5.6, 4.8, 4.4, 1.4, 0.5, paint[2]);
+    }),
+    P(6, 10, (g) => {
+      box(g, 1.2, -5, 5.8, 10, 1, grad(g, 1, -5, 7, 5, [[0, paint[0]], [1, paint[1]]])); // cab
+      box(g, 5.4, -4, 1.1, 8, 0.3, '#9ab0b8', null); // windscreen
+      line(g, [6, -4.2, 6, 4.2], 'rgba(0,0,0,0.35)', 0.4);
+    }),
+    P(4, 7, (g) => box(g, -15, -5.4, 15.6, 10.8, 0.6, paint[1])), // load bed
+    P(7, 12, (g) => {
+      // the canvas tilt: hoops showing through
+      box(g, -15, -5.2, 15.4, 10.4, 2.4, grad(g, -15, -5, 0, 5, [[0, tilt[0]], [0.6, tilt[1]], [1, tilt[2]]]));
+      for (let x = -12; x < 0; x += 3.6) line(g, [x, -5, x, 5], 'rgba(0,0,0,0.22)', 0.6);
+    }),
+    P(10, 11, (g) => {
+      // ammunition boxes stacked at the open back
+      box(g, -15.6, -3, 2, 2.6, 0.3, '#5a4a2a');
+      box(g, -15.6, 0.4, 2, 2.6, 0.3, '#6a5632');
+    }),
+  ];
+}
+
+setModelSet('de');
+model('de_truck', 17, DIRS, cargoTruck(['#8a8c80', '#6a6c62', '#46483f'], ['#9c9474', '#7e7658', '#5a5440'], true)); // Opel Blitz
+setModelSet('su');
+model('su_truck', 17, DIRS, cargoTruck(['#7a8248', '#5a6132', '#3a3f1e'], ['#8f8a5c', '#706c44', '#4c4a2e'], false)); // ZIS-5
+setModelSet('us');
+model('us_truck', 17, DIRS, cargoTruck(['#76744c', '#5a5836', '#3c3a24'], ['#7e7a50', '#62603e', '#44422a'], false)); // GMC CCKW
+setModelSet('jp');
+model('jp_truck', 17, DIRS, cargoTruck(['#8a7e52', '#6a5e38', '#463c22'], ['#a49a6a', '#82784c', '#5a5232'], true)); // Isuzu Type 94
+setModelSet('ww2');
+
+// ---------------------------------------------------------------- officers (every army leads its infantry waves with one)
+
+setModelSet('su');
+model('su_officer', 8, DIRS, soldier({ tunic: KHAKI, helmet: '#5e6a3a', cap: 'peaked', band: RED, gear: 'pistol', pack: 'none' }));
+setModelSet('de');
+model('de_officer', 8, DIRS, soldier({ tunic: FG, helmet: '#5c6458', cap: 'peaked', band: '#e8e0c8', gear: 'pistol', pack: 'none' }));
+setModelSet('us');
+model('us_officer', 8, DIRS, soldier({ tunic: ['#8a8460', '#6a6446', '#46422e'], helmet: '#6a5a3a', cap: 'peaked', band: '#c8a040', gear: 'pistol', pack: 'none' }));
+setModelSet('jp');
+model('jp_officer', 8, DIRS, soldier({ tunic: ['#a89a5a', '#86783e', '#5a4e28'], helmet: '#7a6c3e', cap: 'peaked', band: '#c03028', gear: 'pistol', pack: 'none' }));
+setModelSet('ww2');

@@ -31,7 +31,7 @@ export const US_TOWERS: TowerDef[] = growAll([
     lv: { cost: 100, rate: 0.22 } }),
   derive(G('rockets'), { kind: 'calliope', name: 'T34 Calliope', short: 'Calliope', desc: 'A Sherman with sixty rocket tubes over its turret: a storm on the target area.', turret: 'us_calliope', sfx: 'katyusha',
     lv: { cost: 140, damage: 34, rate: 0.09, splash: 32, salvo: 12 } }),
-  derive(G('depot'), { kind: 'us_depot', name: 'Supply Dump', short: 'Depot', desc: 'The richest supply chain of the war: pays out well at every wave.', turret: 'us_w_depot',
+  derive(G('depot'), { kind: 'us_depot', name: 'Supply Dump', short: 'Depot', desc: 'The richest supply chain of the war: keeps the guns in range in ammunition and pays out well at every wave.', turret: 'us_w_depot',
     lv: { cost: 75, income: 16 } }),
   derive(G('observer'), { kind: 'us_observer', name: 'Forward Observer', short: 'Observer', desc: 'Spots for artillery, reveals snipers and extends the range of guns nearby.', turret: 'us_w_observer' }),
   derive(G('hq'), { kind: 'us_hq', name: 'Battalion HQ', short: 'HQ', desc: 'Radios and officers: emplacements in range fire faster.', turret: 'us_w_hq' }),
@@ -86,7 +86,7 @@ const US_HELP: Record<string, string> = {
   m1_81: 'An 81 mm mortar: bombs that burst among infantry and pin them down.',
   m2a1: 'The 105 mm howitzer. American artillery fired faster and more often than anyone\'s: a big blast at long range, but it needs observers to see.',
   calliope: 'The T34 Calliope: a rocket frame over a Sherman. Twelve rockets per salvo scattered over the target area.',
-  us_depot: 'The supply chain: a larger income at every wave than any other side\'s depot, plus interest on the money you keep.',
+  us_depot: 'Every gun has an ammunition stock that firing uses up (artillery and anti-tank guns fastest, machine guns slowest); empty guns fire at a third of their rate. Guns in the depot\'s radius are refilled from its store, and the headquarters sends a truck to refill the store when it runs low (the enemy shoots at the trucks). The headquarters also supplies the guns near it. The supply chain: a larger income at every wave than any other side\'s depot, plus interest on the money you keep.',
   us_observer: 'A forward observer: artillery fires at anything it sees, enemy snipers are revealed, guns nearby get extra range.',
   us_hq: 'A battalion headquarters: every emplacement in range fires faster.',
   us_workshop: 'Ordnance men with spare parts patch up every emplacement in range. Rebuilding rubble (B) costs money.',
@@ -153,6 +153,8 @@ const US_ARMY_UNITS: EnemyDef[] = [
     gun: { dmg: 22, range: 320, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 14, fx: 'katyusha' } },
   { name: 'Combat Engineers', hp: 46, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'us_engineer', bio: 2, inf: true,
     gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+  { name: 'Lieutenant', hp: 40, speed: 44, reward: 8, armor: 0, air: false, radius: 6, lives: 1, tex: 'us_officer', bio: 2, inf: true, officer: true, spot: 160,
+    gun: { dmg: 3, range: 80, rate: 0.6, pen: 6, supp: 0.02, fx: 'smg' } },
 ];
 
 const US_ARMY_HELP: UnitHelp[] = [
@@ -171,13 +173,14 @@ const US_ARMY_HELP: UnitHelp[] = [
   { text: 'The P-51 Mustang: a fighter that hunts your aircraft.', counter: 'Anti-aircraft guns and machine guns.' },
   { text: 'The Calliope: a Sherman carrying a frame of rocket tubes, firing salvos from long range.', counter: 'It is still a Sherman: anti-tank guns into its sides.' },
   { text: 'Combat engineers with Bangalore torpedoes and charges: they blow the weakest wall of a long maze, lift mines and cut wire.', counter: 'Machine guns and AP mines before they reach the wall.' },
+  { text: 'A platoon leader leading the infantry of the wave. While he lives his men press on; if he falls, the wave loses heart and more of it breaks and falls back.', counter: 'Snipers pick officers off first; anything that reaches him early in the wave.' },
 ];
 
 export const US_ARMY: Army = {
   enemies: US_ARMY_UNITS,
   roster: {
     rifle: 0, assault: 1, sniper: 2, medic: 3, recon: 4, armcar: 5, light: 6, medium: 7, medium2: 8, heavy: 9, boss: 10,
-    attack: 11, fighter: 12, rockets: 13, sapper: 14,
+    attack: 11, fighter: 12, rockets: 13, sapper: 14, officer: 15,
   },
   doctrine: { inf: 0.9, armour: 0.9 },
   help: US_ARMY_HELP,

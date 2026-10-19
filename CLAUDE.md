@@ -202,6 +202,42 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   themselves, and fortified targets take damage by (pen/armour)² (`ballistics`). Skirmish (`siege`): waves never stop
   and only their HQ's fall wins; a battle can also be won by holding out. New and rebuilt emplacements take
   `buildTime(cost)` to finish (`Tower.buildT`, no firing meanwhile); infantry throw grenades at emplacements next to them.
+- Supply: `Tower.ammo` (0..1 of a full stock; a depot's store) drops with every shot (`spend()`, `AMMO_S` s of fire
+  by role), an empty gun fires at `EMPTY_RATE`. `updateSupply()` (every `SUPPLY_TICKS`): depots hand ammunition to
+  guns in their radius (the depot's `range`) from their store, our headquarters (`HQ_SUPPLY` px) from an endless one,
+  crews out of reach scrounge; a depot below `DEPOT_CALL` gets a truck (`UnitDef.truck`, kind `truckKind`, appended
+  to every arsenal by `supplyTruck()` in ww2.ts, model `<side>_truck`): `truckWork()` drives it HQ → depot → back
+  with `unitPathTo`, the enemy shoots it. The enemy: a supply dump (`fixed: 'depot'`) behind its HQ and a convoy of
+  trucks (`EnemyDef.supply`, `updateConvoy()`/`driveConvoy()`, counted in `convoyAlive`, not attackers) that raise
+  `foeSupply`; each wave uses `WAVE_SUPPLY`, `waveGroups()` scales the counts by 0.5 + 0.5·foeSupply and a starved
+  enemy waits longer for the next wave; the dump's loss burns 0.4.
+- Morale: attacking infantry have `eMorale` (1 steady); `updateMorale()` wears it down with heavy losses (hp under 40%)
+  and long pins (`ePinT`), a living officer of its wave (`EnemyDef.officer`, ARole `officer`, one per infantry wave,
+  `officerAlive[wave & 63]`, wave in `eWave`) steadies it; each death nearby (`lossShock()`) and the officer's fall
+  (`OFFICER_SHOCK` to the whole wave) shake it. Below `BREAK`: pinned ones surrender (bounty paid, EV_STATUS 8),
+  the others fall back (`eRetreat`, `backField()`: flow fields to the entry, derived, not saved) and leave without
+  costing anything; they don't fire. Ours: a lost position or unit (`shakeDefence()`) suppresses crews and soldiers
+  nearby and leaves them shaken (`Tower.shakeT`, `uShakeT`: suppression wears off slower); veterans and higher-level
+  crews hold better.
+- Line of sight and fog: `sightBlock` (forests, mountains, rocks/ruins) blocks sight and fire. Towers keep a mask of
+  the cells they see (`losMask()`, derived, per tower id); `findTarget(..., sight)`: 1 the tower's own sight (direct
+  fire: `sightTower`), 2 a raycast `clearLine()` (units, commander), 3 seen by anything of ours (`seen()`: mortars,
+  rockets, artillery). `updateSight()` (every `SIGHT_TICKS`, and when towers change) builds `seenGrid` (saved): towers'
+  sight plus units' and the commander's; attackers that fire stay seen (`eSeenT`), marked ones too; aircraft and the
+  enemy's base are always seen. Observers' coverage (`radarGrid`) respects sight. Renderer: a fog wash over unseen
+  ground (`updateFog()`, a COLS×ROWS canvas stretched over the map) and faded silhouettes at the last known positions.
+  Minimap, picking and the panel ignore unseen attackers.
+- Combined arms: rifle and assault squads pair up with a tank of their wave and route (`findLeader()`, `eLead`/
+  `eLeadUid`, up to `ESCORTS` each) and keep pace (`escortPace()`: they wait when ahead, hurry when behind). A tank
+  with no infantry within `ESCORT_R` (`eEscort`, `checkEscort()` every 15 ticks) takes `CLOSE_BONUS` from infantry
+  AT weapons (`closeAssaulter()`) and is close-assaulted (`closeAssault()`: satchels on its deck) by our infantry
+  positions (`ASSAULT_SLOTS`, `Tower.nadeCd`) and soldiers (`uNadeCd`); escorted tanks spot 1.5× further. A wave
+  lays up to two smoke screens ahead of its tanks when they close on a known strongpoint (fort ≥ 25 or an HQ).
+- Counter-battery: every shot of our mortars, rockets and howitzers adds to the enemy's sound-ranging fix on that gun
+  (`Tower.fix`, `FIX_SHOTS` shots, less with camouflage, fades with `FIX_FADE`); at 1 their battery (garrison
+  `fixed: 'arty'`, from the arsenal's howitzer slot) answers with `CB_SHELLS` shells (the `rk*` arrays) and is seen
+  for a while. Their battery is the one base position that is hidden (`seen()`) until found: observers, recon marks
+  (which also spot for our artillery) or its own fire.
 - Music: each faction plays real recordings, public domain on Wikimedia Commons, in `public/music/<faction>/`
   (MP3, loudness-matched). `node scripts/fetch-music.mjs` downloads and converts them and writes
   `public/music/credits.json` (the playlist `sound.ts` reads) and `CREDITS.md`; add a track by adding a line there.
