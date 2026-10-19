@@ -1,6 +1,6 @@
-# WW2 mode: realism to-do
+# WW2 mode: to-do
 
-Eight ideas the user asked for (October 2026), to be built on the `ww2` branch (never merged to `main`).
+Three fixes, then eight realism ideas the user asked for (October 2026), to be built on the `ww2` branch (never merged to `main`).
 Read `CLAUDE.md` first (ground rules: determinism, commands, saved state, both cameras, performance), then
 `docs/ww2-design.md`. Work through them in order; after each one run `npx tsc --noEmit`, `npm run build` and
 `npm run smoke`, add a smoke check, check balance with the bot, verify the visuals with screenshots (top and
@@ -14,6 +14,57 @@ Balance references (bot, as of commit 0893d50):
 | `BATTLE=all DIFF=easy npm run bot` | 10 of 12 battles won; Iwo Jima (24/25) and Seelow Heights (24/30) are lost |
 
 A new feature shouldn't make these noticeably worse unless that's the point; if it does, retune.
+
+# Fixes first
+
+Three problems the user reported (October 2026). Do these before the realism features.
+
+## F1. Some weapons don't fire out to the range they show
+
+- [ ] Find which ones: for every tower of every arsenal (`WW2=1 SIDE=.. FOE=..`, and classic), place it, put a
+  target at 50%, 80%, 95% and 100% of its shown range (the circle the renderer draws and the "Range" row in the
+  panel), and log whether and when it fires. A small headless script like `scripts/gauntlet.ts` is enough.
+  Do it for ground and air targets, soft and armoured, and from the front and the side.
+- [ ] Suspects to check:
+  - `findTarget()` and its WW2 filters: `canHurt()` drops armour the gun can't penetrate. Penetration also falls
+    off with range in `ballistics()` (`pen *= 1.1 - 0.25 * dist / range`), so a gun may refuse targets near the
+    edge of its circle.
+  - The range used for targeting vs the one drawn: `lv.range * t.rangeMult` (auras, combos) vs `TOWERS[..].range`
+    in the HUD/renderer. Also big towers measured from the centre vs the edge (`t.size`).
+  - Projectiles that expire before arriving (bullet speed × lifetime shorter than the range) or lobbed shells
+    aimed at a lead point beyond the range.
+  - Camouflaged guns in `MODE_AMBUSH` wait for a flank or 60% of range on purpose (make that visible).
+  - Units: `UnitDef.gun.range` vs how far they actually engage (`unitFire`, chase logic).
+- [ ] Fix so every weapon engages anything it can hurt inside the circle it shows. Where it intentionally
+  won't (ambush, a target its gun can't penetrate), say why in the panel. Add a smoke check (one gun per
+  role fires at a target at 95% range).
+
+## F2. Sound controls in the top bar
+
+- [ ] Mute (sound and music), previous / next track, and a music volume slider in the top bar (`#topbar` in
+  `index.html`, wired in `hud.ts`), plus the track name (the `sound.trackName` getter) as a tooltip or a small label.
+- [ ] `sound.ts` needs `nextTrack()` / `prevTrack()` for both the synth score (`track`, `step`) and the WW2
+  recordings (`record`, `player`); volume and mute go through `settings` (`app/settings.ts`), so the settings
+  menu sliders and the top bar stay in sync and the choice is remembered.
+- [ ] Keyboard shortcuts (pick keys that are free in `main.ts`), and the controls must fit at phone width.
+
+## F3. The sidebar buttons are too tight
+
+- [ ] Palette labels are cut off ("Worksh…", "Nebelwe…", "Roadbl…", "Motor P…"), and so are some buttons in the info
+  panel. Rethink the design. The constraints from `CLAUDE.md` still hold: all towers visible at once with icons,
+  no tabs or submenus, and the info panel explains whatever is clicked or hovered.
+- [ ] Options to weigh (mock them up and screenshot before choosing):
+  - a wider sidebar (it is 340 px);
+  - two columns instead of three;
+  - icon tiles with the price only, and the full name in the hover/explain panel;
+  - short names (`TowerDef.short`) everywhere, sized to fit;
+  - a smaller font with tighter icons.
+- [ ] The info panel's button rows (upgrade / repair / sell, target modes with Ambush, unit stances and orders,
+  training) need room for their full labels without wrapping, and must keep the fixed positions from commit
+  8abb30a: buttons right under the title, rows that don't come and go.
+- [ ] Check it at 1280×720, 1920×1080 and a phone width, in both themes if there are any.
+
+# Realism features
 
 ## 1. Supply
 

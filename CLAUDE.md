@@ -130,7 +130,7 @@ their slope (multi-pass blurs, no hard `max`), or the light draws crease lines. 
 
 ## WW2 mode (branch `ww2`, never merged to `main`: main deploys publicly)
 
-Design and phase plan: `docs/ww2-design.md`; open work: `todo.md` (eight realism features, in order). Four factions (`de`, `su`, `us`, `jp`), each with an arsenal (as the
+Design and phase plan: `docs/ww2-design.md`; open work: `todo.md` (three fixes, then eight realism features, in order). Four factions (`de`, `su`, `us`, `jp`), each with an arsenal (as the
 defender) and an army (as the attacker): `src/game/ww2_<faction>.ts`, wired up in `ww2.ts` (`ARSENALS`, `ARMIES`,
 `FACTIONS[f].foes`). Every arsenal fills the standard `SLOTS` in order (`ww2_kit.ts`; other sides `derive()` their
 towers from the German ones and change names, models, sounds and stats); every army fills the `ARole` roster that
