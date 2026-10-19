@@ -651,6 +651,43 @@ try {
   check(dark.day > 0 && dark.night === 0 && dark.nightLevel === 1 && dark.lit > 0 && dark.flares > 0, `WW2 night: an MG fires at 90% of its range by day (${dark.day}), not at night (${dark.night}), again under a mortar's flares (${dark.lit})`);
   check(dark.fog && dark.grounded && dark.noAir, `WW2 weather: fog at Arnhem grounds our aircraft (${dark.grounded}) and theirs (${dark.noAir})`);
 
+  // a moving front: our soldiers take a knocked-out MG nest of theirs; their ground shrinks; they counter-attack; losing it gives it back
+  const front = await page.evaluate(() => {
+    const { Sim, session, unitIndex, enemyDef } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    let g = -1;
+    for (let k = 0; k < 16; k++) if (s.gKind[k] >= 0 && enemyDef(s.gKind[k]).fixed === 'mg') g = k;
+    const x = s.gX[g];
+    const y = s.gY[g];
+    const zoneBefore = s.enemyGround(x, y);
+    s.damage(s.gSlot[g], 1e9, true, null, false, 999);
+    // keep the field round it clear of attackers for the test
+    for (let n = 0; n < s.liveCount; n++) { const i = s.live[n]; if (s.eGar[i] < 0) s.eX[i] = s.eY[i] = 5; }
+    const u = s.spawnUnit(unitIndex('grenadier') >= 0 ? unitIndex('grenadier') : 0, x, y, Math.floor(y / 20) * window.game.COLS + Math.floor(x / 20));
+    let t = null;
+    for (let n = 0; n < 60 * 8 && !t; n++) {
+      s.uX[u] = x; s.uY[u] = y; s.uHp[u] = 999;
+      for (let m = 0; m < s.liveCount; m++) { const i = s.live[m]; if (s.eGar[i] < 0 && Math.hypot(s.eX[i] - x, s.eY[i] - y) < 90) s.eX[i] = s.eY[i] = 5; }
+      s.step();
+      if (s.gOwn[g]) t = s.tower(s.gOwn[g]);
+    }
+    if (!t) return { taken: false };
+    const zoneAfter = s.enemyGround(x, y);
+    let hunters = 0;
+    for (let n = 0; n < 60 * 25 && !hunters; n++) {
+      t.hp = s.maxHp(t); // (their base's guns would otherwise knock it out first)
+      s.step();
+      for (let m = 0; m < s.liveCount; m++) if (s.eHunt[s.live[m]] === t.id) hunters++;
+    }
+    s.hitDefender(t.id, 1e9, 999, 0, true);
+    s.step();
+    return { taken: true, from: t.fromG === g, zoneBefore, zoneAfter, hunters, back: s.gKind[g] >= 0 && !s.gOwn[g] && !s.tower(t.id) };
+  });
+  check(front.taken && front.from && front.zoneBefore, `WW2 front: our soldiers take a knocked-out MG nest of theirs (${front.taken})`);
+  check(front.hunters > 0 && front.back, `WW2 front: they counter-attack it (${front.hunters}) and get it back when it falls (${front.back})`);
+
   // weapon ranges: one gun per role fires at a soldier at 95% of the range it shows; an MG holds fire at a tank's front and says why
   const ranges = await page.evaluate(() => {
     const { Sim, session, towerIndex } = window.game;

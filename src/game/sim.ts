@@ -142,6 +142,8 @@ export interface Tower {
   nadeCd: number;
   /** WW2 counter-battery: the enemy's sound-ranging fix on this gun (it answers at 1). */
   fix: number;
+  /** WW2 moving front: the position of the enemy's base this was captured from (-1: built by us). */
+  fromG: number;
 }
 
 /** Effective stats of a tower after auras and combos. */
@@ -172,7 +174,7 @@ export const EV_SELL = 5;
 export const EV_UPGRADE = 6;
 export const EV_WAVE = 7; // a = wave
 export const EV_HIT = 8; // a = damage (big single hits only)
-export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed, 5 ricochet, 6 tracked, 7 critical hit, 8 surrendered, 9 falling back, 10 officer down
+export const EV_STATUS = 9; // a = 0 frozen, 1 hacked, 2 shatter, 3 stunned, 4 swallowed, 5 ricochet, 6 tracked, 7 critical hit, 8 surrendered, 9 falling back, 10 officer down, 11 position taken, 12 counter-attack
 export const EV_NUKE = 10;
 export const EV_LEVEL = 11; // hero level up, a = level
 export const EV_ITEM = 12; // a = item
@@ -374,10 +376,15 @@ const HULK_COVER = 0.6;
 const CLEAR_WORK = 6;
 /** An engineer's task clearing the hulk in cell c is -(HULK_TASK + c). */
 const HULK_TASK = 1000;
+/** WW2 moving front: s our soldiers must hold a knocked-out position of theirs to take it, s before they counter-attack. */
+const CAPTURE_T = 5;
+const COUNTER_T = 20;
+/** Their positions we can take, and the slot of ours they become. */
+const CAPTURE_SLOT: Record<string, string> = { mg: 'mg', at: 'atgun', depot: 'depot', arty: 'howitzer' };
 /** WW2 day and night: s of game time in a day; how much night shortens direct fire and sight. */
 const DAY_S = 720;
-const NIGHT_RANGE = 0.3;
-const NIGHT_SIGHT = 0.4;
+const NIGHT_RANGE = 0.25;
+const NIGHT_SIGHT = 0.35;
 /** WW2 flares (a mortar mode at night): at once, px they light, s they burn, s between flares. */
 export const MAX_FLARES = 16;
 export const FLARE_R = 170;
@@ -466,6 +473,15 @@ export class Sim {
   readonly gAng = new Float32Array(MAX_GARRISON);
   readonly gT = new Float32Array(MAX_GARRISON);
   readonly gSlot = new Int32Array(MAX_GARRISON).fill(-1);
+  /** WW2 moving front: s our soldiers have held a knocked-out position, the tower it became (0: theirs), what it was, s to their counter-attack. */
+  readonly gCap = new Float32Array(MAX_GARRISON);
+  readonly gOwn = new Int32Array(MAX_GARRISON);
+  readonly gOrig = new Int32Array(MAX_GARRISON).fill(-1);
+  readonly gCounter = new Float32Array(MAX_GARRISON);
+  /** Bumped when the front moves (the minimap redraws it). */
+  frontVersion = 0;
+  /** WW2: placing a captured position (their ground doesn't forbid it). */
+  private capturing = false;
   /** Base positions standing (they count in liveCount but are not part of any wave). */
   garrisonAlive = 0;
   /** WW2 battles: s since the last wave was all in (relief arrives after RELIEF_T). */
@@ -561,6 +577,10 @@ export class Sim {
   readonly eRetreat = new Uint8Array(MAX_ENEMIES);
   readonly eWave = new Int16Array(MAX_ENEMIES);
   private readonly ePinT = new Float32Array(MAX_ENEMIES);
+  /** WW2 moving front: the tower a counter-attacker is sent to retake (0: none). */
+  readonly eHunt = new Int32Array(MAX_ENEMIES);
+  /** Per hunted tower id, the way to it (derived, rebuilt when the maze changes). */
+  private readonly huntFields = new Map<number, { v: number; f: FlowField }>();
   /** WW2 combined arms: the tank an infantry squad escorts (slot, -1 none, and its uid), escorts per tank, has infantry close by. */
   readonly eLead = new Int32Array(MAX_ENEMIES).fill(-1);
   private readonly eLeadUid = new Int32Array(MAX_ENEMIES);
@@ -766,7 +786,7 @@ export class Sim {
     return {
       id, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x: 0, y: 0, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0, fromG: -1,
     };
   }
 
@@ -946,9 +966,114 @@ export class Sim {
   /** WW2: lost positions of the enemy's base go back up after a while. */
   private updateGarrison(): void {
     for (let g = 0; g < MAX_GARRISON; g++) {
+      // a position of theirs we hold: they come back for it
+      if (this.gOwn[g] && this.gCounter[g] > 0 && (this.gCounter[g] -= DT) <= 0) this.counterAttack(g);
       if (this.gKind[g] < 0 || this.gSlot[g] >= 0 || this.gT[g] <= 0) continue;
-      if ((this.gT[g] -= DT) <= 0) this.raiseGarrison(g, GARRISON_BUILD);
+      if ((this.ticks + g) % 15 === 0) this.tryCapture(g);
+      if (this.gKind[g] >= 0 && (this.gT[g] -= DT) <= 0) this.raiseGarrison(g, GARRISON_BUILD);
     }
+  }
+
+  /**
+   * A knocked-out position of theirs (not the headquarters): our soldiers standing on it with no
+   * attacker close by take it in CAPTURE_T s — it becomes ours, and their ground shrinks.
+   */
+  private tryCapture(g: number): void {
+    const slot = CAPTURE_SLOT[ENEMIES[this.gKind[g]].fixed ?? ''];
+    if (!slot) return;
+    const x = this.gX[g];
+    const y = this.gY[g];
+    let ours = false;
+    for (let u = 0; u < MAX_UNITS && !ours; u++) {
+      if (this.uAlive[u] && !this.uAir[u] && !UNITS[this.uKind[u]].truck && (this.uX[u] - x) ** 2 + (this.uY[u] - y) ** 2 <= 36 * 36) ours = true;
+    }
+    let theirs = false;
+    if (ours) {
+      const n = this.hash.query(x, y, 70, this.qbuf);
+      for (let k = 0; k < n && !theirs; k++) {
+        const i = this.qbuf[k];
+        if (this.eAlive[i] && !this.eAir[i] && this.eGar[i] < 0 && (this.eX[i] - x) ** 2 + (this.eY[i] - y) ** 2 <= 70 * 70) theirs = true;
+      }
+    }
+    if (!ours || theirs) {
+      this.gCap[g] = Math.max(0, this.gCap[g] - 15 * DT);
+      return;
+    }
+    if ((this.gCap[g] += 15 * DT) < CAPTURE_T) return;
+    const type = TOWERS.findIndex((d) => d.slot === slot);
+    if (type < 0) return;
+    this.capturing = true;
+    const t = this.placeNear(type, Math.floor(x / TILE) - 1, Math.floor(y / TILE) - 1, Math.min(9, Math.floor(this.wave / 6)));
+    this.capturing = false;
+    if (!t) return;
+    t.fromG = g;
+    this.gOwn[g] = t.id;
+    this.gOrig[g] = this.gKind[g];
+    this.gKind[g] = -1;
+    this.gT[g] = 0;
+    this.gCap[g] = 0;
+    this.gCounter[g] = COUNTER_T;
+    this.frontVersion++;
+    this.ev(EV_STATUS, x, y, 11);
+  }
+
+  /** They want it back: a counter-attack from their headquarters, sent straight at the position we took. */
+  private counterAttack(g: number): void {
+    const t = this.towerById.get(this.gOwn[g]);
+    if (!t || t.wreck || this.gSlot[0] < 0) return;
+    const pick = (ok: (e: EnemyDef) => boolean) => ENEMIES.findIndex((e) => !e.fixed && !e.supply && !e.officer && !e.air && !e.boss && ok(e));
+    const rifle = pick((e) => !!e.inf && e.gun?.fx === 'rifle' && !e.stealth);
+    const smg = pick((e) => !!e.inf && e.gun?.fx === 'smg');
+    const tank = pick((e) => !!e.arm && e.gun?.fx === 'tank');
+    const force: number[] = [];
+    for (let k = 0; k < 4 + Math.floor(this.wave / 3); k++) force.push(k % 3 === 2 && smg >= 0 ? smg : rifle);
+    if (this.wave >= 8 && tank >= 0) force.push(tank, tank);
+    for (const kind of force) {
+      if (kind < 0) continue;
+      const i = this.spawnEnemy(kind, this.wave);
+      if (i < 0) break;
+      this.eX[i] = this.ePx[i] = this.gX[0] + this.rng.range(-30, 30);
+      this.eY[i] = this.ePy[i] = this.gY[0] + this.rng.range(-30, 30);
+      this.eCell[i] = Math.floor(this.eY[i] / TILE) * COLS + Math.floor(this.eX[i] / TILE);
+      this.eRoute[i] = 0;
+      this.eHunt[i] = t.id;
+    }
+    this.ev(EV_STATUS, t.x, t.y, 12);
+  }
+
+  /** The way to the cells round tower id (for counter-attacks), rebuilt when the maze changes. */
+  private huntField(id: number): FlowField | null {
+    const t = this.towerById.get(id);
+    if (!t || t.wreck) return null;
+    let h = this.huntFields.get(id);
+    if (!h || h.v !== this.towerVersion) {
+      const ring: number[] = [];
+      for (let dy = -1; dy <= t.size; dy++) {
+        for (let dx = -1; dx <= t.size; dx++) {
+          const c = t.col + dx;
+          const r = t.row + dy;
+          if ((dx < 0 || dx >= t.size || dy < 0 || dy >= t.size) && c >= 0 && r >= 0 && c < COLS && r < ROWS) ring.push(r * COLS + c);
+        }
+      }
+      const f = h?.f ?? new FlowField(ring, this.moveCost);
+      if (h) f.goals.splice(0, f.goals.length, ...ring);
+      f.compute(this.blocked);
+      h = { v: this.towerVersion, f };
+      this.huntFields.set(id, h);
+    }
+    return h.f;
+  }
+
+  /** A captured position is lost again (knocked out or given up): their ground grows back and they rebuild it. */
+  private loseCaptured(t: Tower): void {
+    const g = t.fromG;
+    if (g < 0 || this.gOwn[g] !== t.id) return;
+    this.gKind[g] = this.gOrig[g];
+    this.gOwn[g] = 0;
+    this.gCounter[g] = 0;
+    this.gT[g] = GARRISON_REBUILD * 0.5;
+    this.huntFields.delete(t.id);
+    this.frontVersion++;
   }
 
   /** WW2: is (x, y) within the enemy's base, where we can't build? */
@@ -1040,7 +1165,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth', 'back', 'backVersion', 'losMasks', 'sightVersion']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth', 'back', 'backVersion', 'losMasks', 'sightVersion', 'huntFields', 'capturing']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -1096,6 +1221,7 @@ export class Sim {
       t.shakeT ??= 0;
       t.nadeCd ??= 0;
       t.fix ??= 0;
+      t.fromG ??= -1;
       sim.towers.push(t);
       sim.towerById.set(t.id, t);
     }
@@ -1312,7 +1438,7 @@ export class Sim {
    * its exit. On success the would-be flow fields are left in `scratch`. Cached per tick.
    */
   placeStatus(type: number, col: number, row: number): PlaceStatus {
-    const key = `${type},${col},${row},${this.towerVersion},${this.ticks}`;
+    const key = `${type},${col},${row},${this.towerVersion},${this.ticks},${this.capturing}`;
     if (key === this.checkKey) return this.checkResult;
     this.checkKey = key;
     const def = TOWERS[type];
@@ -1320,7 +1446,7 @@ export class Sim {
     this.checkReroutes = !!cells && !def.walkable;
     this.checkOpenGate = false;
     if (!cells) return (this.checkResult = 'invalid');
-    if (WW2 && this.enemyGround((col + def.size / 2) * TILE, (row + def.size / 2) * TILE)) return (this.checkResult = 'invalid');
+    if (WW2 && !this.capturing && this.enemyGround((col + def.size / 2) * TILE, (row + def.size / 2) * TILE)) return (this.checkResult = 'invalid');
     if (def.walkable) return (this.checkResult = 'ok');
     const status = this.wallStatus(cells);
     if (status !== 'ok' && def.kind === 'gate') {
@@ -1391,7 +1517,7 @@ export class Sim {
       beam: -1, recoil: 0, spent: free ? 0 : cost, kills: 0, damage: 0,
       open: false, charge: def.levels[0].charge ?? 0, spin: 0, heat: 0, firing: 0,
       rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0,
-      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
+      hp: WW2 ? def.levels[0].hp ?? 0 : 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0, fromG: -1,
     };
     const reroutes = this.checkReroutes;
     t.open = this.checkOpenGate;
@@ -1765,13 +1891,13 @@ export class Sim {
     return (this.startHour + (this.time * 24) / DAY_S) % 24;
   }
 
-  /** 0 in daylight … 1 at night (dusk 18-20 h, dawn 5-7 h). */
+  /** 0 in daylight … 1 at night (dusk 19-21 h, dawn 4-6 h). */
   get night(): number {
     if (!WW2) return 0;
     const h = this.clock;
-    if (h >= 7 && h < 18) return 0;
-    if (h >= 20 || h < 5) return 1;
-    return h >= 18 ? (h - 18) / 2 : 1 - (h - 5) / 2;
+    if (h >= 6 && h < 19) return 0;
+    if (h >= 21 || h < 4) return 1;
+    return h >= 19 ? (h - 19) / 2 : 1 - (h - 4) / 2;
   }
 
   /** How far everyone sees compared with a clear day: night and weather. */
@@ -2253,6 +2379,15 @@ export class Sim {
 
   /** The emplacement is knocked out: it becomes rubble that units can climb through (slowly). */
   private wreckTower(t: Tower): void {
+    if (t.fromG >= 0) {
+      // a position we took from them: it is theirs again (they rebuild it)
+      this.loseCaptured(t);
+      this.explosion(t.x, t.y, 1.2 + t.size * 0.5, 4);
+      this.ev(EV_WRECK, t.x, t.y, t.type);
+      this.shakeDefence(t.x, t.y, 1);
+      this.demolish(t);
+      return;
+    }
     t.hp = 0;
     t.fix = 0;
     t.wreck = true;
@@ -2507,6 +2642,7 @@ export class Sim {
   }
 
   sell(t: Tower): void {
+    this.loseCaptured(t);
     this.money += this.sellValue(t);
     const i = this.towers.indexOf(t);
     if (i >= 0) this.towers.splice(i, 1);
@@ -2807,7 +2943,7 @@ export class Sim {
     const src: Tower = {
       id: -1, type: 0, kind: 'gun', level: 0, col: 0, row: 0, size: 1, x, y, cd: 0, angle: 0, prevAngle: 0, mode: 3,
       beam: -1, recoil: 0, spent: 0, kills: 0, damage: 0, open: false, charge: 0, spin: 0, heat: 0, firing: 0,
-      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0,
+      rangeMult: 1, rateMult: 1, dmgMult: 1, airBonus: 1, combos: [], owner: 0, hp: 0, wreck: false, supp: 0, trainKind: -1, trainT: 0, seenT: 0, knownT: 0, buildT: 0, build0: 0, base: 0, ammo: 1, shakeT: 0, nadeCd: 0, fix: 0, fromG: -1,
     };
     level = Math.min(HERO_MAX_LEVEL, level);
     this.hero = {
@@ -3112,6 +3248,7 @@ export class Sim {
 
   /** Removes a tower without paying for it (sappers lifting mines and cutting wire). */
   private demolish(t: Tower): void {
+    this.loseCaptured(t);
     const i = this.towers.indexOf(t);
     if (i >= 0) this.towers.splice(i, 1);
     this.towerById.delete(t.id);
@@ -4040,6 +4177,7 @@ export class Sim {
     this.eMorale[i] = 1;
     this.eRetreat[i] = 0;
     this.eLead[i] = -1;
+    this.eHunt[i] = 0;
     this.eEscortN[i] = 0;
     this.eEscort[i] = 0;
     this.eWave[i] = wave;
@@ -4330,9 +4468,13 @@ export class Sim {
         if (y < 0) cy = 0;
         else if (cy >= ROWS) cy = ROWS - 1;
         const retreat = this.eRetreat[i] === 1;
-        const breaching = !retreat && this.eBreach[i] === 1;
-        const onFoot = this.hasTeeth && def.inf && !breaching && !retreat;
-        const field = retreat ? this.backField(this.eRoute[i]) : breaching ? this.breach[this.eRoute[i]] : onFoot ? this.foot[this.eRoute[i]] : this.fields[this.eRoute[i]];
+        // a counter-attack goes for the position we took; once it is gone, on to our headquarters
+        let hunt = !retreat && this.eHunt[i] ? this.huntField(this.eHunt[i]) : null;
+        if (hunt && hunt.dist[this.eCell[i]] === Infinity) hunt = null; // no way there
+        if (this.eHunt[i] && !hunt) this.eHunt[i] = 0;
+        const breaching = !retreat && !hunt && this.eBreach[i] === 1;
+        const onFoot = this.hasTeeth && def.inf && !breaching && !retreat && !hunt;
+        const field = retreat ? this.backField(this.eRoute[i]) : hunt ?? (breaching ? this.breach[this.eRoute[i]] : onFoot ? this.foot[this.eRoute[i]] : this.fields[this.eRoute[i]]);
         let cell = cy * COLS + cx;
         // brushing a tower corner can put us in a blocked cell: steer from the last good one
         if ((onFoot ? this.footBlocked : this.blocked)[cell] || field.dist[cell] === Infinity) cell = this.eCell[i];

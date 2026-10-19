@@ -103,13 +103,10 @@ Three problems the user reported (October 2026). Do these before the realism fea
 - [x] Weather per battle (and from the seed in skirmish): rain/mud, snow, fog (short sight, no aircraft for either
   side). Drawn as a night wash, flare light, rain, snow and haze; the wave preview shows the hour and the weather.
 
-## 8. A moving front
+## 8. A moving front — done
 
-- [ ] Capturing ground: when an enemy gun position of their base is destroyed and our units stand on it for a
-  few seconds, it becomes ours (a tower of the matching slot, at that level) and the no-build zone
-  (`ENEMY_ZONE`, `enemyGround()`) shrinks to the positions they still hold.
-- [ ] Their headquarters can't be captured, only destroyed; the enemy tries to retake lost positions
-  (a counter-attack wave aimed at them).
-- [ ] The front line drawn on the minimap.
-- Notes: the garrison lives in the `g*` arrays (`raiseGarrison`, `updateGarrison`); a captured slot must
-  stop being rebuilt (`gKind = -1` or a flag).
+- [x] Our soldiers take a knocked-out gun position of theirs by holding it: it becomes a tower of ours (that slot),
+  the no-build zone shrinks to the positions they still hold; a captured slot isn't rebuilt (`gKind` -1, `gOrig`).
+- [x] Their headquarters can only be destroyed; they counter-attack lost positions (a group sent at it along its
+  own flow field) and get them back if they fall.
+- [x] The front line on the minimap.

@@ -63,6 +63,9 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
 - **Night and weather**: the clock runs through the battle; at night guns reach and everyone sees less and
   positions are harder to spot — mortars can fire flares to light the attackers up. Rain turns the ground to mud,
   snow slows everyone, fog cuts sight and grounds the aircraft of both sides. Each battle has its own weather.
+- **A moving front**: knock out a gun position of their base and hold it with your soldiers to take it — it
+  becomes yours, their no-build ground shrinks, and they counter-attack to get it back. The minimap shows the
+  front line.
 - **Commander**: fire missions, Hold the Line (rallies suppressed crews) and recon flights that mark attackers.
 - **Stealth**: camouflaged guns are hidden until spotted or until they fire; recon units find them; Ambush mode.
 - **Enemy intelligence**: tanks and sappers breach long thin mazes, tanks pop smoke, artillery prepares the

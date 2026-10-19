@@ -11,7 +11,7 @@ import { BATTLES, type Battle } from '../src/game/battles';
 import { rulesetFor } from '../src/game/rules';
 import { MAPS, type MapDef } from '../src/game/maps';
 import { Partner, PARTNER_EVERY } from '../src/game/partner';
-import { Sim } from '../src/game/sim';
+import { MODE_FLARE, Sim } from '../src/game/sim';
 
 const WW2 = !!process.env.WW2 || !!process.env.BATTLE;
 /** WW2 matchup: SIDE=de|su|us|jp defends against FOE. */
@@ -106,6 +106,9 @@ function chooseType(sim: Sim, built: Map<number, number>): number {
 
 function decide(sim: Sim, built: Map<number, number>): void {
   if (WW2) {
+    // every other mortar fires flares at night (by day they fire as usual)
+    const mortars = sim.towers.filter((t) => t.type === slot('mortar') && !t.wreck);
+    for (let k = 0; k < mortars.length; k += 2) if (mortars[k].mode !== MODE_FLARE) sim.exec({ t: 'mode', id: mortars[k].id, mode: MODE_FLARE });
     // keep the line standing: rebuild rubble and patch up badly damaged emplacements first
     const hurt = sim.towers.filter((t) => sim.repairCost(t) > 0 && (t.wreck || t.hp < sim.maxHp(t) * 0.5)).sort((a, b) => Number(b.wreck) - Number(a.wreck) || b.spent - a.spent);
     let fixed = false;

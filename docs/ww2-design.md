@@ -228,6 +228,17 @@ Okinawa (1945, Japan: Shuri Line).
 - Drawn over the world: a blue night wash that muzzle flashes, explosions and flares glow through, rain streaks,
   snowflakes, a grey fog haze. The wave preview shows the hour and the weather.
 
+### 8.8 A moving front
+- A position of their base that we knocked out (MG nest, AT gun, supply dump, battery; never the headquarters),
+  held for 5 s by any of our ground units with no attacker within 70 px before they rebuild it, becomes ours: a
+  tower of our matching slot (MG, AT gun, depot, howitzer) at a level that grows with the waves. Their no-build
+  zone covers only the positions they still hold.
+- 20 s later they counter-attack from their headquarters: riflemen and assault squads (and two tanks from wave 8)
+  that follow a flow field straight to the position and fight there, then go on towards our base. If the position
+  is knocked out (or we give it up) it is theirs again, rebuilt after 20 s.
+- The minimap shades their ground and outlines it: the front line. Their HQ's guns cover the positions next to it,
+  so the ones near their other entries are the easier prizes.
+
 ## 7. Phases
 
 Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:

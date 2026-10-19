@@ -600,6 +600,7 @@ export class Hud {
       }
       if (t.id === sim.objectiveId) special += `<div class="desc bad"><b>Objective: ${sim.battle?.objective?.name}.</b> If it falls, the battle is lost.</div>`;
       else if (t.base) special += `<div class="desc bad"><b>Your headquarters.</b> The attackers march on it; if it falls, the battle is lost. Its garrison machine-guns anything close; upgrade it for more concrete.</div>`;
+      if (t.fromG >= 0) special += '<div class="desc">Taken from the enemy: they will counter-attack to get it back, and if it is knocked out it is theirs again.</div>';
       if (t.buildT > 0) special += `<div class="desc">Under construction: ready in <b>${Math.ceil(t.buildT)} s</b>. It can't fire until then.</div>`;
       const holding = sim.fireStatus(t);
       if (holding) special += `<div class="desc hold">${holding}</div>`;

@@ -117,6 +117,7 @@ const STATUS_WORDS = [
   ['FROZEN', 0x9fe8ff], ['HACKED', 0x5aff8a], ['SHATTER!', 0xffb070], ['STUNNED', 0xfff07a], ['SWALLOWED', 0xc090ff],
   ['BOUNCED', 0xc8ccd0], ['TRACKED', 0xfff07a], ['AMMO RACK!', 0xff7a3a],
   ['SURRENDERED', 0xf0f0e0], ['FALLING BACK', 0xa8d8ff], ['OFFICER DOWN', 0xffd84a],
+  ['POSITION TAKEN', 0x7dff8a], ['COUNTER-ATTACK!', 0xff6a5a],
 ] as const;
 const MAX_WRECKS = 220;
 const MAX_SCORCH = 260;

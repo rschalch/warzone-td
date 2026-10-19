@@ -250,6 +250,13 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   (`fl*` arrays, `litGrid`): lit cells are seen and in full range (`dimR2` in findTarget). `weather` (`Battle.weather`,
   skirmish from the seed): rain slows vehicles, snow everyone (`weatherSpeed()`), fog grounds air (`airLocked()`,
   air groups dropped in `waveGroups()`). Renderer: `drawSky()` (night wash, flare light, rain/snow, fog haze).
+- A moving front: a knocked-out position of their base (MG, AT gun, supply dump, battery — not the HQ) that our
+  soldiers hold for `CAPTURE_T` s with no attacker close (`tryCapture()`, `gCap`) becomes ours: a tower of the
+  matching slot (`CAPTURE_SLOT`, `Tower.fromG`, placed past their no-build zone with `capturing`), `gOwn`/`gOrig`
+  remember it and `gKind` goes to -1, so `enemyGround()` shrinks. After `COUNTER_T` s they counter-attack from their HQ
+  (`counterAttack()`, `eHunt`: a flow field to the tower, `huntField()`, derived); if it falls (or is sold) it is
+  theirs again (`loseCaptured()`, rebuilt after half the usual time). The minimap draws their ground and its edge,
+  the front line (`frontVersion`).
 - Music: each faction plays real recordings, public domain on Wikimedia Commons, in `public/music/<faction>/`
   (MP3, loudness-matched). `node scripts/fetch-music.mjs` downloads and converts them and writes
   `public/music/credits.json` (the playlist `sound.ts` reads) and `CREDITS.md`; add a track by adding a line there.
