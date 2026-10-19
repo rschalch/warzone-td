@@ -41,6 +41,21 @@ try {
   check(await page.evaluate(() => window.game.sim.towers.length) === 1, 'click builds a tower');
   check((await page.locator('#info .title').innerText()).includes('Lv 1/10'), 'clicking the tower selects it');
 
+  // sound controls in the top bar: next track, mute (the button and K), music volume shared with the settings
+  const track0 = await page.locator('#trackname').innerText();
+  await page.click('#nexttrack');
+  await page.waitForTimeout(100);
+  const track1 = await page.locator('#trackname').innerText();
+  await page.click('#mute');
+  await page.waitForTimeout(50);
+  const mutedBtn = await page.locator('#mute').evaluate((b) => b.classList.contains('off'));
+  await page.keyboard.press('k');
+  await page.waitForTimeout(50);
+  const unmuted = !(await page.locator('#mute').evaluate((b) => b.classList.contains('off')));
+  await page.locator('#musicvol').fill('0.3');
+  const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('wztd.settings') ?? '{}').music);
+  check(track0 !== track1 && mutedBtn && unmuted && vol === 0.3, `top bar sound: next track (${track0} → ${track1}), mute and K, music volume saved (${vol})`);
+
   // play a couple of waves at 4x
   await page.keyboard.press('n');
   await page.click('[data-speed="4"]');
@@ -101,6 +116,31 @@ try {
   await page.evaluate(() => window.game.quick(0, 'normal', true));
   await page.waitForFunction(() => window.game.sim?.config.ww2 && document.querySelector('#build .tb .n')?.textContent === 'MG-42', null, { timeout: 30000 });
   check(true, 'WW2 game starts with the German arsenal');
+  // the sidebar: every button label fits (palette tiles, the PaK's five targeting modes, the barracks' training)
+  const fits = await page.evaluate(async () => {
+    const g = window.game;
+    const s = g.sim;
+    const spot = (type) => {
+      for (let k = 0; k < 600; k++) {
+        const t = s.place(type, 20 + (k % 30), 20 + Math.floor(k / 30), true);
+        if (t) return t;
+      }
+      return null;
+    };
+    const cut = [];
+    const scan = (sel) => document.querySelectorAll(sel).forEach((b) => {
+      for (const el of [b, ...b.querySelectorAll('b, small')]) if (el.scrollWidth > el.clientWidth + 1) cut.push(b.textContent.trim());
+    });
+    for (const kind of ['pak40', 'barracks']) {
+      g.select(spot(g.towerIndex(kind)));
+      await new Promise((r) => setTimeout(r, 150));
+      scan('#info .row button');
+    }
+    g.select(null);
+    const tiles = document.querySelectorAll('#build .tb').length;
+    return { cut, tiles };
+  });
+  check(fits.cut.length === 0 && fits.tiles >= 26, `sidebar: ${fits.tiles} tower tiles, every panel button fits${fits.cut.length ? ' — cut: ' + fits.cut.join(', ') : ''}`);
   const ww2 = await page.evaluate(() => {
     const { Session, Sim, session } = window.game;
     const cfg = { ...session.config, seed: 5, difficulty: 'normal' }; // Normal: the enemy also breaches walls
@@ -304,6 +344,42 @@ try {
   check(bases.leaked === 0 && bases.hurt && bases.fieldOk, `WW2 bases: attackers march on the HQ and fight it (hurt ${bases.hurt}, ${bases.leaked} leaked)`);
   check(bases.building && bases.built && bases.zone, `WW2 bases: emplacements take time to build (${bases.building} → ${bases.built}), none on the enemy's ground (${bases.zone})`);
   check(bases.won, 'WW2 bases: destroying the enemy headquarters wins');
+
+  // weapon ranges: one gun per role fires at a soldier at 95% of the range it shows; an MG holds fire at a tank's front and says why
+  const ranges = await page.evaluate(() => {
+    const { Sim, session, towerIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const roles = new Map();
+    const silent = [];
+    for (const kind of ['mg42', 'schreck', 'sniper', 'flamer', 'pak40', 'flak88', 'bunker', 'mortar', 'lefh18', 'nebel']) {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      const t = s.place(towerIndex(kind), 30, 30, true);
+      if (!t) { silent.push(`${kind}:unplaced`); continue; }
+      roles.set(t.kind, kind);
+      const r = s.stats(t).range;
+      const x = t.x + r * 0.95;
+      if (t.kind === 'arty') s.place(towerIndex('observer'), Math.floor(x / 20) - 1, 34, true);
+      const e = s.spawnEnemy(0, 5);
+      let fired = false;
+      for (let n = 0; n < 600 && !fired; n++) {
+        s.eX[e] = s.ePx[e] = x; s.eY[e] = s.ePy[e] = t.y; s.eSpeed[e] = 0; s.eHp[e] = s.eMaxHp[e];
+        s.step();
+        for (let k = 0; k < s.events.length; k += 5) if (s.events[k] === 0 && s.events[k + 1] === t.x && s.events[k + 2] === t.y) fired = true;
+        s.events.length = 0;
+      }
+      if (!fired) silent.push(kind);
+    }
+    const s = Sim.create(cfg);
+    const mg = s.place(towerIndex('mg42'), 30, 30, true);
+    const tank = s.spawnEnemy(7, 1);
+    s.eX[tank] = mg.x + s.stats(mg).range * 0.9; s.eY[tank] = mg.y; s.eAng[tank] = Math.PI; s.eSpeed[tank] = 0;
+    s.step();
+    s.eX[tank] = mg.x + s.stats(mg).range * 0.9; s.eY[tank] = mg.y;
+    return { silent, roles: roles.size, why: s.fireStatus(mg) };
+  });
+  check(ranges.silent.length === 0 && ranges.roles >= 7, `WW2 ranges: every role fires at 95% of its range (${ranges.roles} roles${ranges.silent.length ? ', silent: ' + ranges.silent.join(' ') : ''})`);
+  check(ranges.why.startsWith('Holding fire'), `WW2 ranges: an MG explains why it holds fire at a tank (${ranges.why.slice(0, 40)}…)`);
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {

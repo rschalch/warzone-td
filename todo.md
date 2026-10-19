@@ -19,50 +19,33 @@ A new feature shouldn't make these noticeably worse unless that's the point; if 
 
 Three problems the user reported (October 2026). Do these before the realism features.
 
-## F1. Some weapons don't fire out to the range they show
+## F1. Some weapons don't fire out to the range they show — done
 
-- [ ] Find which ones: for every tower of every arsenal (`WW2=1 SIDE=.. FOE=..`, and classic), place it, put a
-  target at 50%, 80%, 95% and 100% of its shown range (the circle the renderer draws and the "Range" row in the
-  panel), and log whether and when it fires. A small headless script like `scripts/gauntlet.ts` is enough.
-  Do it for ground and air targets, soft and armoured, and from the front and the side.
-- [ ] Suspects to check:
-  - `findTarget()` and its WW2 filters: `canHurt()` drops armour the gun can't penetrate. Penetration also falls
-    off with range in `ballistics()` (`pen *= 1.1 - 0.25 * dist / range`), so a gun may refuse targets near the
-    edge of its circle.
-  - The range used for targeting vs the one drawn: `lv.range * t.rangeMult` (auras, combos) vs `TOWERS[..].range`
-    in the HUD/renderer. Also big towers measured from the centre vs the edge (`t.size`).
-  - Projectiles that expire before arriving (bullet speed × lifetime shorter than the range) or lobbed shells
-    aimed at a lead point beyond the range.
-  - Camouflaged guns in `MODE_AMBUSH` wait for a flank or 60% of range on purpose (make that visible).
-  - Units: `UnitDef.gun.range` vs how far they actually engage (`unitFire`, chase logic).
-- [ ] Fix so every weapon engages anything it can hurt inside the circle it shows. Where it intentionally
-  won't (ambush, a target its gun can't penetrate), say why in the panel. Add a smoke check (one gun per
-  role fires at a target at 95% range).
+- [x] Found with `npm run probe` (`scripts/rangeprobe.ts`; `WW2=1 ALL=1` for every matchup): guns fired at armour
+  near the edge of their circle and bounced (targeting checked the weakest side at full penetration, the damage
+  the side shown at the penetration left at that distance); howitzers never fired at what no observer saw.
+- [x] One rule for both (`penRatio()`): crews only engage what they can get through from where they stand
+  (`HURT_RATIO` 0.8); `fireStatus()` tells the panel why a gun holds fire (armour, ambush, no spotter, smoke);
+  the ambush ring (60%) and the artillery's spotting (its own 140 px, observers) are drawn when selected; the
+  panel shows penetration close / far. The bunker's second MG and the commander also respect armour.
+- [x] Smoke: one gun per role fires at a soldier at 95% of its range; an MG explains why it holds fire at a tank.
+- Bot (0.8 threshold): Normal maps a little better on average (Crossfire 30, Boulder Pass 26, Gauntlet 20; Open
+  Field 18 — was 25), Easy wins Open Field and Crossfire, loses Boulder Pass at 26 (was 31); battles unchanged.
 
-## F2. Sound controls in the top bar
+## F2. Sound controls in the top bar — done
 
-- [ ] Mute (sound and music), previous / next track, and a music volume slider in the top bar (`#topbar` in
-  `index.html`, wired in `hud.ts`), plus the track name (the `sound.trackName` getter) as a tooltip or a small label.
-- [ ] `sound.ts` needs `nextTrack()` / `prevTrack()` for both the synth score (`track`, `step`) and the WW2
-  recordings (`record`, `player`); volume and mute go through `settings` (`app/settings.ts`), so the settings
-  menu sliders and the top bar stay in sync and the choice is remembered.
-- [ ] Keyboard shortcuts (pick keys that are free in `main.ts`), and the controls must fit at phone width.
+- [x] Mute (K), previous / next track (`,` `.`), music volume slider and the name of the piece in the top bar
+  (`#audio`); `sound.skipTrack()` for recordings and the score; `settings.muted` shared with the settings screen.
+  Phone width: the buttons only. Smoke checks next track, mute, K and the saved volume.
 
-## F3. The sidebar buttons are too tight
+## F3. The sidebar buttons are too tight — done
 
-- [ ] Palette labels are cut off ("Worksh…", "Nebelwe…", "Roadbl…", "Motor P…"), and so are some buttons in the info
-  panel. Rethink the design. The constraints from `CLAUDE.md` still hold: all towers visible at once with icons,
-  no tabs or submenus, and the info panel explains whatever is clicked or hovered.
-- [ ] Options to weigh (mock them up and screenshot before choosing):
-  - a wider sidebar (it is 340 px);
-  - two columns instead of three;
-  - icon tiles with the price only, and the full name in the hover/explain panel;
-  - short names (`TowerDef.short`) everywhere, sized to fit;
-  - a smaller font with tighter icons.
-- [ ] The info panel's button rows (upgrade / repair / sell, target modes with Ambush, unit stances and orders,
-  training) need room for their full labels without wrapping, and must keep the fixed positions from commit
-  8abb30a: buttons right under the title, rows that don't come and go.
-- [ ] Check it at 1280×720, 1920×1080 and a phone width, in both themes if there are any.
+- [x] Mocked up wider (390 px), two columns, icon tiles and compact rows at 1280×720: at that height only the
+  icon tiles leave the info panel room. Chosen: icon tiles, six per row (one row per category), names under the
+  icons from 840 px of height (squeezed to fit), a 384 px sidebar from 1600 px of width.
+- [x] Info panel: tighter rows, the five targeting modes fit, training buttons are two fixed lines (name; price
+  and men, or why not), upgrade values without units. Checked at 1280×720, 1440×900, 1920×1080 and 390×844;
+  smoke checks that every panel button's label fits.
 
 # Realism features
 

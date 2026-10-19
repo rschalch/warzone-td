@@ -236,6 +236,12 @@ interface Strike {
 }
 
 const TURN_RATE = 10; // rad/s for turrets
+/** WW2: penetration over armour below which crews hold fire (from 0.7 a hit only chips; see ballistics). */
+const HURT_RATIO = 0.8;
+/** WW2: penetration at a share `f` of the gun's range compared with its rated (mid-range) figure. */
+export function penFalloff(f: number): number {
+  return 1.1 - 0.25 * Math.min(1, f);
+}
 /** WW2: speed of infantry climbing over dragon's teeth. */
 const TEETH_CLIMB = 0.35;
 /** WW2: hand grenades thrown by infantry at an emplacement next to them. */
@@ -2078,7 +2084,7 @@ export class Sim {
     h.src.y = h.y;
     // shooting
     h.fireCd -= DT;
-    const tgt = this.findTarget(h.x, h.y, this.heroRange(), true, true, 0);
+    const tgt = this.findTarget(h.x, h.y, this.heroRange(), true, true, 0, -1, 0, WW2 ? HERO_PEN : 0);
     if (tgt < 0) return;
     if (!h.path.length) h.ang += angleDiff(h.ang, Math.atan2(this.eY[tgt] - h.y, this.eX[tgt] - h.x)) * Math.min(1, 14 * DT);
     if (h.fireCd > 0) return;
@@ -2623,7 +2629,7 @@ export class Sim {
     if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
     if (g && think) {
       const look = stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range;
-      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false);
+      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range);
       this.uTgt[u] = t;
       if (t >= 0) this.uTuid[u] = this.eUid[t];
       if (!this.uOrder[u] && this.uTask[u] < 0 && this.uLay[u] < 0 && !dug) {
@@ -3461,17 +3467,8 @@ export class Sim {
         const r = pen / (top || !src ? def.arm[3] : def.arm[0]);
         return r >= 1 ? a : r >= 0.3 ? a * r * r : 0;
       }
-      let armour: number;
-      if (top || !src) armour = def.arm[3];
-      else {
-        const dx = src.x - this.eX[i];
-        const dy = src.y - this.eY[i];
-        const rel = Math.abs(angleDiff(this.eAng[i], Math.atan2(dy, dx)));
-        armour = rel < Math.PI / 4 ? def.arm[0] : rel > (Math.PI * 3) / 4 ? def.arm[2] : def.arm[1];
-        const range = lv ? lv.range * src.rangeMult : src === this.unitSrc ? this.proxyRange : this.heroRange();
-        if (range > 0) pen *= 1.1 - 0.25 * Math.min(1, Math.hypot(dx, dy) / range);
-      }
-      const r = armour > 0 ? pen / armour : 9;
+      const range = !src ? 0 : lv ? lv.range * src.rangeMult : src === this.unitSrc ? this.proxyRange : this.heroRange();
+      const r = this.penRatio(i, pen, top || !src, src?.x ?? 0, src?.y ?? 0, range);
       // under anti-tank fire, a tank crew pops smoke once
       if (!top && pen >= 40 && def.arm[0] >= 40 && !this.eSmokeUsed[i] && this.rng.next() < 0.35) this.popSmoke(i);
       if (r < 1) {
@@ -3502,21 +3499,92 @@ export class Sim {
     return a;
   }
 
-  /** WW2 targeting: can a weapon of this penetration hurt unit i at all (from its weakest side, or from above)? */
-  private canHurt(i: number, pen: number, top: boolean): boolean {
+  /**
+   * WW2: how a shot of `pen` mm fired from (sx, sy) by a gun of `range` px meets unit i's armour:
+   * penetration (falling off with distance) over the armour of the side it hits — front, side or rear
+   * from the bearing to the hull's heading, the top for blasts and bombs. 9 for soft targets.
+   */
+  private penRatio(i: number, pen: number, top: boolean, sx: number, sy: number, range: number): number {
+    const arm = ENEMIES[this.eKind[i]].arm;
+    if (!arm) return 9;
+    const armour = arm[top ? 3 : this.facing(i, sx, sy)];
+    if (!top && range > 0) pen *= penFalloff(Math.hypot(sx - this.eX[i], sy - this.eY[i]) / range);
+    return armour > 0 ? pen / armour : 9;
+  }
+
+  /** Which side of unit i faces (sx, sy): 0 front, 1 side, 2 rear (indexes into EnemyDef.arm). */
+  private facing(i: number, sx: number, sy: number): number {
+    const rel = Math.abs(angleDiff(this.eAng[i], Math.atan2(sy - this.eY[i], sx - this.eX[i])));
+    return rel < Math.PI / 4 ? 0 : rel > (Math.PI * 3) / 4 ? 2 : 1;
+  }
+
+  /**
+   * WW2 targeting: can a weapon of this penetration, fired from (sx, sy), hurt unit i where it stands
+   * now (the side it shows, at this distance)? The same rule as ballistics(), so crews don't fire
+   * rounds that would bounce.
+   */
+  private canHurt(i: number, pen: number, top: boolean, sx: number, sy: number, range: number): boolean {
     const def = ENEMIES[this.eKind[i]];
     const arm = def.arm;
     if (!arm) return true;
     // concrete is worn down by anything heavy enough to chip it (see ballistics)
     if (def.fixed) return pen >= (top ? arm[3] : arm[0]) * 0.3;
-    return pen >= (top ? arm[3] : Math.min(arm[1], arm[2])) * 0.9;
+    return this.penRatio(i, pen, top, sx, sy, range) >= HURT_RATIO;
+  }
+
+  /**
+   * For the panel: why tower t isn't firing at something inside its circle, or '' if it is (or has
+   * nothing there). Read-only: it runs the same tests as the targeting, between ticks.
+   */
+  fireStatus(t: Tower): string {
+    const def = TOWERS[t.type];
+    if (!def.targeted || def.manual || t.wreck || t.buildT > 0) return '';
+    const lv = def.levels[t.level];
+    const range = lv.range * t.rangeMult;
+    const pen = WW2 ? lv.pen ?? 0 : 0;
+    const top = !!lv.splash && t.kind !== 'at';
+    const spot = t.kind === 'arty' ? 140 : 0;
+    let inRange = 0;
+    let unseen = 0;
+    let smoke = 0;
+    let armoured = -1;
+    let armD = Infinity;
+    for (let n = 0; n < this.liveCount; n++) {
+      const i = this.live[n];
+      if (!this.eAlive[i] || (this.eAir[i] ? !def.hitsAir : !def.hitsGround)) continue;
+      const d2 = (this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2;
+      if (d2 > range * range) continue;
+      if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
+      inRange++;
+      if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) unseen++;
+      else if (this.eSmoked[i] && d2 > 50 * 50) smoke++;
+      else if (pen > 0 && !this.canHurt(i, pen, top, t.x, t.y, range)) {
+        if (d2 < armD) {
+          armD = d2;
+          armoured = i;
+        }
+      } else return t.mode === MODE_AMBUSH && this.towerHidden(t)
+        ? `Ambush: holding fire until a tank shows its flank or something comes within ${Math.round(range * 0.6)} px.`
+        : '';
+    }
+    if (!inRange) return '';
+    if (unseen) return `Needs a spotter: ${unseen} in range that nobody sees. It fires at what an observation post sees, or within ${spot} px of itself.`;
+    if (armoured >= 0) {
+      const e = ENEMIES[this.eKind[armoured]];
+      const side = top ? 3 : this.facing(armoured, t.x, t.y);
+      const here = top ? pen : pen * penFalloff(Math.sqrt(armD) / range);
+      return `Holding fire: the ${e.name}'s ${['front', 'side', 'rear', 'top'][side]} armour is too thick from here (${Math.round(here)} mm against ${e.arm![side]} mm). It waits for it to come closer or turn.`;
+    }
+    if (smoke) return 'Holding fire: the targets in range are in smoke.';
+    return '';
   }
 
   /**
    * Best target in range by targeting mode. `skip` excludes one slot; `spot` > 0 means the unit must
-   * be within `spot` px or under radar cover (artillery).
+   * be within `spot` px or under radar cover (artillery). WW2: with `pen`, only what it can get
+   * through from here (`gunRange`: the range its penetration falls off over, if not `range`).
    */
-  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0, pen = 0, top = false): number {
+  private findTarget(x: number, y: number, range: number, air: boolean, ground: boolean, mode: number, skip = -1, spot = 0, pen = 0, top = false, gunRange = range): number {
     const n = this.hash.query(x, y, range, this.qbuf);
     const r2 = range * range;
     let best = -1;
@@ -3533,7 +3601,7 @@ export class Sim {
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
       if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
-      if (pen > 0 && !this.canHurt(i, pen, top)) continue;
+      if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
       let s: number;
       switch (mode) {
         case 0: s = -this.eRemain[i]; break;
@@ -3623,7 +3691,7 @@ export class Sim {
   private baseGuns(t: Tower): void {
     if ((t.charge -= DT) <= 0) {
       // the anti-tank gun: tanks that reach the headquarters
-      const tank = this.findTarget(t.x, t.y, BASE_GUN_RANGE + 30, false, true, 0, -1, 0, BASE_AT[1]);
+      const tank = this.findTarget(t.x, t.y, BASE_GUN_RANGE + 30, false, true, 0, -1, 0, BASE_AT[1], false, TOWERS[t.type].levels[t.level].range * t.rangeMult);
       if (tank >= 0 && ENEMIES[this.eKind[tank]].arm) {
         t.charge = BASE_AT[2];
         this.streak(t.x, t.y, 10, this.eX[tank], this.eY[tank], 8, 0.12, 0xffd080, 2);
@@ -3880,7 +3948,7 @@ export class Sim {
         break;
       case 'bunker': {
         this.spawnProjectile(P_BULLET, t.x + ca * 12 - sa * 5, t.y + sa * 12 + ca * 5, ca, sa, 900, dmg, 0, 1, tgt, t, 1);
-        const second = this.findTarget(t.x, t.y, range, false, true, t.mode, tgt);
+        const second = this.findTarget(t.x, t.y, range, false, true, t.mode, tgt, 0, pen);
         this.spawnProjectile(P_BULLET, t.x + ca * 12 + sa * 5, t.y + sa * 12 - ca * 5, ca, sa, 900, dmg, 0, 1, second >= 0 ? second : tgt, t, 1);
         this.muzzleFlash(mx, my, 9, 0xffe7a0);
         break;

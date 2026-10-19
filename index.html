@@ -27,6 +27,14 @@
         <button data-speed="2">2×</button>
         <button data-speed="4">4×</button>
       </div>
+      <div id="audio">
+        <div class="seg">
+          <button id="mute" title="Mute sound and music (K)"></button>
+          <button id="prevtrack" title="Previous track (,)"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg></button>
+          <button id="nexttrack" title="Next track (.)"><svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg></button>
+        </div>
+        <label class="vol" title="Music volume"><span id="trackname"></span><input id="musicvol" type="range" min="0" max="1" step="0.05"></label>
+      </div>
       <button id="undo" title="Undo the last build (Ctrl+Z, full refund for 5 s)">Undo</button>
       <button id="camera" title="Switch camera (V)">View: Top</button>
       <button id="gear" title="Settings">⚙</button>

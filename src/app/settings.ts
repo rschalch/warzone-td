@@ -6,6 +6,7 @@ export interface Settings {
   master: number; // 0..1
   sfx: number;
   music: number;
+  muted: boolean; // all sound and music off (the volumes are kept)
   quality: 'low' | 'medium' | 'high'; // particle budget
   colorblind: boolean;
   numbers: boolean; // floating damage / bounty numbers
@@ -17,6 +18,7 @@ const DEFAULTS: Settings = {
   master: 0.8,
   sfx: 0.8,
   music: 0.45,
+  muted: false,
   quality: 'high',
   colorblind: false,
   numbers: true,

@@ -20,6 +20,11 @@ on Luftwaffe tail fins, air-recognition flags and the faction flag; Allied stars
   guns fire slower.
 - **Track hits** from HE / near misses: vehicle immobilised for a few seconds.
 - Range ring of an AT gun shows where it penetrates the selected enemy's front (green) / side (yellow).
+- Targeting uses the same rule as the damage (`penRatio()`: the side the target shows from the shooter, the
+  penetration left at that distance): a crew only fires when pen ≥ 0.8 × that armour (a hit there still does real damage), so nothing fires and
+  bounces. When a gun holds fire at something inside its circle, the panel says why (`fireStatus()`: armour too
+  thick from here, ambush waiting inside the inner ring, artillery without a spotter, smoke).
+  `npm run probe` (`WW2=1 ALL=1` for every matchup) checks every weapon at 50/80/95/100% of its range.
 
 Rough penetration (mm): rifles/MG 8 · .50 cal 20 · 20 mm 30 · PTRD 35 · ZiS-3 / Sherman 75 75 · bazooka/PIAT
 100 · PaK 40 120 · 88 Flak 130 · Panzerschreck 180 · 17-pdr APDS / PaK 43 190 · Panzerfaust 200 (60 m).

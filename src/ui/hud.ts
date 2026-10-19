@@ -5,9 +5,14 @@ import {
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
-import { VET_KILLS, heroAbilities, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
 import { ABILITY_HELP, ABILITY_HELP_WW2, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
+import { settings, updateSettings } from '../app/settings';
+import { sound } from '../audio/sound';
+
+const SPEAKER = '<svg viewBox="0 0 16 16"><path d="M2 6h3l4-3v10L5 10H2z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M12.5 3.5a6 6 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+const SPEAKER_OFF = '<svg viewBox="0 0 16 16"><path d="M2 6h3l4-3v10L5 10H2z"/><path d="M11 6l4 4M15 6l-4 4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 
 /** Something to explain in the side panel (hovered button, or a target being aimed). */
 export type Inspect = { kind: 'tower' | 'item' | 'ability' | 'hero' | 'super'; index: number };
@@ -75,7 +80,11 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
   const rate = eff?.rate ?? lv.rate;
   const role = def.role;
   if (lv.damage) rows.push([role === 'hacker' ? 'Hijacked DPS' : DPS_KINDS.has(role) ? 'DPS' : 'Damage', num(dmg)]);
-  if (lv.pen !== undefined) rows.push(['Penetration', `${lv.pen} mm`]);
+  // (it falls off with range: more point-blank, less at the edge of the circle)
+  if (lv.pen !== undefined) {
+    if (lv.splash && role !== 'at') rows.push(['Penetration', `${lv.pen} mm, top`]);
+    else rows.push(['Pen. close / far', `${Math.round(lv.pen * penFalloff(0))} / ${Math.round(lv.pen * penFalloff(1))} mm`]);
+  }
   if (lv.range > 14) rows.push([AURA_KINDS.has(role) ? 'Radius' : 'Range', num(range)]);
   if (lv.rate && !lv.charge) rows.push([role === 'mine' ? 'Re-arm' : 'Rate', role === 'mine' ? `${num(1 / rate)}s` : `${num(rate)}/s`]);
   if (lv.salvo) rows.push(['Rockets', `${lv.salvo}`]);
@@ -151,6 +160,9 @@ export class Hud {
   private readonly next = $<HTMLButtonElement>('next');
   private readonly cameraBtn = $<HTMLButtonElement>('camera');
   private readonly undoBtn = $<HTMLButtonElement>('undo');
+  private readonly muteBtn = $<HTMLButtonElement>('mute');
+  private readonly musicVol = $<HTMLInputElement>('musicvol');
+  private readonly trackName = $('trackname');
   private readonly info = $('info');
   private readonly waveBox = $('wavebox');
   private readonly tactical = $('tactical');
@@ -201,10 +213,25 @@ export class Hud {
       });
     }
     if (this.iconFn) this.setIcons(this.iconFn);
+    this.fitNames();
+  }
+
+  /** Squeezes each tower name under its icon to the tile's width (they show when the sidebar has the height). */
+  private fitNames(): void {
+    requestAnimationFrame(() => {
+      for (const b of this.buttons) {
+        const n = b?.querySelector<HTMLElement>('.n');
+        if (!n || !n.offsetWidth) continue;
+        n.style.transform = '';
+        const room = b.clientWidth - 6;
+        n.style.transform = n.offsetWidth > room ? `scaleX(${(room / n.offsetWidth).toFixed(3)})` : '';
+      }
+    });
   }
 
   constructor(private readonly act: HudActions) {
     this.buildPalette(act);
+    window.addEventListener('resize', () => this.fitNames());
     this.next.onclick = () => act.next();
     $('menu').onclick = () => act.menu();
     $('gear').onclick = () => act.settings();
@@ -212,6 +239,12 @@ export class Hud {
     this.cameraBtn.onclick = () => act.camera();
     this.speedBtns = [...$('speed').querySelectorAll('button')] as HTMLButtonElement[];
     for (const b of this.speedBtns) b.onclick = () => act.speed(Number(b.dataset.speed));
+    // sound: the same settings as the settings screen, so both stay in step and are remembered
+    this.muteBtn.onclick = () => updateSettings({ muted: !settings.muted });
+    $('prevtrack').onclick = () => sound.prevTrack();
+    $('nexttrack').onclick = () => sound.nextTrack();
+    this.musicVol.oninput = () => updateSettings({ music: Number(this.musicVol.value), muted: false });
+    this.musicVol.onchange = () => this.musicVol.blur(); // hand the keys back to the game
 
     // tactical bar: hero + abilities, then items
     this.heroBtn = document.createElement('button');
@@ -286,6 +319,7 @@ export class Hud {
     this.infoKey = '';
     this.cache.clear();
     this.report.classList.remove('show');
+    this.fitNames();
   }
 
   private hoverable(el: HTMLElement, what: Inspect): void {
@@ -306,6 +340,18 @@ export class Hud {
     this.buttons[type]?.scrollIntoView({ block: 'nearest' });
   }
 
+  /** The top bar's sound controls follow the settings (changed here, by a key, or in the settings screen). */
+  private updateAudio(): void {
+    const muted = settings.muted;
+    this.set(this.muteBtn, muted ? SPEAKER_OFF : SPEAKER, true);
+    this.muteBtn.classList.toggle('off', muted);
+    this.muteBtn.title = muted ? 'Sound off — click to turn it back on (K)' : 'Mute sound and music (K)';
+    if (document.activeElement !== this.musicVol && Number(this.musicVol.value) !== settings.music) this.musicVol.value = String(settings.music);
+    const name = sound.trackName;
+    this.set(this.trackName, name ? `♪ ${name}` : '♪ Music');
+    this.musicVol.parentElement!.title = `${name ? `Now playing: ${name}. ` : ''}Music volume ${Math.round(settings.music * 100)}%`;
+  }
+
   private set(el: HTMLElement, text: string, html = false): void {
     if (this.cache.get(el) === text) return;
     this.cache.set(el, text);
@@ -321,6 +367,7 @@ export class Hud {
     this.livesLabel.textContent = WW2 ? 'HQ' : 'Lives';
     this.set(this.wave, sim.endless || sim.siege ? `${sim.wave}` : `${sim.wave}/${sim.totalWaves}`);
     this.set(this.kills, `${sim.totalKills}`);
+    this.updateAudio();
 
     let label: string;
     if (sim.wave === 0) label = 'Start wave 1';
@@ -438,7 +485,7 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
       const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
-      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}`;
+      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}:${sim.fireStatus(t)}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -493,7 +540,7 @@ export class Hud {
       const up = sim.upgradeCost(t);
       const nextRows = up ? stats(def, def.levels[t.level + 1]) : [];
       const rows = stats(def, lv, sim.stats(t))
-        .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1] : ''}</td></tr>`)
+        .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1].replace(/ (mm|HP)$/, '') : ''}</td></tr>`)
         .join('');
       // WW2: camouflaged guns can also wait in ambush
       const modeNames: string[] = [...TARGET_MODES, ...(WW2 && def.camo ? ['Ambush'] : [])];
@@ -524,6 +571,8 @@ export class Hud {
       if (t.id === sim.objectiveId) special += `<div class="desc bad"><b>Objective: ${sim.battle?.objective?.name}.</b> If it falls, the battle is lost.</div>`;
       else if (t.base) special += `<div class="desc bad"><b>Your headquarters.</b> The attackers march on it; if it falls, the battle is lost. Its garrison machine-guns anything close; upgrade it for more concrete.</div>`;
       if (t.buildT > 0) special += `<div class="desc">Under construction: ready in <b>${Math.ceil(t.buildT)} s</b>. It can't fire until then.</div>`;
+      const holding = sim.fireStatus(t);
+      if (holding) special += `<div class="desc hold">${holding}</div>`;
       if (t.wreck) {
         special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
       }
@@ -657,7 +706,9 @@ export class Hud {
     const rows = UNITS.map((d, k) => {
       if (d.from !== t.kind) return '';
       const block = sim.trainBlock(t, k);
-      return `<button data-train="${k}" title="${d.desc}" ${block || ro ? 'disabled' : ''}>${d.short} $${d.cost}${d.manpower > 1 ? ` · ${d.manpower} men` : ''}${why[block] ? ` (${why[block]})` : ''}</button>`;
+      // two lines each, the same for every unit: the name, then the price and the men it takes (or why not)
+      const men = `${d.manpower} ${d.manpower > 1 ? 'men' : 'man'}`;
+      return `<button data-train="${k}" title="${d.name}: ${d.desc} ($${d.cost}, ${men})" ${block || ro ? 'disabled' : ''}><b>${d.short}</b><small>${why[block] ? `<span class="bad">${why[block]}</span>` : `$${d.cost} · ${men}`}</small></button>`;
     }).join('');
     const now = t.trainKind >= 0 ? `<div class="desc">Training <b>${UNITS[t.trainKind].name}</b>: ready in ${Math.ceil(t.trainT)}s</div>` : '';
     return `<div class="row train">${rows}</div>${now}<div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.</div>`;

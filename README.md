@@ -37,6 +37,7 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
 - **Armour and penetration**: every gun has penetration in mm that drops with range, every vehicle has front,
   side, rear and top armour. Rifles and MGs bounce off tanks; an anti-tank gun kills a T-34 from the side and
   bounces off its front. Shots can break a track or blow the ammunition. Machine guns pin infantry down.
+  Crews hold fire at armour they can't get through from where they stand, and the panel tells you why.
 - **The enemy fires back** at your emplacements and units: tanks halt to aim, emplacements have HP and
   fortification (sandbags, timber, concrete) and become rubble you can rebuild; workshops and engineers repair.
 - **Units**: barracks, motor pool and airfield train squads, MG and anti-tank teams, snipers, engineers, medics,
@@ -95,10 +96,11 @@ Later waves add **Ghosts** (stealth: need radar), **Aegis** (regenerating shield
 (heal nearby units).
 
 ## Controls
-All 34 towers are in one palette: click one, or `1`–`9`, `0` for the first ten and `Q`/`E` for previous/next; then click or drag to build (the tower type stays selected) · `Esc`/right-click stop ·
+All 34 towers are in one palette of icon tiles (hover one for its name and what it does): click one, or `1`–`9`, `0` for the first ten and `Q`/`E` for previous/next; then click or drag to build (the tower type stays selected) · `Esc`/right-click stop ·
 `U` upgrade · `S` sell · `T` cycle targeting (First/Last/Strong/Close) · `N` next wave (early-call bonus) ·
 `Space` pause · `F` cycle speed (1×/2×/4×) · `V` switch camera (top / isometric) · `G` open/close the selected
-gate · `R` aim the selected superweapon (then click a target).
+gate · `R` aim the selected superweapon (then click a target) · `K` mute · `,` / `.` previous / next music track
+(also in the top bar, with the music volume and the name of the piece playing).
 
 `H` select the commander (click ground to move it) · `[` `]` `\` its abilities · `Z` `X` `C` tactical items ·
 `Shift`-drag select a group (bulk upgrade/sell) · `Ctrl+Z` undo the last build · hold `Tab` to see every aura.

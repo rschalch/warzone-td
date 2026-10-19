@@ -118,6 +118,7 @@ export interface Chord {
 
 const TRACKS: Track[] = [
   { // Last Stand: D minor, Dm Bb F C | Dm Bb Gm A
+    name: 'Last Stand',
     bpm: 84,
     chords: [ch(38, 50, 53, 57, 62), ch(34, 50, 53, 58, 62), ch(41, 48, 53, 57, 60), ch(36, 48, 52, 55, 60),
       ch(38, 50, 53, 57, 62), ch(34, 50, 53, 58, 65), ch(31, 50, 55, 58, 62), ch(33, 49, 52, 57, 61)],
@@ -128,6 +129,7 @@ const TRACKS: Track[] = [
     brass: [[0, 5], [6, 1.5], [8, 7]], loops: 4,
   },
   { // Iron Rain: E minor, driving, Em C G D | Em C Am B
+    name: 'Iron Rain',
     bpm: 98,
     chords: [ch(40, 52, 55, 59, 64), ch(36, 52, 55, 60, 64), ch(43, 50, 55, 59, 62), ch(38, 50, 54, 57, 62),
       ch(40, 52, 55, 59, 64), ch(36, 52, 55, 60, 67), ch(33, 52, 57, 60, 64), ch(35, 51, 54, 59, 63)],
@@ -138,6 +140,7 @@ const TRACKS: Track[] = [
     brass: [[0, 3], [4, 3], [8, 3], [12, 4]], loops: 4,
   },
   { // Ashes: C minor, slow and mournful, cello lead, Cm Ab Eb Bb | Cm Ab Fm G
+    name: 'Ashes',
     bpm: 70,
     chords: [ch(36, 48, 51, 55, 60), ch(32, 48, 51, 56, 60), ch(39, 51, 55, 58, 63), ch(34, 50, 53, 58, 62),
       ch(36, 48, 51, 55, 60), ch(32, 48, 51, 56, 63), ch(41, 48, 53, 56, 60), ch(31, 50, 55, 59, 62)],
@@ -148,6 +151,7 @@ const TRACKS: Track[] = [
     brass: [[0, 8], [8, 8]], loops: 3,
   },
   { // Blitz: A minor, fast and aggressive, Am F C G | Am F E E
+    name: 'Blitz',
     bpm: 112,
     chords: [ch(33, 52, 57, 60, 64), ch(41, 53, 57, 60, 65), ch(36, 52, 55, 60, 64), ch(43, 50, 55, 59, 62),
       ch(33, 52, 57, 60, 64), ch(41, 53, 57, 60, 65), ch(40, 52, 56, 59, 64), ch(40, 52, 56, 59, 62)],
@@ -158,6 +162,7 @@ const TRACKS: Track[] = [
     brass: [[0, 2], [3, 2], [6, 2], [10, 6]], loops: 5,
   },
   { // Frontline: G minor, march with a horn lead, Gm Eb Bb F | Gm Cm D D
+    name: 'Frontline',
     bpm: 90,
     chords: [ch(43, 50, 55, 58, 62), ch(39, 51, 55, 58, 63), ch(34, 50, 53, 58, 62), ch(41, 48, 53, 57, 60),
       ch(43, 50, 55, 58, 62), ch(36, 51, 55, 60, 63), ch(38, 50, 54, 57, 62), ch(38, 50, 54, 57, 60)],
@@ -168,6 +173,7 @@ const TRACKS: Track[] = [
     brass: [[0, 4], [4, 2], [6, 2], [8, 8]], loops: 4,
   },
   { // Eclipse: F# minor, epic and wide, choir lead, F#m D A E | F#m D Bm C#
+    name: 'Eclipse',
     bpm: 78,
     chords: [ch(42, 54, 57, 61, 66), ch(38, 54, 57, 62, 66), ch(33, 52, 57, 61, 64), ch(40, 52, 56, 59, 64),
       ch(42, 54, 57, 61, 66), ch(38, 54, 57, 62, 69), ch(35, 50, 54, 59, 62), ch(37, 49, 53, 56, 61)],
@@ -266,13 +272,43 @@ export class Sound {
     const f = this.faction;
     if (!this.records.length) return;
     this.record = (this.record + 1) % this.records.length;
+    this.remember();
+    this.player?.removeAttribute('src');
+    setTimeout(() => this.faction === f && this.playRecord(), delay * 1000);
+  }
+
+  /** Remembers the piece playing, so the next visit carries on from the following one. */
+  private remember(): void {
     try {
-      localStorage.setItem(`wz-record-${f}`, String(this.record));
+      if (this.records.length) localStorage.setItem(`wz-record-${this.faction}`, String(this.record));
+      else if (this.playlist === TRACKS) localStorage.setItem('wz-track', String(this.track));
     } catch {
       /* private mode */
     }
-    this.player?.removeAttribute('src');
-    setTimeout(() => this.faction === f && this.playRecord(), delay * 1000);
+  }
+
+  /** Skips to the next (1) or previous (-1) piece now: a recording, or the score's next tune. */
+  skipTrack(dir: 1 | -1): void {
+    if (this.records.length) {
+      const n = this.records.length;
+      this.record = (this.record + dir + n) % n;
+      this.remember();
+      this.player?.removeAttribute('src');
+      this.playRecord();
+      return;
+    }
+    const n = this.playlist.length;
+    this.track = (this.track + dir + n) % n;
+    this.step = 0;
+    this.remember();
+  }
+
+  nextTrack(): void {
+    this.skipTrack(1);
+  }
+
+  prevTrack(): void {
+    this.skipTrack(-1);
   }
 
   private savedTrack(): number {
@@ -400,7 +436,7 @@ export class Sound {
 
   private applyVolumes(): void {
     if (!this.ctx) return;
-    this.master.gain.value = settings.master;
+    this.master.gain.value = settings.muted ? 0 : settings.master;
     this.sfx.gain.value = settings.sfx;
     this.musicBus.gain.value = settings.music * 0.8;
   }
@@ -705,13 +741,7 @@ export class Sound {
       if (this.step >= n * bars * tr.loops) {
         this.step = 0;
         this.track = (this.track + 1) % this.playlist.length;
-        if (this.playlist === TRACKS) {
-          try {
-            localStorage.setItem('wz-track', String(this.track));
-          } catch {
-            /* private mode */
-          }
-        }
+        this.remember();
       }
     }
   }

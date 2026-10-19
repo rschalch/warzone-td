@@ -14,6 +14,7 @@ npm run dev        # Vite dev server (http://localhost:5173)
 npm run build      # tsc --noEmit + production build into dist/
 npm run smoke      # end-to-end test in headless Chrome: menus, building, waves, replay + save determinism
 npm run gauntlet   # balance probe: damage per dollar of every tower at levels 1/5/10 vs a standard wave
+npm run probe      # every weapon vs a target at 50/80/95/100% of its range (WW2=1 ALL=1 for every matchup)
 npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,normal VERBOSE=1); slow (minutes)
 ```
 
@@ -67,7 +68,7 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
 | `src/app/net.ts` | Co-op over WebRTC via PeerJS (public broker only for the introduction; room codes) |
 | `src/app/share.ts` | Replay / custom-map links (deflated JSON in the URL hash) |
 | `src/app/storage.ts`, `settings.ts`, `profile.ts` | localStorage/IndexedDB, player settings, medals/perks/leaderboard/custom maps |
-| `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score: six pieces played in turn (`TRACKS`), strings/brass/choir over taikos, layered by `intensity` |
+| `src/audio/sound.ts` | Playback (panning, distance, convolution reverb, limiter) and the live orchestral score: six pieces played in turn (`TRACKS`), strings/brass/choir over taikos, layered by `intensity`; `nextTrack()`/`prevTrack()` (top bar, `,` `.`), mute and volumes from `settings` (top bar `K`, settings screen) |
 | `src/audio/dsp.ts`, `sfx.worker.ts` | Offline synthesis of every effect into sample banks (a few variations each), rendered in a worker ~1.5 s after boot. No audio files |
 | `src/render/models.ts` | Every 3D model as stacked top-down parts (sprite stacking) |
 | `src/render/bake.ts`, `bake.worker.ts`, `atlas.ts` | Baking models (16 iso headings + 1 top-down frame), effect textures, decals, terrain markings, atlas packing, tower icons |
@@ -110,7 +111,10 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
 
 - It must be a **mazing** TD (no predefined path) like the original; large maps with pan/zoom and a minimap.
 - **Top-down camera is the default**; isometric is an option (`V`), remembered between sessions.
-- **All 34 towers visible at once** in the build palette, with icons — no tabs or submenus.
+- **All 34 towers visible at once** in the build palette, with icons — no tabs or submenus. The palette is icon
+  tiles (icon over price), six columns so each category is one row; the names show under the icons when the
+  window is at least 840 px tall (squeezed to fit by `Hud.fitNames()`), and always in the tooltip and the explain
+  panel. Info-panel buttons must fit their labels on one line (`npm run smoke` checks).
 - Clicking a tower on the battlefield **selects it even while a build tool is active**.
 - The side panel **explains** whatever is clicked or hovered (towers, enemies, commander, items, abilities).
 - **10 upgrade levels** per tower; every level raises damage, range and fire rate and **looks different**.
@@ -142,9 +146,11 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - Data: `src/game/ww2.ts` (German emplacements, Soviet attackers, waves). A `TowerDef` has a unique `kind` and a
   `role` (the behaviour in `Sim.updateTower`; `Tower.kind` holds the role). WW2 roles beyond the classic ones:
   `at` (armour-piercing direct fire; flak bursts against aircraft), `wire` (slows infantry only), `stuka`.
-- Ballistics: `Sim.ballistics()` — `pen` (mm, falls off with range) against `arm` [front, side, rear, top] by the
-  shooter's bearing to the hull heading; blasts and bombs hit the top. Bounce = ~0 damage; overmatch may crit.
-  `canHurt()` keeps crews from targeting armour they can't penetrate. Infantry get suppression (`eSupp`).
+- Ballistics: `Sim.ballistics()` — `pen` (mm, falls off with range, `penFalloff()`) against `arm` [front, side, rear,
+  top] by the shooter's bearing to the hull heading (`penRatio()`); blasts and bombs hit the top. Bounce = ~0
+  damage; overmatch may crit. `canHurt()` (same `penRatio()`, from the shooter's position) keeps crews from
+  targeting armour they can't penetrate from there; `fireStatus()` tells the panel why a gun holds fire.
+  `npm run probe` checks every weapon fires out to the range it shows (`WW2=1 ALL=1` for all matchups). Infantry get suppression (`eSupp`).
 - Models: model sets are `scenery` (rocks, trees: every atlas), `classic` (modern), `ww2` (shared) and one per
   faction (`models_ww2.ts` has the kit — soldier, crew, tracks, plane — and the emplacement factories that take a
   faction `Style`, plus the German and Red Army models; `models_su/de/us/jp.ts` the rest). A game's atlas packs only

@@ -581,6 +581,7 @@ export function showSettings(done: () => void): void {
         ${slider('master', 'Master volume')}
         ${slider('sfx', 'Effects volume')}
         ${slider('music', 'Music volume')}
+        ${toggle('muted', 'Mute all sound and music')}
         <label class="set"><span>Effects quality</span><select data-set="quality">${['low', 'medium', 'high'].map((q) => `<option ${settings.quality === q ? 'selected' : ''}>${q}</option>`).join('')}</select></label>
         ${toggle('shake', 'Screen shake')}
         ${toggle('numbers', 'Floating damage and bounty numbers')}
@@ -602,6 +603,7 @@ export function showSettings(done: () => void): void {
         <tr><td>Hold Tab</td><td>Show every aura</td></tr>
         <tr><td>Drag · arrows · wheel</td><td>Pan · pan · zoom (Home: whole map)</td></tr>
         <tr><td>V</td><td>Top / isometric camera</td></tr>
+        <tr><td>K · , / .</td><td>Mute · previous / next music track</td></tr>
         <tr><td>Touch</td><td>Tap to build/select · drag to pan · pinch to zoom</td></tr>
       </table>
       <div class="actions"><button data-back class="primary">Done</button></div>

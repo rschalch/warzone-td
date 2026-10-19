@@ -2,7 +2,7 @@ import { Application, Container, type Texture } from 'pixi.js';
 import type { NetLink } from './app/net';
 import { computeScore, getProfile, recordGame, saveCustomMap } from './app/profile';
 import { Session, type SessionCommand } from './app/session';
-import { onSettings, settings } from './app/settings';
+import { onSettings, settings, updateSettings } from './app/settings';
 import { copyText, mapLink, readHash, replayLink, type Replay } from './app/share';
 import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
@@ -927,6 +927,8 @@ function bindInput(): void {
     if (k === 'q' || k === 'e') return stepTower(k === 'e' ? 1 : -1);
     if (k >= '0' && k <= '9') return pick(k === '0' ? 9 : Number(k) - 1);
     if (k === 'g') return toggleGate();
+    if (k === 'k') return updateSettings({ muted: !settings.muted });
+    if (k === ',' || k === '.') return k === '.' ? sound.nextTrack() : sound.prevTrack();
     if (k === 'b' && WW2) return repairSelected();
     if (k === 'd' && WW2 && unitSel.length) return void issue({ t: 'unitDig', ids: unitSel });
     if (k === 'm' && WW2 && unitSel.length) return startMines();
@@ -1250,6 +1252,19 @@ async function boot(): Promise<void> {
       lookAt(wx, wy);
     },
     start: (cfg: GameConfig) => startGame(cfg),
+    /** Selects a tower (or nothing), as a click on it would. */
+    select(t: Tower | null) {
+      selected = t;
+      multi = [];
+      unitSel = [];
+      heroSelected = false;
+      placing = -1;
+    },
+    /** Selects defender units by slot. */
+    selectUnits(slots: number[]) {
+      selected = null;
+      unitSel = slots;
+    },
     Session,
     Sim: SimClass,
     /** Tower type and unit kind by name, for scripted checks. */

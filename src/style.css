@@ -20,6 +20,7 @@ button.primary { background: #4d5a22; border-color: #7a8a3a; font-weight: 600; }
 button.primary:hover:not(:disabled) { background: #5d6c2a; }
 
 #topbar { display: flex; align-items: center; gap: 18px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+#topbar button, .stat b { white-space: nowrap; }
 .brand { font-weight: 800; letter-spacing: 2px; font-size: 17px; }
 .brand span { color: var(--accent); margin-left: 4px; }
 .stat { display: flex; flex-direction: column; min-width: 58px; }
@@ -34,6 +35,22 @@ button.primary:hover:not(:disabled) { background: #5d6c2a; }
 .seg button:last-child { border-radius: 0 6px 6px 0; }
 .seg button.on { background: #4d5a22; border-color: #7a8a3a; }
 
+/* sound controls: mute, previous / next track, music volume under the name of the piece playing */
+#audio { display: flex; align-items: center; gap: 8px; }
+#audio .seg button { min-width: 34px; padding: 6px 8px; display: flex; align-items: center; justify-content: center; }
+#audio svg { width: 14px; height: 14px; fill: currentColor; display: block; }
+#mute.off { color: var(--bad); }
+#audio .vol { display: flex; flex-direction: column; gap: 1px; width: 132px; }
+#trackname { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#musicvol { width: 100%; margin: 0; height: 14px; accent-color: var(--accent); }
+
+/* laptop widths: everything on one line */
+@media (max-width: 1500px) {
+  #topbar { gap: 12px; }
+  .brand { display: none; }
+  #audio .vol { width: 104px; }
+}
+
 main { flex: 1; display: flex; min-height: 0; }
 #stage { flex: 1; position: relative; min-width: 0; overflow: hidden; }
 #stage > canvas { display: block; width: 100%; height: 100%; touch-action: none; }
@@ -43,40 +60,58 @@ main { flex: 1; display: flex; min-height: 0; }
 #side { width: 340px; background: var(--panel); border-left: 1px solid var(--line); padding: 10px; overflow-y: auto; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 10px; }
 #side > * { flex-shrink: 0; }
 #side h3 { margin: 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
-#build { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
-#build .cat { grid-column: 1 / -1; font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
+/* every tower at once: one row per category (no ruleset has more than six in one), icon over price */
+#build { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
+#build .cat { grid-column: 1 / -1; font-size: 8.5px; line-height: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim); margin: 3px 0 0; }
 #build .cat:first-child { margin-top: 0; }
 #info .combo { font-size: 11px; color: var(--dim); margin-top: 4px; }
 #info .help { font-size: 12px; color: var(--text); opacity: 0.85; margin: 3px 0 8px; line-height: 1.4; }
 #info .aim { font-size: 11px; color: var(--accent); margin: 3px 0 6px; }
 #info .combo b { color: var(--good); }
-.tb { display: flex; flex-direction: row; align-items: center; gap: 4px; padding: 1px 4px 1px 8px; text-align: left; position: relative; min-width: 0; border-radius: 5px; line-height: 1.2; }
+.tb { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 3px 1px 2px; text-align: center; position: relative; min-width: 0; border-radius: 5px; line-height: 1.15; }
 .tb .ic { flex: none; width: 28px; height: 28px; }
 .tb .ic canvas { display: block; }
-.tb .tx { display: flex; flex-direction: column; min-width: 0; }
+.tb .tx { display: flex; flex-direction: column; align-items: center; min-width: 0; max-width: 100%; }
 .tb.locked .ic { filter: grayscale(1); }
-.tb .n { font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.tb .c { color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
-.tb .k { position: absolute; top: 3px; right: 5px; font-size: 9px; color: var(--dim); }
-.tb .sw { position: absolute; left: 3px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; }
+/* the name: under the icon when the sidebar has the height for it (always in the tooltip and the explain panel) */
+.tb .n { display: none; font-weight: 600; font-size: 10px; white-space: nowrap; transform-origin: 50% 50%; } /* squeezed to fit by Hud.fitNames() */
+.tb .c { color: var(--accent); font-size: 10px; line-height: 11px; font-variant-numeric: tabular-nums; }
+.tb .k { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--dim); }
+.tb .sw { position: absolute; left: 3px; top: 3px; width: 3px; height: 10px; border-radius: 2px; }
 .tb.on { border-color: var(--accent); background: #3a3a1c; }
 .tb.poor .c { color: var(--bad); }
+@media (min-height: 840px) {
+  .tb .n { display: block; }
+}
+/* wide screens: room for a wider sidebar */
+@media (min-width: 1600px) {
+  #side { width: 384px; }
+}
 
 /* a fixed share of the sidebar that scrolls inside itself: long texts never move the palette or the buttons */
-#info { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; flex: 1 1 0 !important; min-height: 220px; overflow-y: auto; scrollbar-gutter: stable; }
+#info { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 9px; flex: 1 1 0 !important; min-height: 220px; overflow-y: auto; scrollbar-gutter: stable; }
 #info .title { font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; }
 #info .lvl { color: var(--accent); font-size: 12px; }
 #info .desc { color: var(--dim); font-size: 12px; margin: 2px 0 8px; }
 #info .desc.partner { color: #6fdcff; }
+#info .desc.hold { color: #ffc04a; }
 #info table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 #info td { padding: 1px 0; }
+#info td:first-child { white-space: nowrap; padding-right: 8px; vertical-align: top; }
 #info td:nth-child(2) { text-align: right; }
-#info td.up { color: var(--good); text-align: right; padding-left: 6px; width: 1%; white-space: nowrap; }
-#info .row { display: flex; gap: 6px; margin-top: 8px; }
-#info .row button { flex: 1; padding: 6px 4px; font-size: 12px; }
+#info td:nth-child(2):not(:last-child) { white-space: nowrap; }
+#info td.up { color: var(--good); text-align: right; padding-left: 6px; width: 1%; white-space: nowrap; font-size: 11px; }
+#info .row { display: flex; gap: 5px; margin-top: 8px; }
+#info .row button { flex: 1; padding: 6px 3px; font-size: 12px; }
+#info .row.modes { gap: 4px; }
+#info .row.modes button { font-size: 11px; padding: 5px 1px; }
 /* one line per button, so a longer label never makes its row taller */
 #info .row:not(.train) button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 #info .row.train { display: grid; grid-template-columns: repeat(3, 1fr); }
+#info .row.train button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 2px; line-height: 1.15; min-width: 0; }
+#info .row.train b, #info .row.train small { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#info .row.train b { font-size: 12px; font-weight: 600; }
+#info .row.train small { font-size: 10.5px; color: var(--accent); }
 #info .modes button.on { border-color: var(--accent); color: var(--accent); }
 #help { margin-top: auto; color: var(--dim); font-size: 11px; }
 #help p { margin: 3px 0; }
@@ -99,7 +134,6 @@ kbd { background: #2a2f22; border: 1px solid var(--line); border-radius: 3px; pa
 .card .actions { display: flex; gap: 10px; margin-top: 18px; }
 @media (max-width: 900px) {
   #side { width: 300px; }
-  #build { grid-template-columns: repeat(2, 1fr); }
   .maps { grid-template-columns: 1fr; }
   #topbar { gap: 10px; flex-wrap: wrap; }
 }
@@ -191,7 +225,9 @@ b.code { font-size: 22px; letter-spacing: 3px; color: var(--accent); }
   #topbar { gap: 8px; padding: 6px 8px; flex-wrap: wrap; }
   .brand { display: none; }
   .stat { min-width: 44px; }
-  #build { grid-template-columns: repeat(3, 1fr); }
+  #audio .vol { display: none; }
+  #audio .seg button { min-width: 30px; padding: 5px 6px; }
+  .tb .n { display: block; }
   #tactical { right: 8px; left: 8px; bottom: 8px; overflow-x: auto; }
   #tactical button { min-width: 0; padding: 3px 7px; font-size: 10px; flex: none; }
   #tactical button b { font-size: 11px; }

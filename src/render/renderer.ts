@@ -5,7 +5,7 @@ import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
   MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, P_SHELL, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
-  ENEMY_ZONE,
+  ENEMY_ZONE, MODE_AMBUSH, ST_AMBUSH,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
@@ -1100,6 +1100,7 @@ export class GameRenderer {
       if (!s.uAlive[u]) continue;
       const d = UNITS[s.uKind[u]];
       if (d.gun) g.circle(s.uX[u], s.uY[u], d.gun.range).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.35 });
+      if (d.gun && s.uStance[u] === ST_AMBUSH) g.circle(s.uX[u], s.uY[u], d.gun.range * 0.6).stroke({ width: 1.5, color: 0xffc04a, alpha: 0.6 });
       if (s.uAir[u]) {
         g.circle(s.uPostX[u], s.uPostY[u], 70).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.5 });
         continue;
@@ -1141,6 +1142,13 @@ export class GameRenderer {
     if (sel) {
       const r = s.stats(sel).range;
       if (r > 0) g.circle(sel.x, sel.y, r).fill({ color: 0xffffff, alpha: 0.07 }).stroke({ width: 2, color: 0xffffff, alpha: 0.55 });
+      // an ambush holds fire outside the inner ring (unless it gets a flank shot)
+      if (sel.mode === MODE_AMBUSH && WW2) g.circle(sel.x, sel.y, r * 0.6).stroke({ width: 1.5, color: 0xffc04a, alpha: 0.7 });
+      if (sel.kind === 'arty') {
+        // artillery fires at what it sees itself and what the observation posts see
+        g.circle(sel.x, sel.y, 140).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.6 });
+        for (const o of s.towers) if (o.kind === 'radar' && !o.wreck) g.circle(o.x, o.y, s.stats(o).range).fill({ color: 0x7ad8ff, alpha: 0.06 }).stroke({ width: 1.5, color: 0x7ad8ff, alpha: 0.6 });
+      }
       const box = TILE * sel.size;
       g.rect(sel.col * TILE - 1, sel.row * TILE - 1, box + 2, box + 2).stroke({ width: 2.5, color: 0xffe28a, alpha: 0.95 });
     }
