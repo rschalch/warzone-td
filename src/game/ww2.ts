@@ -11,6 +11,7 @@ import { RED_ARMY, SOVIET_DEFENCE } from './ww2_su';
 import { ALLIED_DEFENCE, US_ARMY } from './ww2_us';
 import { JAPANESE_DEFENCE, JP_ARMY } from './ww2_jp';
 import { SLOTS, assault, type Arsenal, type Army, type Faction } from './ww2_kit';
+import { battleById } from './battles';
 
 export type { Faction } from './ww2_kit';
 
@@ -25,9 +26,12 @@ export const FACTIONS: Record<Faction, { name: string; adj: string; foes: Factio
 export const ARSENALS: Partial<Record<Faction, Arsenal>> = { de: GERMANY, su: SOVIET_DEFENCE, us: ALLIED_DEFENCE, jp: JAPANESE_DEFENCE };
 export const ARMIES: Partial<Record<Faction, Army>> = { su: RED_ARMY, de: WEHRMACHT_ARMY, us: US_ARMY, jp: JP_ARMY };
 
-export function ww2Ruleset(side: Faction, foe: Faction): Ruleset {
+export function ww2Ruleset(side: Faction, foe: Faction, battle?: string): Ruleset {
   const a = ARSENALS[side];
-  const army = ARMIES[foe];
+  const b = battleById(battle);
+  // a battle brings the attacker's units of the period and its doctrine there
+  const base = ARMIES[foe];
+  const army = base && b ? { ...base, roster: { ...base.roster, ...b.roster }, doctrine: b.doctrine ?? base.doctrine } : base;
   if (!a || !army) throw new Error(`no WW2 matchup ${side} vs ${foe}`);
   a.towers.forEach((t, i) => {
     if (t.slot !== SLOTS[i]) throw new Error(`${side} arsenal: ${t.kind} is in the ${SLOTS[i]} slot`);

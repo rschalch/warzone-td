@@ -7,11 +7,11 @@ import { ww2Ruleset, type Faction } from './ww2';
 
 const cache = new Map<string, Ruleset>();
 
-export function rulesetFor(ww2?: { side: Faction; foe: Faction }): Ruleset {
+export function rulesetFor(ww2?: { side: Faction; foe: Faction; battle?: string }): Ruleset {
   if (!ww2) return CLASSIC;
-  const key = `${ww2.side}:${ww2.foe}`;
+  const key = `${ww2.side}:${ww2.foe}:${ww2.battle ?? ''}`;
   let r = cache.get(key);
-  if (!r) cache.set(key, (r = ww2Ruleset(ww2.side, ww2.foe)));
+  if (!r) cache.set(key, (r = ww2Ruleset(ww2.side, ww2.foe, ww2.battle)));
   return r;
 }
 

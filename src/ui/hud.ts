@@ -1,5 +1,5 @@
 import {
-  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOTAL_WAVES, TOWERS, UNITS, WW2, hpScale,
+  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOWERS, UNITS, WW2, hpScale,
   type EnemyDef, type TowerDef, type TowerLevel,
 } from '../game/defs';
 import { rulesetKey } from '../game/rules';
@@ -311,7 +311,7 @@ export class Hud {
     this.set(this.money, `$${Math.floor(sim.money)}`);
     this.set(this.lives, `${sim.lives}`);
     this.lives.classList.toggle('low', sim.lives <= 5);
-    this.set(this.wave, sim.endless ? `${sim.wave}` : `${sim.wave}/${TOTAL_WAVES}`);
+    this.set(this.wave, sim.endless ? `${sim.wave}` : `${sim.wave}/${sim.totalWaves}`);
     this.set(this.kills, `${sim.totalKills}`);
 
     let label: string;
@@ -330,6 +330,12 @@ export class Hud {
       const b = this.buttons[i];
       b.classList.toggle('on', ui.placing === i);
       b.classList.toggle('poor', sim.money < sim.cost(i));
+      if (sim.battle?.airFrom) {
+        // a battle's weather keeps the aircraft grounded for a while
+        const grounded = sim.airLocked(i);
+        b.classList.toggle('locked', grounded || !sim.allowed(i));
+        b.title = grounded ? `Grounded by the weather until wave ${sim.battle.airFrom}` : '';
+      }
     }
     for (const b of this.speedBtns) b.classList.toggle('on', Number(b.dataset.speed) === ui.speed);
 
@@ -496,6 +502,7 @@ export class Hud {
         const f = t.hp / max;
         condition = `<tr><td>Condition</td><td>${t.wreck ? '<span class="bad">destroyed</span>' : `<span class="${f < 0.35 ? 'bad' : ''}">${Math.ceil(t.hp)} / ${max}</span>${t.supp > 0.3 ? ' · crew pinned' : ''}`}</td><td></td></tr>`;
       }
+      if (t.id === sim.objectiveId) special += `<div class="desc bad"><b>Objective: ${sim.battle?.objective?.name}.</b> If it falls, the battle is lost.</div>`;
       if (t.wreck) {
         special = `<div class="desc bad">Knocked out: the rubble slows the enemy but doesn't block them. Rebuild it as it was, or clear it.</div>`;
       }
@@ -519,7 +526,7 @@ export class Hud {
         ${repair ? `<div class="row">${repair}</div>` : ''}
         <div class="row">
           ${t.wreck ? '' : `<button data-act="up" ${up && sim.money >= up && !ro ? '' : 'disabled'}>${up ? `Upgrade $${up}` : 'Max level'}</button>`}
-          <button data-act="sell" ${sim.canSell && !ro ? '' : 'disabled'}>${t.wreck ? 'Clear' : 'Sell'} $${sim.sellValue(t)}</button>
+          <button data-act="sell" ${sim.canSell && !ro && t.id !== sim.objectiveId ? '' : 'disabled'}>${t.wreck ? 'Clear' : 'Sell'} $${sim.sellValue(t)}</button>
         </div>
         ${sameType > 1 ? `<div class="row"><button data-act="uptype" ${ro}>Upgrade every ${def.short} (${sameType})</button></div>` : ''}`;
     } else if (ui.placing >= 0) {

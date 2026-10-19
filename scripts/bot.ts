@@ -7,11 +7,13 @@
 import type { Difficulty } from '../src/game/config';
 import { COLS, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
 import type { Faction } from '../src/game/ww2';
+import { BATTLES, type Battle } from '../src/game/battles';
+import { rulesetFor } from '../src/game/rules';
 import { MAPS, type MapDef } from '../src/game/maps';
 import { Partner, PARTNER_EVERY } from '../src/game/partner';
 import { Sim } from '../src/game/sim';
 
-const WW2 = !!process.env.WW2;
+const WW2 = !!process.env.WW2 || !!process.env.BATTLE;
 /** WW2 matchup: SIDE=de|su|us|jp defends against FOE. */
 const SIDE = (process.env.SIDE ?? 'de') as Faction;
 const FOE = (process.env.FOE ?? (SIDE === 'de' ? 'su' : SIDE === 'jp' ? 'us' : 'de')) as Faction;
@@ -83,7 +85,12 @@ function chooseWW2(sim: Sim, built: Map<number, number>): number {
 }
 
 function chooseType(sim: Sim, built: Map<number, number>): number {
-  if (WW2) return chooseWW2(sim, built);
+  if (WW2) {
+    // what this battle doesn't allow, the bot replaces with an anti-tank gun or an MG
+    const t = chooseWW2(sim, built);
+    if (sim.allowed(t) && !sim.airLocked(t)) return t;
+    return sim.allowed(slot('pak40')) && sim.wave >= 2 ? slot('pak40') : slot('mg42');
+  }
   const n = (t: number) => built.get(t) ?? 0;
   const total = [...built.values()].reduce((a, b) => a + b, 0);
   if (sim.wave >= 4 && n(T.missile) + n(T.flak) < 1 + total / 8) return sim.money >= sim.cost(T.flak) && n(T.flak) <= n(T.missile) ? T.flak : T.missile;
@@ -155,8 +162,10 @@ function decide(sim: Sim, built: Map<number, number>): void {
   if (bestPos && sim.exec({ t: 'place', type, col: bestPos[0], row: bestPos[1] })) built.set(type, (built.get(type) ?? 0) + 1);
 }
 
-function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number; win: boolean; lives: number; towers: number } {
-  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed, ww2: WW2 ? { side: SIDE, foe: FOE } : undefined });
+function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle): { wave: number; win: boolean; lives: number; towers: number } {
+  const ww2 = battle ? { side: battle.side, foe: battle.foe, battle: battle.id } : WW2 ? { side: SIDE, foe: FOE } : undefined;
+  const allowed = battle?.banned ? rulesetFor(ww2).towers.map((t, i) => (battle.banned!.includes(t.slot as never) ? -1 : i)).filter((i) => i >= 0) : undefined;
+  const sim = Sim.create({ map, difficulty, modifiers: [], perks: {}, seed, ww2, allowed });
   const built = new Map<number, number>();
   const share = Number(process.env.PARTNER ?? 0);
   const solo = !!process.env.SOLO;
@@ -200,6 +209,19 @@ function play(map: MapDef, difficulty: Difficulty, seed: number): { wave: number
   if (thinks && process.env.VERBOSE) console.log(`  partner think: avg ${(thinkMs / thinks).toFixed(2)} ms, max ${thinkMax.toFixed(1)} ms, ${slow} over 16 ms, of ${thinks}`);
   if (process.env.VERBOSE) console.log('  leaks by kind', JSON.stringify([...leaks].map(([k, n]) => `${k}:${n}`)));
   return { wave: sim.wave, win: sim.victory, lives: sim.lives, towers: sim.towers.length };
+}
+
+if (process.env.BATTLE) {
+  // the WW2 campaign: BATTLE=all or a battle id (stalingrad, omaha…)
+  const list = process.env.BATTLE === 'all' ? BATTLES : BATTLES.filter((b) => b.id === process.env.BATTLE);
+  for (const b of list) {
+    for (const d of (process.env.DIFF ?? 'easy,normal').split(',') as Difficulty[]) {
+      const t0 = Date.now();
+      const r = play(b.map, d, 42, b);
+      console.log(`${b.name.padEnd(16)} ${d.padEnd(7)} ${r.win ? 'WIN ' : 'lost'} wave ${String(r.wave).padStart(2)}/${b.waves} lives ${String(r.lives).padStart(2)} towers ${r.towers}  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    }
+  }
+  process.exit(0);
 }
 
 const diffs = (process.env.DIFF ?? 'easy,normal,hard').split(',') as Difficulty[];

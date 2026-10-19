@@ -4,6 +4,7 @@ import {
   type EnemyDef, type EnemyGun, type Role, type SpawnGroup, type TowerLevel,
 } from './defs';
 import { setRuleset } from './rules';
+import { battleById, type Battle } from './battles';
 import { DIFFICULTIES, perk, type GameConfig } from './config';
 import type { Command } from './commands';
 import { FlowField } from './flow';
@@ -293,6 +294,12 @@ export class Sim {
   private spawnCount = 0;
 
   readonly config: GameConfig;
+  /** WW2 campaign: the historical battle being fought, if any. */
+  readonly battle: Battle | undefined;
+  /** Waves to hold to win (a battle may be shorter than the standard 30). */
+  readonly totalWaves: number;
+  /** The tower that must not fall (battle objective), 0 if none. */
+  objectiveId = 0;
   money = 0;
   lives = 0;
   private readonly hpMult: number;
@@ -532,11 +539,13 @@ export class Sim {
   private constructor(map: GameMap, config: GameConfig) {
     this.map = map;
     this.config = config;
+    this.battle = battleById(config.ww2?.battle);
+    this.totalWaves = this.battle?.waves ?? TOTAL_WAVES;
     this.rng = new Rng(config.seed);
     const diff = DIFFICULTIES[config.difficulty];
     // every extra route splits the defence, so it pays more to hold it
     this.routeFactor = 1 + 0.35 * (map.routes.length - 1);
-    this.money = Math.round(START_MONEY * diff.money * this.routeFactor) + 50 * perk(config, 'logistics');
+    this.money = Math.round(START_MONEY * diff.money * this.routeFactor * (this.battle?.money ?? 1)) + 50 * perk(config, 'logistics');
     this.lives = config.modifiers.includes('oneLife') ? 1 : diff.lives + 5 * perk(config, 'fortify');
     this.hpMult = diff.hp;
     this.bountyMult = 1 + 0.1 * perk(config, 'bounty');
@@ -556,6 +565,42 @@ export class Sim {
     for (let i = 0; i < MAX_ENEMIES; i++) this.eFree[i] = MAX_ENEMIES - 1 - i;
     this.eFreeTop = MAX_ENEMIES;
     this.spawnHero(1 + 2 * perk(config, 'veteran'));
+    if (this.battle) this.setUpBattle(this.battle);
+  }
+
+  /** The positions already dug in, and the objective, placed free near where the battle wants them. */
+  private setUpBattle(b: Battle): void {
+    const near = (type: number, col: number, row: number, level = 0): Tower | null => {
+      for (let ring = 0; ring < 8; ring++) {
+        for (let dr = -ring; dr <= ring; dr++) {
+          for (let dc = -ring; dc <= ring; dc++) {
+            if (Math.max(Math.abs(dc), Math.abs(dr)) !== ring) continue;
+            const t = this.place(type, col + dc, row + dr, true);
+            if (t) {
+              t.level = Math.min(level, TOWERS[type].levels.length - 1);
+              t.hp = this.maxHp(t);
+              return t;
+            }
+          }
+        }
+      }
+      return null;
+    };
+    const slot = (name: string) => TOWERS.findIndex((d) => d.slot === name);
+    for (const p of b.preset ?? []) near(slot(p.slot), p.col, p.row, p.level ?? 0);
+    if (b.objective) {
+      const t = near(slot(b.objective.slot), b.objective.col, b.objective.row, 2);
+      if (t) this.objectiveId = t.id;
+    }
+    this.towerVersion++;
+  }
+
+  /** WW2 battles: air support and super-weapons are grounded until the weather clears. */
+  airLocked(type: number): boolean {
+    const b = this.battle;
+    if (!b?.airFrom || this.wave >= b.airFrom) return false;
+    const slot = TOWERS[type].slot;
+    return slot === 'strike' || slot === 'super' || slot === 'airfield';
   }
 
   private ev(type: number, x: number, y: number, a = 0, b = 0): void {
@@ -640,6 +685,9 @@ export class Sim {
     }
     (sim.rng as unknown as { s: number }).s = snap.rng as number;
     (sim.vr as unknown as { s: number }).s = snap.vr as number;
+    // the constructor may have placed a battle's positions: the saved towers replace them
+    sim.towers.length = 0;
+    sim.towerById.clear();
     for (const t of snap.towers as Tower[]) {
       // saves from before WW2 emplacements could be shot at
       t.hp ??= 0;
@@ -746,7 +794,7 @@ export class Sim {
         let any = false;
         for (const id of cmd.ids) {
           const t = this.towerById.get(id);
-          if (t) {
+          if (t && t.id !== this.objectiveId) {
             this.sell(t);
             any = true;
           }
@@ -925,7 +973,7 @@ export class Sim {
   place(type: number, col: number, row: number, free = false): Tower | null {
     const def = TOWERS[type];
     const cost = this.cost(type);
-    if (!free && !this.allowed(type)) return null;
+    if (!free && (!this.allowed(type) || this.airLocked(type))) return null;
     if ((!free && this.money < cost) || !this.canPlace(type, col, row)) return null;
     if (!free) this.money -= cost;
     const size = def.size;
@@ -1101,6 +1149,11 @@ export class Sim {
     this.explosion(t.x, t.y, 1.2 + t.size * 0.5, 4);
     for (let k = 0; k < 10; k++) this.fx(FX_DEBRIS, 0, t.x, t.y, this.vr.range(-110, 110), this.vr.range(-110, 110), 0.9, 4, 3, 1, 0x7a6a50, 3, 8);
     this.ev(EV_WRECK, t.x, t.y, t.type);
+    if (t.id === this.objectiveId) {
+      // the objective has fallen: the battle is lost
+      this.lives = 0;
+      this.gameOver = true;
+    }
   }
 
   /**
@@ -1366,7 +1419,7 @@ export class Sim {
   /** Fires a charged orbital laser or nuke at a world point. */
   fireSuper(t: Tower, x: number, y: number): boolean {
     const lv = TOWERS[t.type].levels[t.level];
-    if (!TOWERS[t.type].manual || t.charge > 0) return false;
+    if (!TOWERS[t.type].manual || t.charge > 0 || this.airLocked(t.type)) return false;
     x = Math.min(MAP_W, Math.max(0, x));
     y = Math.min(MAP_H, Math.max(0, y));
     t.charge = lv.charge ?? 0;
@@ -1521,7 +1574,7 @@ export class Sim {
   }
 
   get canCallWave(): boolean {
-    return !this.gameOver && (this.endless || this.wave < TOTAL_WAVES);
+    return !this.gameOver && (this.endless || this.wave < this.totalWaves);
   }
 
   /** Money awarded for calling the next wave now. */
@@ -2579,7 +2632,7 @@ export class Sim {
         this.startNextWave();
       }
     }
-    if (!this.endless && this.wave >= TOTAL_WAVES && !this.spawning && this.liveCount === 0 && !this.victory) {
+    if (!this.endless && this.wave >= this.totalWaves && !this.spawning && this.liveCount === 0 && !this.victory) {
       this.victory = true;
     }
   }
@@ -2639,7 +2692,7 @@ export class Sim {
     this.eSmoked[i] = 0;
     this.eWork[i] = 0;
     this.eGunCd[i] = def.gun ? this.rng.range(0.3, 1) / def.gun.rate : 0;
-    this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06);
+    this.eSpeed[i] = def.speed * this.rng.range(0.94, 1.06) * (this.battle?.foeSpeed ?? 1);
     this.eReward[i] = Math.round(def.reward * rewardScale(wave) * this.bountyMult);
     this.eSlowT[i] = 0;
     this.eSlowF[i] = 1;

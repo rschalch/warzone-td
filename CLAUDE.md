@@ -171,6 +171,11 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   Sappers lift mines and wire; tanks pop smoke under AT fire (`sm*`, blinds both ways); armoured waves open
   with a barrage on known positions (`barrage`, shells in the `rk*` arrays); `adapt()` trades infantry for
   armour by what you built and adds Il-2s if you have no flak.
+- Campaign: `src/game/battles.ts` (`BATTLES`; `GameConfig.ww2.battle`). `Sim` reads the battle for `totalWaves`,
+  `objectiveId` (its wreck ends the game), preset towers (`setUpBattle`, placed free in the constructor — so
+  `restore()` clears the constructor's towers before loading the saved ones), `airLocked()`, money and enemy
+  speed; the ruleset applies the battle's roster and doctrine. Maps are painted with the `Painter` in that file
+  and get a ground `theme` (terrain shader palette, theatre trees, ruins for rocks). `BATTLE=all npm run bot`.
 - The AI partner is off in WW2 for now.
 
 ## Balance notes

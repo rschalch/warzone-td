@@ -25,6 +25,24 @@ between them become natural choke points), and **rivers** can be crossed but slo
 that when picking a path: they go around a river when a dry way is about as quick. Nothing can be built on
 either; aircraft ignore both.
 
+## WW2 mode (branch `ww2`)
+The same game with the Second World War's weapons and realistic ratios. Pick a side — **Germany**, the **Soviet
+Union**, the **Western Allies** or **Japan** — and hold the line against another side's army, or fight the
+**WW2 Campaign**: twelve historical battles from Moscow 1941 to the Seelow Heights 1945, each on its own map.
+
+- **Armour and penetration**: every gun has penetration in mm that drops with range, every vehicle has front,
+  side, rear and top armour. Rifles and MGs bounce off tanks; an anti-tank gun kills a T-34 from the side and
+  bounces off its front. Shots can break a track or blow the ammunition. Machine guns pin infantry down.
+- **The enemy fires back** at your emplacements and units: tanks halt to aim, emplacements have HP and
+  fortification (sandbags, timber, concrete) and become rubble you can rebuild; workshops and engineers repair.
+- **Units**: barracks, motor pool and airfield train squads, MG and anti-tank teams, snipers, engineers, medics,
+  tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances.
+- **Stealth**: camouflaged guns are hidden until spotted or until they fire; recon units find them; Ambush mode.
+- **Enemy intelligence**: tanks and sappers breach long thin mazes, tanks pop smoke, artillery prepares the
+  assault, waves adapt to your defence. Banzai charges and kamikazes for Japan.
+- **Super-weapons**: Stuka and V-2, Il-2 regiment and the B-4 howitzer, P-47s and Little Boy, Vals and the
+  Type 98 spigot mortar.
+
 ## Modes
 - **Campaign maps** and **random maps** (size, routes, rock density and terrain from a shareable code such as `M2-12-48213`).
 - **Daily challenge**: the same map, seed and twist for everyone that day.

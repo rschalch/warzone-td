@@ -293,7 +293,9 @@ export class GameRenderer {
       if (t.turret) return t.levels.map((_, lv) => atlas[`${base}${lv}_${view}`]);
       return [t.role === 'barricade' || t.role === 'gate' ? atlas[`${t.block ?? t.kind}_${view}`] : null];
     });
-    this.rockTex = [atlas[`rock1_${view}`], atlas[`rock2_${view}`]];
+    // a city battle's rocks are ruined houses
+    const rock = sim.map.def.theme === 'ruins' ? 'ruin' : 'rock';
+    this.rockTex = [atlas[`${rock}1_${view}`], atlas[`${rock}2_${view}`]];
     this.sceneryTex = SCENERY.map((n) => atlas[`${n}_${view}`]);
     this.scenery = scenery(sim.map);
     this.rotorTex = this.iso ? [0, 1, 2, 3].map((d) => atlas[`rotor_${d}`]) : [atlas.rotor_t];
@@ -674,6 +676,8 @@ export class GameRenderer {
       const bases = this.baseTex[t.type];
       const base = bases[Math.min(t.level, bases.length - 1)]!;
       this.world.push(base, sx, sy, 0, 1, 1, 0xffffff, 1);
+      // a battle's objective: a pulsing red ring, so it is never lost from sight
+      if (t.id === s.objectiveId) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, time, (t.size * TILE * 1.6) / 128, (t.size * TILE * 1.6) / 128, 0xff5a3a, 0.55 + 0.3 * Math.sin(time * 3), 0.5);
       // the AI partner's towers stand in a cyan ring, like the commander's gold one
       if (t.owner) this.groundFx.push(this.fxTex[FX_RING], t.x, t.y, 0, (t.size * TILE * 1.25) / 128, (t.size * TILE * 1.25) / 128, 0x3ad8ff, 0.55, 0.5);
       if (def.turret && !WW2) this.world.push(this.cornerTex, sx, sy, 0, 1, 1, def.color, 1);

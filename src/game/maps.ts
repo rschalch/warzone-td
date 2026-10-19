@@ -28,6 +28,8 @@ export interface MapDef {
   forests?: number;
   /** Hand-painted water and mountain cells from the editor, run-length encoded (see encodePaint). */
   paint?: string;
+  /** Ground colours (cosmetic): summer grass by default; WW2 battles bring snow, desert, volcanic sand… */
+  theme?: 'summer' | 'temperate' | 'snow' | 'desert' | 'volcanic' | 'jungle' | 'steppe' | 'ruins';
 }
 
 export const MAPS: MapDef[] = [

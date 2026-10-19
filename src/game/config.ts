@@ -66,7 +66,7 @@ export interface GameConfig {
   /** Co-op with AI: the share of the bank the AI partner may spend (see partner.ts). */
   partner?: number;
   /** WW2 mode: the side you play and the one attacking you. Absent: the classic (modern) game. */
-  ww2?: { side: Faction; foe: Faction };
+  ww2?: { side: Faction; foe: Faction; battle?: string };
 }
 
 export const perk = (cfg: GameConfig, id: string) => cfg.perks[id] ?? 0;

@@ -195,6 +195,33 @@ try {
     return out;
   });
   check(matchups.every((m) => /:26:\d+:\d+$/.test(m)), `WW2 matchups run (${matchups.join(' ')})`);
+  // a campaign battle: pre-built positions, the objective, and exact replays and restores with them
+  const battle = await page.evaluate(() => {
+    const { Session, Sim, session } = window.game;
+    const omaha = { ...session.config, map: window.game.BATTLES.find((b) => b.id === 'omaha').map, seed: 3, difficulty: 'normal', ww2: { side: 'de', foe: 'us', battle: 'omaha' } };
+    const a = new Session(omaha);
+    const preset = a.sim.towers.length;
+    a.speed = 4;
+    a.issue({ t: 'wave' });
+    while (a.sim.ticks < 2400 && !a.sim.gameOver) a.advance(1 / 240);
+    const b = new Session(omaha, { replay: a.log });
+    b.speed = 4;
+    while (b.sim.ticks < a.sim.ticks) b.advance(1 / 240);
+    const replay = b.sim.ticks === a.sim.ticks && b.sim.stateHash() === a.sim.stateHash();
+    const c = Sim.restore(structuredClone(a.sim.snapshot()));
+    const towers = c.towers.length === a.sim.towers.length;
+    for (let n = 0; n < 300; n++) {
+      a.sim.step();
+      c.step();
+    }
+    const st = window.game.BATTLES.find((b) => b.id === 'stalingrad');
+    const s2 = Sim.create({ ...session.config, map: st.map, seed: 4, difficulty: 'normal', ww2: { side: 'su', foe: 'de', battle: 'stalingrad' } });
+    const objective = s2.objectiveId > 0 && s2.totalWaves === 25;
+    Sim.create(session.config);
+    return { preset, objective, replay, restore: towers && a.sim.stateHash() === c.stateHash() };
+  });
+  check(battle.preset >= 10 && battle.objective, `WW2 campaign: Omaha's bunkers are dug in (${battle.preset}), Stalingrad has its objective (${battle.objective})`);
+  check(battle.replay && battle.restore, `WW2 battles replay (${battle.replay}) and restore (${battle.restore}) exactly`);
   check(ww2.unseen && ww2.spotted, `WW2 camouflage: a tank misses a hidden sniper (${ww2.unseen}), a recon jeep spots it (${ww2.spotted})`);
   check(ww2.units >= 1, `WW2 units: the barracks trains a squad (${ww2.units})`);
   check(ww2.replay && ww2.restore, 'WW2 games replay and restore exactly (with units)');

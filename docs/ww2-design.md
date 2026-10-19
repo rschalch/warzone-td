@@ -112,6 +112,14 @@ a bridge, keep the HQ alive):
 
 Medals per battle on the campaign map, as in the classic campaign.
 
+As built (`src/game/battles.ts`, menu "WW2 Campaign"): Moscow 1941, Stalingrad 1942 (keep Pavlov's House),
+El Alamein 1942 (minefields laid), Kursk 1943, Omaha Beach 1944 (Atlantic Wall bunkers), Normandy bocage 1944,
+Arnhem 1944 (keep the bridge, paratroopers without heavy weapons), Bastogne 1944 (keep the HQ, aircraft
+grounded until wave 12), Guadalcanal 1942 (keep Henderson Field), Iwo Jima 1945 (caves dug in), Okinawa 1945,
+Seelow Heights 1945. Each battle: its own hand-painted map and ground theme (snow, desert, ruins, volcanic,
+jungle, steppe), waves to hold, the attacker's period roster and doctrine, an optional objective that loses
+the battle when knocked out, pre-built positions, banned slots, start money and enemy speed.
+
 ### 5b. Japan (Imperial Japanese Army and Navy air arm)
 | | Japan |
 |---|---|
@@ -144,7 +152,7 @@ Okinawa (1945, Japan: Shuri Line).
 
 Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:
 Germany vs Soviet Union, Soviet Union vs Germany, Germany vs Allies (Normandy), Allies vs Germany (the
-Bulge), Allies vs Japan (Guadalcanal), Japan vs Allies (Iwo Jima). Remaining: phase 7 (campaign).
+Bulge), Allies vs Japan (Guadalcanal), Japan vs Allies (Iwo Jima). Phase 7 (the campaign) is done: twelve battles in `src/game/battles.ts`.
 
 0. **Scaffold:** mode + faction menu, ruleset switch, WW2 tables, palette per faction.
 1. **Ballistics:** pen / armour / facing / range falloff, suppression, knockouts, track hits. Germany vs

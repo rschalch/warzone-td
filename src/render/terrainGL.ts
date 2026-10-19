@@ -25,6 +25,12 @@ uniform sampler2D uC; // sun (cast shadow), ambient occlusion, forest mask
 uniform vec2 uWorld;   // map size in world px
 uniform vec2 uHeight;  // height range (world px)
 uniform vec3 uSun;
+uniform vec3 uGrass[3]; // dark, mid, light ground (the theme: summer grass, snow, desert sand…)
+uniform vec3 uDry[2];
+uniform vec3 uWood[2];
+uniform vec3 uBank;
+uniform vec3 uRock[2]; // rock tops, cliff faces
+uniform float uCaps;   // snow on the peaks (1) or not
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
@@ -57,10 +63,10 @@ void main() {
   float p1 = fbm(world * 0.006);
   float p2 = fbm(world * 0.018 + 7.0);
   float stroke = vnoise(vec2(world.x * 0.09 + world.y * 0.03, world.y * 0.35)) - 0.5;
-  vec3 grassDark = rgb(86, 128, 40), grassMid = rgb(118, 162, 52), grassLight = rgb(156, 190, 70);
+  vec3 grassDark = uGrass[0], grassMid = uGrass[1], grassLight = uGrass[2];
   vec3 col = mix(grassDark, grassMid, band(p1 + stroke * 0.05, 0.45, 0.03));
   col = mix(col, grassLight, band(p2 + p1 * 0.4 + stroke * 0.06, 0.78, 0.03) * 0.85);
-  vec3 dry = mix(rgb(182, 160, 92), rgb(204, 182, 112), band(p2, 0.5, 0.05));
+  vec3 dry = mix(uDry[0], uDry[1], band(p2, 0.5, 0.05));
   float dryness = band(mo + (p2 - 0.5) * 0.15, 0.3, 0.03);
   col = mix(dry, col, dryness);
   col *= 1.0 + stroke * 0.06;
@@ -71,11 +77,11 @@ void main() {
   float tier = floor(hs);
   float f = fract(hs);
   float face = smoothstep(0.78, 0.9, f) * band(m, 0.42, 0.05);   // the riser of each step
-  vec3 rockTop = mix(rgb(150, 138, 118), rgb(176, 166, 146), band(p2, 0.5, 0.1));
-  vec3 rockFace = mix(rgb(112, 96, 80), rgb(92, 78, 66), stroke + 0.5);
+  vec3 rockTop = mix(uRock[0], uRock[0] * 1.17, band(p2, 0.5, 0.1));
+  vec3 rockFace = mix(uRock[1], uRock[1] * 0.83, stroke + 0.5);
   float rocky = smoothstep(1.5, 3.0, tier);
-  vec3 top = mix(mix(col, rgb(124, 150, 64), 0.5), rockTop, rocky);
-  top = mix(top, rgb(236, 240, 244), smoothstep(5.0, 5.6, hs) * band(m, 0.6, 0.05)); // snow caps
+  vec3 top = mix(mix(col, uGrass[1], 0.5), rockTop, rocky);
+  top = mix(top, rgb(236, 240, 244), smoothstep(5.0, 5.6, hs) * band(m, 0.6, 0.05) * uCaps); // snow caps
   float inM = band(m, 0.42, 0.04);
   col = mix(col, top, inM);
   // the cliff face, lit by which way it faces
@@ -89,7 +95,7 @@ void main() {
 
   // ---- forest floor: deep shaded green under the trees, a dark rim where the wood starts
   float wood = band(C.z, 0.4, 0.06);
-  col = mix(col, mix(rgb(52, 88, 30), rgb(66, 104, 36), band(p2, 0.5, 0.1)), wood);
+  col = mix(col, mix(uWood[0], uWood[1], band(p2, 0.5, 0.1)), wood);
   col = mix(col, grassDark * 0.8, band(C.z, 0.18, 0.06) * (1.0 - wood) * 0.5);
 
   // ---- light: flat-banded (cel) sun, soft cool shadows
@@ -101,7 +107,7 @@ void main() {
 
   // ---- water: sandy bank, white foam line, bright teal that deepens, painted wave strokes
   float bank = band(water, 0.36, 0.04) * (1.0 - band(water, 0.5, 0.01));
-  col = mix(col, rgb(214, 196, 140), bank);
+  col = mix(col, uBank, bank);
   float wet = band(water, 0.5, 0.01);
   if (wet > 0.0) {
     float d = clamp(depth / 2.0, 0.0, 1.0);
@@ -177,7 +183,22 @@ function context(): Shared | null {
  * Paints the landscape at `res` canvas px per world px into a new 2D canvas, or returns null when
  * WebGL2 isn't available.
  */
-export function renderGround(L: Landscape, res: number): HTMLCanvasElement | null {
+/** Ground palettes: [grass dark, mid, light], [dry, dry light], [forest floor ×2], river bank (0-255). */
+type Rgb = [number, number, number];
+export type GroundTheme = 'summer' | 'temperate' | 'snow' | 'desert' | 'volcanic' | 'jungle' | 'steppe' | 'ruins';
+const THEMES: Record<GroundTheme, { grass: Rgb[]; dry: Rgb[]; wood: Rgb[]; bank: Rgb; rock?: Rgb[]; caps?: number }> = {
+  summer: { grass: [[86, 128, 40], [118, 162, 52], [156, 190, 70]], dry: [[182, 160, 92], [204, 182, 112]], wood: [[52, 88, 30], [66, 104, 36]], bank: [214, 196, 140] },
+  // summer without the snow-capped peaks: low hills and bluffs
+  temperate: { grass: [[86, 128, 40], [118, 162, 52], [156, 190, 70]], dry: [[182, 160, 92], [204, 182, 112]], wood: [[52, 88, 30], [66, 104, 36]], bank: [214, 196, 140], caps: 0 },
+  snow: { grass: [[196, 206, 214], [222, 230, 236], [244, 248, 250]], dry: [[206, 210, 206], [226, 228, 224]], wood: [[64, 84, 70], [86, 104, 92]], bank: [206, 212, 216] },
+  desert: { grass: [[196, 164, 104], [216, 188, 126], [232, 210, 152]], dry: [[206, 176, 116], [226, 198, 140]], wood: [[110, 112, 64], [132, 132, 76]], bank: [228, 210, 160], rock: [[188, 152, 104], [140, 104, 70]], caps: 0 },
+  volcanic: { grass: [[56, 54, 52], [78, 74, 70], [102, 96, 88]], dry: [[88, 80, 72], [112, 102, 90]], wood: [[60, 82, 44], [76, 98, 52]], bank: [96, 90, 84], rock: [[96, 88, 82], [64, 56, 52]], caps: 0 },
+  jungle: { grass: [[56, 104, 34], [76, 132, 42], [104, 158, 56]], dry: [[150, 146, 86], [170, 164, 100]], wood: [[30, 66, 24], [42, 80, 30]], bank: [190, 176, 126], caps: 0 },
+  steppe: { grass: [[150, 150, 76], [176, 170, 92], [204, 194, 118]], dry: [[196, 174, 104], [214, 194, 124]], wood: [[64, 92, 40], [80, 108, 48]], bank: [210, 194, 140] },
+  ruins: { grass: [[110, 104, 92], [134, 126, 112], [158, 150, 134]], dry: [[150, 136, 114], [170, 156, 132]], wood: [[66, 74, 52], [82, 90, 64]], bank: [170, 160, 140] },
+};
+
+export function renderGround(L: Landscape, res: number, theme: GroundTheme = 'summer'): HTMLCanvasElement | null {
   const ctx = context();
   if (!ctx) return null;
   const { gl, prog, canvas } = ctx;
@@ -230,6 +251,14 @@ export function renderGround(L: Landscape, res: number): HTMLCanvasElement | nul
   gl.uniform2f(gl.getUniformLocation(prog, 'uWorld'), MAP_W, MAP_H);
   gl.uniform2f(gl.getUniformLocation(prog, 'uHeight'), hMin, hMax);
   gl.uniform3f(gl.getUniformLocation(prog, 'uSun'), ...SUN);
+  const T = THEMES[theme] ?? THEMES.summer;
+  const v = (cs: Rgb[]) => new Float32Array(cs.flatMap((c) => c.map((x) => x / 255)));
+  gl.uniform3fv(gl.getUniformLocation(prog, 'uGrass'), v(T.grass));
+  gl.uniform3fv(gl.getUniformLocation(prog, 'uDry'), v(T.dry));
+  gl.uniform3fv(gl.getUniformLocation(prog, 'uWood'), v(T.wood));
+  gl.uniform3fv(gl.getUniformLocation(prog, 'uBank'), v([T.bank]));
+  gl.uniform3fv(gl.getUniformLocation(prog, 'uRock'), v(T.rock ?? [[150, 138, 118], [112, 96, 80]]));
+  gl.uniform1f(gl.getUniformLocation(prog, 'uCaps'), T.caps ?? 1);
   gl.viewport(0, 0, w, h);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 

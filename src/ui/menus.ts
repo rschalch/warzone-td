@@ -8,6 +8,7 @@ import { DIFFICULTIES, MODIFIERS, PERKS, type Difficulty, type GameConfig, type 
 import { TOTAL_WAVES } from '../game/defs';
 import { rulesetFor } from '../game/rules';
 import { ARMIES, ARSENALS, FACTIONS, type Faction } from '../game/ww2';
+import { BATTLES, type Battle } from '../game/battles';
 import { MAP_SIZES, dailySetup, mapCode, parseMapCode, randomMap, today, type MapSize, type RandomMapOptions } from '../game/mapgen';
 import { MAPS, type MapDef } from '../game/maps';
 import { PARTNER_ROLES } from '../game/partner';
@@ -75,6 +76,7 @@ export async function showMain(): Promise<void> {
         ${active ? '<button data-go="resume" class="primary big">Resume game</button>' : ''}
         ${saved && !active ? '<button data-go="continue" class="primary big">Continue saved game</button>' : ''}
         <button data-go="maps" class="${active || saved ? '' : 'primary '}big">Campaign maps</button>
+        <button data-go="ww2" class="big">WW2 Campaign</button>
         <button data-go="random">Random map</button>
         <button data-go="daily">Daily challenge</button>
         <button data-go="custom">Custom maps</button>
@@ -93,6 +95,7 @@ export async function showMain(): Promise<void> {
     if (go === 'resume') host.resumeCurrent();
     else if (go === 'continue') host.continueSave();
     else if (go === 'maps') showMaps();
+    else if (go === 'ww2') showCampaign();
     else if (go === 'ai') showMaps(PARTNER_ROLES[1].share);
     else if (go === 'random') showRandom();
     else if (go === 'daily') showDaily();
@@ -135,6 +138,85 @@ export function showMaps(partner?: number): void {
   show(`<div class="card"><h2>${title}</h2>${mapCards(MAPS)}<div class="actions">${back}</div></div>`);
   bindCards(MAPS, (def) => showSetup(def, { partner }));
   bindBack();
+}
+
+// ---------------------------------------------------------------- WW2 campaign
+
+/** The best result on a battle: "★★ Normal" for the hardest difficulty won, or the furthest wave. */
+function battleRecord(b: Battle): string {
+  const list = getProfile().scores[b.map.name] ?? [];
+  const order: Difficulty[] = ['brutal', 'hard', 'normal', 'easy'];
+  const won = order.find((d) => list.some((e) => e.win && e.difficulty === d));
+  if (won) return `<span class="medal">${'★'.repeat(DIFFICULTIES[won].medals)} won on ${DIFFICULTIES[won].name}</span>`;
+  const best = list.reduce((a, e) => Math.max(a, e.wave), 0);
+  return best ? `best: wave ${best}/${b.waves}` : 'not yet fought';
+}
+
+export function showCampaign(): void {
+  show(`<div class="card"><h2>WW2 Campaign</h2>
+    <p class="d">The great battles of the war, each on its own ground, with the weapons of that time and place.</p>
+    <div class="maps">${BATTLES.map((b, i) => `
+      <button data-battle="${i}"><canvas width="240" height="160"></canvas><b>${esc(b.name)}</b>
+        <span class="size">${esc(b.place)} · ${b.waves} waves</span>
+        <span class="d">${FACTIONS[b.side].name} against ${FACTIONS[b.foe].name}${b.objective ? ` · keep ${esc(b.objective.name)}` : ''}</span>
+        <span class="d">${battleRecord(b)}</span></button>`).join('')}</div>
+    <div class="actions">${back}</div></div>`);
+  overlay.querySelectorAll<HTMLButtonElement>('[data-battle]').forEach((el) => {
+    const b = BATTLES[Number(el.dataset.battle)];
+    paintPreview(el.querySelector('canvas')!, b.map);
+    el.onclick = () => showBriefing(b);
+  });
+  bindBack();
+}
+
+function showBriefing(b: Battle): void {
+  let difficulty: Difficulty = lastDifficulty;
+  const render = () => {
+    const extras = [
+      b.objective ? `Keep <b>${esc(b.objective.name)}</b> standing: if it falls, the battle is lost.` : '',
+      b.airFrom ? `The weather grounds your aircraft until wave ${b.airFrom}.` : '',
+      b.banned?.length ? `Not available here: ${b.banned.map((sl) => rulesetFor({ side: b.side, foe: b.foe }).towers.find((t) => t.slot === sl)?.short).join(', ')}.` : '',
+      b.preset?.length ? 'Some positions are already dug in.' : '',
+    ].filter(Boolean).map((t) => `<li>${t}</li>`).join('');
+    show(`
+      <div class="card setup">
+        <h2>${esc(b.name)} <span class="tag">${esc(b.place)}</span></h2>
+        <div class="setup-row"><canvas width="300" height="200"></canvas>
+          <div>
+            <h3>${FACTIONS[b.side].name} against ${FACTIONS[b.foe].name}</h3>
+            <p>${esc(b.brief)}</p>
+            <ul class="d">${extras}<li>Hold for ${b.waves} waves.</li></ul>
+            <h3>Difficulty</h3>
+            <div class="seg wide">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<button data-diff="${d}" class="${d === difficulty ? 'on' : ''}">${DIFFICULTIES[d].name}</button>`).join('')}</div>
+            <p class="d">${DIFFICULTIES[difficulty].lives} lives · enemy HP ×${DIFFICULTIES[difficulty].hp} · start money ×${DIFFICULTIES[difficulty].money} · ${DIFFICULTIES[difficulty].medals} ★ for a win${difficulty === 'easy' ? ' · the enemy never breaches walls' : ''}</p>
+          </div>
+        </div>
+        <div class="actions"><button data-start class="primary">Deploy</button>${back}</div>
+      </div>`);
+    paintPreview(overlay.querySelector('canvas')!, b.map);
+    on('[data-diff]', (el) => {
+      difficulty = el.dataset.diff as Difficulty;
+      render();
+    });
+    on('[data-start]', () => {
+      lastDifficulty = difficulty;
+      const perks: Record<string, number> = {};
+      for (const p of PERKS) if (perkLevel(p.id)) perks[p.id] = perkLevel(p.id);
+      const ww2 = { side: b.side, foe: b.foe, battle: b.id };
+      const towers = rulesetFor(ww2).towers;
+      host.start({
+        map: b.map,
+        difficulty,
+        modifiers: [],
+        allowed: b.banned ? towers.map((_, i) => i).filter((i) => !b.banned!.includes(towers[i].slot as never)) : undefined,
+        perks,
+        seed: Math.floor(Math.random() * 1e9),
+        ww2,
+      });
+    });
+    bindBack(() => showCampaign());
+  };
+  render();
 }
 
 function showCustom(): void {

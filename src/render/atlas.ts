@@ -600,7 +600,17 @@ function drawWaterDetail(g: CanvasRenderingContext2D, map: GameMap, rng: Rng): v
 const TERRAIN_MAX_PX = 12e6;
 
 /** Scenery models, indexed by Scenery.k. */
-export const SCENERY = ['tree0', 'tree1', 'tree2', 'pine0', 'pine1', 'bush0', 'bush1'];
+export const SCENERY = ['tree0', 'tree1', 'tree2', 'pine0', 'pine1', 'bush0', 'bush1', 'snowpine0', 'snowpine1', 'palm0', 'palm1', 'scrub0', 'scrub1'];
+
+/** The trees of a theatre: index k of the summer set (3 broadleaf, 2 pines, 2 bushes) becomes this one. */
+function theatreTree(k: number, theme: string | undefined, rng: Rng): number {
+  switch (theme) {
+    case 'snow': return k < 5 ? 7 + (k % 2) : k;
+    case 'desert': case 'volcanic': return 11 + (k % 2);
+    case 'jungle': return k < 3 && rng.next() < 0.6 ? 9 + (k % 2) : k;
+    default: return k;
+  }
+}
 export interface Scenery {
   x: number;
   y: number;
@@ -625,7 +635,7 @@ export function scenery(map: GameMap): Scenery[] {
     for (let k = 0; k < 3; k++) {
       if (k === 2 && rng.next() < 0.5) continue;
       const kind = d === 1 && rng.next() < 0.3 ? 5 + rng.int(2) : rng.next() < 0.22 ? 3 + rng.int(2) : rng.int(3);
-      out.push({ x: (c + rng.range(0.1, 0.9)) * TILE, y: (r + rng.range(0.1, 0.9)) * TILE, k: kind });
+      out.push({ x: (c + rng.range(0.1, 0.9)) * TILE, y: (r + rng.range(0.1, 0.9)) * TILE, k: theatreTree(kind, map.def.theme, rng) });
     }
   }
   for (let i = 0; i < depth.length; i++) {
@@ -637,7 +647,7 @@ export function scenery(map: GameMap): Scenery[] {
     for (let k = 0; k < n; k++) {
       if (rng.next() < (d <= 2 ? 0.15 : 0.55)) continue;
       const kind = d <= 1 ? (rng.next() < 0.3 ? 5 + rng.int(2) : rng.int(3)) : d === 2 ? rng.int(3) + (rng.next() < 0.4 ? 3 - rng.int(3) + rng.int(2) : 0) : 3 + rng.int(2);
-      out.push({ x: (c + rng.range(0.1, 0.9)) * TILE, y: (r + rng.range(0.1, 0.9)) * TILE, k: Math.min(SCENERY.length - 1, kind) });
+      out.push({ x: (c + rng.range(0.1, 0.9)) * TILE, y: (r + rng.range(0.1, 0.9)) * TILE, k: theatreTree(Math.min(6, kind), map.def.theme, rng) });
     }
   }
   return out;
@@ -652,7 +662,7 @@ function landscapeOf(map: GameMap, sub: number): Landscape {
 }
 /** Ground (from a landscape) plus the markings, rendered into one texture; null without WebGL2. */
 function composeBackground(map: GameMap, renderer: Renderer, L: Landscape, res: number): Texture | null {
-  const painted = renderGround(L, res);
+  const painted = renderGround(L, res, map.def.theme);
   if (!painted) return null;
   const root = new Container();
   const ground = Texture.from(painted);
@@ -727,7 +737,7 @@ export function drawTerrain(map: GameMap, res: number, solidRocks = false, groun
 
   if (ground) {
     // small overviews: the same landscape, cheaply (the battlefield's if it exists, else a coarse one)
-    const painted = renderGround(landscapeOf(map, 1), res);
+    const painted = renderGround(landscapeOf(map, 1), res, map.def.theme);
     if (painted) g.drawImage(painted, 0, 0, MAP_W, MAP_H);
     else flatGround(g, map);
   }

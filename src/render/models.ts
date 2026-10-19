@@ -359,6 +359,75 @@ for (let v = 0; v < 2; v++) {
   const lumps = Array.from({ length: 4 }, (_, i) => ({ x: Math.cos(i * 1.7) * 2.6, y: Math.sin(i * 1.7) * 2, r: rng.range(2.2, 3.2) }));
   model(`bush${v}`, 7, 1, [P(0, 3.5, (g) => leafy(g, lumps, '#2e5c1e', v ? '#5c9a34' : '#4f8c30', v ? '#a6d45e' : '#8cc650', true))]);
 }
+
+// theatre variants (picked by the map's ground theme): snowy pines, palms, dry scrub, ruined walls
+for (let v = 0; v < 2; v++) {
+  const size = 6 + v * 1.5;
+  model(`snowpine${v}`, size + 3, 1, [
+    P(0, 3, (g) => circ(g, 0, 0, 1.3, '#4e3420')),
+    ...[0, 1, 2, 3].map((k) => P(3 + k * 3, 6 + k * 3, (g) => {
+      const r = size * (1 - k * 0.22);
+      const pts: number[] = [];
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const rr = i % 2 ? r * 0.72 : r;
+        pts.push(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      poly(g, pts, rgrad(g, -r * 0.3, -r * 0.3, r * 1.2, [[0, '#f4f8fa'], [0.45, '#d8e4ea'], [0.7, '#3e6a4a'], [1, '#1d3c26']]), OUTLINE);
+    })),
+  ]);
+}
+for (let v = 0; v < 2; v++) {
+  const size = 7 + v * 1.5;
+  const rng = new Rng(1300 + v);
+  const lean = rng.range(-0.5, 0.5);
+  model(`palm${v}`, size + 3, 1, [
+    P(0, 12, (g, z) => circ(g, Math.cos(lean) * z * 0.25, Math.sin(lean) * z * 0.25, 1.1, '#7a5a34'), true), // the trunk, leaning
+    P(12, 14, (g) => {
+      const cx = Math.cos(lean) * 3;
+      const cy = Math.sin(lean) * 3;
+      for (let k = 0; k < 7; k++) {
+        const a = (k / 7) * Math.PI * 2 + rng.range(-0.2, 0.2);
+        g.save();
+        g.translate(cx, cy);
+        g.rotate(a);
+        g.beginPath();
+        g.ellipse(size * 0.5, 0, size * 0.55, 1.5, 0, 0, Math.PI * 2);
+        finish(g, grad(g, 0, -1.5, 0, 1.5, [[0, '#8cc84e'], [1, '#2e6a24']]), OUTLINE, 0.5);
+        g.restore();
+      }
+      circ(g, cx, cy, 1.2, '#6a4a28', null); // coconuts
+    }),
+  ]);
+}
+for (let v = 0; v < 2; v++) {
+  const rng = new Rng(1400 + v);
+  const lumps = Array.from({ length: 4 }, (_, i) => ({ x: Math.cos(i * 1.7) * 2.4, y: Math.sin(i * 1.7) * 1.8, r: rng.range(1.8, 2.8) }));
+  model(`scrub${v}`, 6, 1, [P(0, 2.5, (g) => leafy(g, lumps, '#4a4224', v ? '#7a7040' : '#6a6436', v ? '#b0a466' : '#9c925a', true))]);
+}
+// ruined houses for the city battles, in place of rocks: broken brick walls and rubble
+for (const [name, size] of [['ruin1', 9], ['ruin2', 19]] as const) {
+  const rng = new Rng(size * 7);
+  const walls = Array.from({ length: size > 10 ? 3 : 2 }, () => ({
+    x: rng.range(-size * 0.5, size * 0.3), y: rng.range(-size * 0.5, size * 0.3), w: rng.range(size * 0.4, size * 0.9), h: rng.range(6, size > 10 ? 16 : 10), a: rng.int(2) * (Math.PI / 2),
+  }));
+  model(name, size + 2, 1, [
+    P(0, 2, (g) => {
+      const r2 = new Rng(size);
+      for (let k = 0; k < size; k++) box(g, r2.range(-size * 0.7, size * 0.6), r2.range(-size * 0.7, size * 0.6), r2.range(1.5, 3.5), r2.range(1.2, 2.6), 0.5, k % 3 ? '#8a5a44' : '#9a948a'); // rubble
+    }),
+    ...walls.map((w) => P(0, w.h, (g, z) => {
+      g.save();
+      g.rotate(w.a);
+      const top = w.h - z < 1;
+      // ragged top: the wall is broken off at different heights
+      const len = w.w * (top ? 0.6 : 1);
+      box(g, w.x, w.y, len, 2, 0.3, top ? '#c08a6a' : '#a0644c', top ? OUTLINE : null);
+      if (Math.floor(z) % 3 === 0) line(g, [w.x, w.y + 1, w.x + len, w.y + 1], 'rgba(0,0,0,0.25)', 0.3); // brick courses
+      g.restore();
+    }, true)),
+  ]);
+}
 setModelSet('classic');
 
 // ================================================================ towers

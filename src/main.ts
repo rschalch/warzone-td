@@ -8,7 +8,7 @@ import { idbGet, idbSet } from './app/storage';
 import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
-import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOTAL_WAVES, TOWERS, UNITS, WW2 } from './game/defs';
+import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode } from './game/mapgen';
 import { PARTNER } from './game/partner';
@@ -17,6 +17,7 @@ import {
   EV_ABILITY, EV_BOOM, EV_BUILD, EV_DENY, EV_HIT, EV_ITEM, EV_LEAK, EV_LEVEL, EV_NUKE, EV_SELL, EV_SHOT, EV_SIZE, EV_STATUS,
   AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, HERO_ABILITIES, MAX_UNITS, type Sim, type Tower,
 } from './game/sim';
+import { BATTLES } from './game/battles';
 import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, setsFor, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
@@ -495,6 +496,16 @@ interface SaveData {
 
 // ---------------------------------------------------------------- end of game
 
+const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** "Pavlov's House has fallen" when a battle was lost with its objective. */
+function objectiveLost(s: Sim): string | null {
+  const o = s.battle?.objective;
+  if (!o || !s.objectiveId) return null;
+  const t = s.tower(s.objectiveId);
+  return t?.wreck ? `${o.name} has fallen (wave ${s.wave})` : null;
+}
+
 async function showEnd(win: boolean): Promise<void> {
   endShown = true;
   const s = session!.sim;
@@ -506,7 +517,7 @@ async function showEnd(win: boolean): Promise<void> {
   let medals = 0;
   if (!replayMode) {
     const entry = { score, wave: s.wave, kills: s.totalKills, win: finalWin, difficulty: cfg.difficulty, modifiers: cfg.modifiers, date: new Date().toISOString().slice(0, 10) };
-    medals = recordGame(cfg, entry, endlessFrom ? s.wave - TOTAL_WAVES : 0, !endlessFrom);
+    medals = recordGame(cfg, entry, endlessFrom ? s.wave - s.totalWaves : 0, !endlessFrom);
     void idbSet('save', undefined);
   }
   const board = getProfile().scores[cfg.map.name] ?? [];
@@ -515,7 +526,8 @@ async function showEnd(win: boolean): Promise<void> {
   overlay.innerHTML = `
     <div class="card" style="max-width:460px;text-align:center">
       <h1>${replayMode ? 'REPLAY ENDED' : win ? 'VICTORY' : endlessFrom ? 'OVERRUN' : 'DEFEAT'}</h1>
-      <p>${win ? `All ${TOTAL_WAVES} waves repelled` : `Wave ${s.wave}`} · ${s.totalKills} kills · ${DIFFICULTIES[cfg.difficulty].name}</p>
+      ${s.battle ? `<h2>${esc(s.battle.name)}</h2>` : ''}
+      <p>${win ? `${s.battle ? `${s.battle.name} held! ` : ''}All ${s.totalWaves} waves repelled` : objectiveLost(s) ?? `Wave ${s.wave}`} · ${s.totalKills} kills · ${DIFFICULTIES[cfg.difficulty].name}</p>
       <p class="score">Score <b>${score}</b>${rank && !replayMode ? ` · #${rank} on this map` : ''}</p>
       ${medals ? `<p class="medal">+${medals} ★ research medals</p>` : ''}
       <div class="actions" style="justify-content:center;flex-wrap:wrap">
@@ -1216,6 +1228,7 @@ async function boot(): Promise<void> {
     /** Tower type and unit kind by name, for scripted checks. */
     towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),
     towerDef: (type: number) => TOWERS[type],
+    BATTLES,
     enemyDef: (kind: number) => ENEMIES[kind],
     MAPS,
     unitIndex: (kind: string) => UNITS.findIndex((u) => u.kind === kind),
