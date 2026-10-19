@@ -5,7 +5,7 @@ import {
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
 import { DIFFICULTIES } from '../game/config';
-import { VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
+import { MODE_AMBUSH, MODE_FLARE, VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
 import { ABILITY_HELP, ABILITY_HELP_WW2, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
 import { T_MOUNT, T_TREE, T_WATER, WATER_SLOW } from '../game/maps';
 import { settings, updateSettings } from '../app/settings';
@@ -115,6 +115,9 @@ function fortName(mm: number): string {
   const what = mm >= 90 ? 'tank armour' : mm >= 60 ? 'concrete' : mm >= 25 ? 'timber & earth' : mm >= 12 ? 'sandbags' : 'gun shield';
   return `${what} (${mm} mm)`;
 }
+
+/** WW2 weather in the wave preview. */
+const WEATHER_WORDS = { clear: 'clear', rain: 'rain — mud slows vehicles', snow: 'snow — everyone slower', fog: 'fog — short sight, no aircraft' } as const;
 
 /** WW2: an attacker's morale in words. */
 function moraleWord(m: number): string {
@@ -425,7 +428,8 @@ export class Hud {
   private updateWaveBox(sim: Sim): void {
     const n = sim.wave + 1;
     const supply = WW2 ? Math.round(sim.foeSupply * 20) * 5 : 100;
-    const key = `${n}:${sim.canCallWave}:${supply}`;
+    const hour = WW2 ? Math.floor(sim.clock) : 0;
+    const key = `${n}:${sim.canCallWave}:${supply}:${hour}`;
     if (this.cache.get(this.waveBox) === key) return;
     this.cache.set(this.waveBox, key);
     if (!sim.canCallWave) {
@@ -441,7 +445,10 @@ export class Hud {
     }).join('');
     // WW2: what their supply column has brought up decides how much of the wave they can arm
     const foe = WW2 ? `<div class="sup${supply < 60 ? ' low' : ''}">Enemy supply ${supply}%${supply < 100 ? ` — wave cut to ${Math.round(50 + supply / 2)}%` : ''}</div>` : '';
-    this.waveBox.innerHTML = `<div class="wt">Next: wave ${n} <span class="hp">HP ×${hp.toFixed(1)}</span></div>${rows}${foe}`;
+    // WW2: the time of day and the weather (night and weather cut sight and range; see Sim.sightMult)
+    const night = sim.night;
+    const sky = WW2 ? `<div class="sup">${night > 0.5 ? 'Night' : night > 0 ? (hour >= 12 ? 'Dusk' : 'Dawn') : 'Day'} ${String(hour).padStart(2, '0')}:00 · ${WEATHER_WORDS[sim.weather]}</div>` : '';
+    this.waveBox.innerHTML = `<div class="wt">Next: wave ${n} <span class="hp">HP ×${hp.toFixed(1)}</span></div>${rows}${foe}${sky}`;
   }
 
   private updateTactical(sim: Sim, ui: UiState): void {
@@ -550,9 +557,11 @@ export class Hud {
       const rows = stats(def, lv, sim.stats(t))
         .map(([k, v], i) => `<tr><td>${k}</td><td>${v}</td><td class="up">${nextRows[i] && nextRows[i][1] !== v ? '→ ' + nextRows[i][1].replace(/ (mm|HP)$| \(max .*\)$/, '') : ''}</td></tr>`)
         .join('');
-      // WW2: camouflaged guns can also wait in ambush
-      const modeNames: string[] = [...TARGET_MODES, ...(WW2 && def.camo ? ['Ambush'] : [])];
-      const modes = !def.targeted ? '' : `<div class="row modes">${modeNames.map((m, i) => `<button data-mode="${i}" class="${t.mode === i ? 'on' : ''}" ${ro}${m === 'Ambush' ? ' title="Hold fire until a tank shows its flank or comes point-blank; the first shot hits 50% harder"' : ''}>${m}</button>`).join('')}</div>`;
+      // WW2: camouflaged guns can also wait in ambush, mortars fire flares at night
+      const modeList: [number, string, string][] = TARGET_MODES.map((m, i) => [i, m, '']);
+      if (WW2 && def.camo) modeList.push([MODE_AMBUSH, 'Ambush', 'Hold fire until a tank shows its flank or comes point-blank; the first shot hits 50% harder']);
+      if (WW2 && def.slot === 'mortar') modeList.push([MODE_FLARE, 'Flares', 'At night, fire flares over the attackers it hears: every gun can see and reach what they light. By day it fires as usual.']);
+      const modes = !def.targeted ? '' : `<div class="row modes${modeList.length > 5 ? ' six' : ''}">${modeList.map(([i, m, tip]) => `<button data-mode="${i}" class="${t.mode === i ? 'on' : ''}" ${ro}${tip ? ` title="${tip}"` : ''}>${m}</button>`).join('')}</div>`;
       const camo = sim.camoOf(t);
       // WW2 supply: what is left in the gun's stock (or the depot's store) and whether anything brings more
       let supplyRow = '';

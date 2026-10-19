@@ -105,6 +105,7 @@ main { flex: 1; display: flex; min-height: 0; }
 #info .row button { flex: 1; padding: 6px 3px; font-size: 12px; }
 #info .row.modes { gap: 4px; }
 #info .row.modes button { font-size: 11px; padding: 5px 1px; }
+#info .row.modes.six { display: grid; grid-template-columns: repeat(3, 1fr); }
 /* one line per button, so a longer label never makes its row taller */
 #info .row:not(.train) button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 #info .row.train { display: grid; grid-template-columns: repeat(3, 1fr); }

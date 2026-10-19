@@ -4,7 +4,7 @@ import {
   type EnemyDef, type EnemyGun, type Role, type SpawnGroup, type TowerLevel,
 } from './defs';
 import { setRuleset } from './rules';
-import { battleById, type Battle } from './battles';
+import { battleById, type Battle, type Weather } from './battles';
 import { DIFFICULTIES, perk, type GameConfig } from './config';
 import type { Command } from './commands';
 import { FlowField } from './flow';
@@ -367,6 +367,24 @@ const FIX_SHOTS = 4;
 const FIX_FADE = 0.01;
 const CB_SHELLS = 5;
 const CB_DMG = 46;
+/** WW2 hulks: knocked-out tanks left on the field (at once), s they stay, damage taken by infantry in their cover, work to clear one. */
+export const MAX_HULKS = 48;
+const HULK_T = 100;
+const HULK_COVER = 0.6;
+const CLEAR_WORK = 6;
+/** An engineer's task clearing the hulk in cell c is -(HULK_TASK + c). */
+const HULK_TASK = 1000;
+/** WW2 day and night: s of game time in a day; how much night shortens direct fire and sight. */
+const DAY_S = 720;
+const NIGHT_RANGE = 0.3;
+const NIGHT_SIGHT = 0.4;
+/** WW2 flares (a mortar mode at night): at once, px they light, s they burn, s between flares. */
+export const MAX_FLARES = 16;
+export const FLARE_R = 170;
+const FLARE_T = 12;
+const FLARE_CD = 9;
+/** The mortar targeting mode that fires flares at night. */
+export const MODE_FLARE = 5;
 /** WW2 sight: how far our emplacements, units and commander see (at least), ticks between fog updates, s an attacker stays seen after firing. */
 const TOWER_SIGHT = 140;
 const UNIT_SIGHT = 130;
@@ -379,6 +397,12 @@ const SUPPLY_TICKS = 30;
 export const MAX_SMOKE = 64;
 const SMOKE_T = 6;
 export const SMOKE_R = 40;
+
+/** WW2 skirmish weather, from the seed (without touching the game's random numbers). */
+function skirmishWeather(seed: number): Weather {
+  const r = new Rng(seed ^ 0x2c1b3c6d).next();
+  return r < 0.55 ? 'clear' : r < 0.72 ? 'rain' : r < 0.86 ? 'fog' : 'snow';
+}
 
 function angleDiff(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -446,6 +470,19 @@ export class Sim {
   garrisonAlive = 0;
   /** WW2 battles: s since the last wave was all in (relief arrives after RELIEF_T). */
   reliefT = 0;
+  /** WW2: the weather of this game, and the hour it started at (the clock runs with the game time). */
+  readonly weather: Weather;
+  private readonly startHour: number;
+  /** WW2 flares in the sky (swap-remove) and the cells they light. */
+  readonly flX = new Float32Array(MAX_FLARES);
+  readonly flY = new Float32Array(MAX_FLARES);
+  readonly flT = new Float32Array(MAX_FLARES);
+  flCount = 0;
+  readonly litGrid = new Uint8Array(COLS * ROWS);
+  /** findTarget(): past this (squared) distance, only lit targets (night; 0 off). */
+  private dimR2 = 0;
+  /** The sight multiplier the towers' part of the fog was built with. */
+  private sightStep = -1;
   /** WW2 supply: s until a headquarters can send the next truck; our trucks' unit kind (-1 none). */
   truckCd = 0;
   private readonly truckKind = UNITS.findIndex((u) => u.truck);
@@ -604,6 +641,19 @@ export class Sim {
   smCount = 0;
   readonly rkShell = new Uint8Array(MAX_ROCKETS); // 1: an artillery shell rather than a rocket
 
+  // ------------------------------------------------------------ WW2: hulks of knocked-out tanks (swap-remove)
+  readonly hkCell = new Int32Array(MAX_HULKS);
+  readonly hkT = new Float32Array(MAX_HULKS);
+  readonly hkBlock = new Uint8Array(MAX_HULKS); // 1: blocks the way (else slows it, like rubble)
+  readonly hkKind = new Int16Array(MAX_HULKS); // the enemy it was, for the renderer
+  readonly hkAng = new Float32Array(MAX_HULKS);
+  private readonly hkWork = new Float32Array(MAX_HULKS); // engineers' or sappers' work on clearing it
+  hkCount = 0;
+  /** Per cell: 0 nothing, 1 a hulk, 2 in the cover of one (next to it). */
+  readonly hulkGrid = new Uint8Array(COLS * ROWS);
+  /** The hulk test (a path search) runs at most once a tick. */
+  private hulkTick = -1;
+
   // ------------------------------------------------------------ WW2: defender units (stable slots)
   readonly uAlive = new Uint8Array(MAX_UNITS);
   readonly uUid = new Int32Array(MAX_UNITS);
@@ -732,6 +782,8 @@ export class Sim {
     this.battle = battleById(config.ww2?.battle);
     this.totalWaves = this.battle?.waves ?? TOTAL_WAVES;
     this.rng = new Rng(config.seed);
+    this.weather = WW2 ? this.battle?.weather ?? skirmishWeather(config.seed) : 'clear';
+    this.startHour = this.battle?.hour ?? 8;
     const diff = DIFFICULTIES[config.difficulty];
     // every extra route splits the defence, so it pays more to hold it
     this.routeFactor = 1 + 0.35 * (map.routes.length - 1);
@@ -927,10 +979,13 @@ export class Sim {
 
   /** WW2 battles: air support and super-weapons are grounded until the weather clears. */
   airLocked(type: number): boolean {
+    const slot = TOWERS[type].slot;
+    const air = slot === 'strike' || slot === 'super' || slot === 'airfield';
+    // fog grounds the aircraft
+    if (air && this.weather === 'fog') return true;
     const b = this.battle;
     if (!b?.airFrom || this.wave >= b.airFrom) return false;
-    const slot = TOWERS[type].slot;
-    return slot === 'strike' || slot === 'super' || slot === 'airfield';
+    return air;
   }
 
   private ev(type: number, x: number, y: number, a = 0, b = 0): void {
@@ -961,6 +1016,8 @@ export class Sim {
   /** The spawn groups of wave n, after modifiers. */
   waveGroups(n: number): SpawnGroup[] {
     let groups = WW2 ? this.adapt(n, buildWave(n)) : buildWave(n);
+    // fog: their aircraft stay on the ground too
+    if (WW2 && this.weather === 'fog') groups = groups.filter((g) => !ENEMIES[g.kind].air);
     // short of supply, the enemy sends what it can arm
     if (WW2 && this.foeSupply < 1) {
       const f = 0.5 + 0.5 * this.foeSupply;
@@ -983,7 +1040,7 @@ export class Sim {
    * (towers as damage sources, drone hives…) are stored as tower ids.
    */
   snapshot(): Record<string, unknown> {
-    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth', 'back', 'backVersion', 'sightBlock', 'losMasks', 'sightVersion']);
+    const SKIP = new Set(['map', 'groundSlow', 'moveCost', 'fields', 'scratch', 'hash', 'qbuf', 'qpool', 'chainHit', 'events', 'towerById', 'config', 'rng', 'vr', 'bfsPrev', 'bfsQ', 'breach', 'breachCost', 'breachBlocked', 'breachVersion', 'foot', 'footCost', 'footBlocked', 'hasTeeth', 'back', 'backVersion', 'losMasks', 'sightVersion']);
     const id = (t: Tower | null) => (t ? t.id : null);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(this)) {
@@ -1408,7 +1465,10 @@ export class Sim {
   /** Camouflage 0..1: nets and scrub from level 4, more at level 7. */
   camoOf(t: Tower): number {
     const c = TOWERS[t.type].camo ?? 0;
-    return c ? Math.min(0.95, c + (t.level >= 3 ? 0.1 : 0) + (t.level >= 6 ? 0.05 : 0)) : 0;
+    // the dark hides everyone a little
+    const dark = 0.25 * this.night;
+    if (!c) return dark > 0.12 && !t.base && TOWERS[t.type].levels[t.level].hp ? dark : 0;
+    return Math.min(0.95, c + (t.level >= 3 ? 0.1 : 0) + (t.level >= 6 ? 0.05 : 0) + dark);
   }
 
   /** Does the enemy not know this emplacement is there (camouflaged, not spotted, not just fired)? */
@@ -1433,12 +1493,12 @@ export class Sim {
       const camo = this.camoOf(t);
       if (!camo || t.wreck || t.knownT > 0) continue;
       const f = 1 - 0.7 * camo;
-      const n = this.hash.query(t.x, t.y, 230 * f + t.size * 10, this.qbuf);
+      const n = this.hash.query(t.x, t.y, 345 * f + t.size * 10, this.qbuf);
       for (let k = 0; k < n; k++) {
         const i = this.qbuf[k];
         if (!this.eAlive[i]) continue;
-        // a tank with infantry round it has more eyes
-        const r = this.spotRange(this.eKind[i]) * f * (this.eEscort[i] ? 1.5 : 1) + t.size * 10;
+        // a tank with infantry round it has more eyes; night and weather cut what anyone sees
+        const r = this.spotRange(this.eKind[i]) * f * (this.eEscort[i] ? 1.5 : 1) * this.sightMult + t.size * 10;
         if ((this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2 <= r * r) {
           t.knownT = KNOWN_T;
           break;
@@ -1559,6 +1619,114 @@ export class Sim {
     return true;
   }
 
+  // ============================================================ WW2: hulks
+
+  /**
+   * A knocked-out tank stays where it died as a hulk: it blocks its cell if no route (and nobody on
+   * the way) depends on it — else it only slows the way, like rubble. Either way it blocks the line
+   * of fire and gives cover to infantry next to it.
+   */
+  private addHulk(i: number): void {
+    if (this.hkCount >= MAX_HULKS) return;
+    const c = this.eCell[i];
+    if (c < 0 || this.hulkGrid[c] === 1 || this.towerAt[c] >= 0 || this.blocked[c] || this.map.grid[c] !== T_BUILD) return;
+    for (const r of this.map.routes) if (r.entry.includes(c) || r.exit.includes(c)) return;
+    let block = 0;
+    if (this.hulkTick !== this.ticks) {
+      // the path check costs a search per route: once a tick at most
+      this.hulkTick = this.ticks;
+      this.blocked[c] = 1;
+      let ok = true;
+      for (let k = 0; k < this.scratch.length && ok; k++) {
+        const f = this.scratch[k];
+        f.compute(this.blocked);
+        for (const e of this.map.routes[k].entry) if (f.dist[e] === Infinity) ok = false;
+      }
+      for (let n = 0; n < this.liveCount && ok; n++) {
+        const j = this.live[n];
+        if (j !== i && this.eAlive[j] && !this.eAir[j] && this.eGar[j] < 0 && this.eCell[j] !== c && this.scratch[this.eRoute[j]].dist[this.eCell[j]] === Infinity) ok = false;
+      }
+      if (ok) {
+        block = 1;
+        for (let k = 0; k < this.fields.length; k++) this.fields[k].copyFrom(this.scratch[k]);
+      } else this.blocked[c] = 0;
+    }
+    const h = this.hkCount++;
+    this.hkCell[h] = c;
+    this.hkT[h] = HULK_T;
+    this.hkBlock[h] = block;
+    this.hkKind[h] = this.eKind[i];
+    this.hkAng[h] = this.eAng[i];
+    this.hkWork[h] = 0;
+    this.hulksChanged(c);
+  }
+
+  /** Hulks burn out and are towed away in time (or cleared sooner by engineers and sappers). */
+  private updateHulks(): void {
+    for (let h = this.hkCount - 1; h >= 0; h--) {
+      const c = this.hkCell[h];
+      if ((this.ticks + h * 11) % 50 === 0 && this.hkT[h] > HULK_T * 0.6) {
+        this.fx(FX_SMOKE, 0, ((c % COLS) + 0.5) * TILE, (((c / COLS) | 0) + 0.5) * TILE, this.vr.range(-6, 6), -16, 2.6, 8, 30, 0.45, 0x3a3632, 0.8, 10);
+      }
+      if ((this.hkT[h] -= DT) <= 0 || this.hkWork[h] >= CLEAR_WORK) this.removeHulk(h);
+    }
+  }
+
+  private removeHulk(h: number): void {
+    const c = this.hkCell[h];
+    const blocking = this.hkBlock[h] === 1;
+    const last = --this.hkCount;
+    this.hkCell[h] = this.hkCell[last];
+    this.hkT[h] = this.hkT[last];
+    this.hkBlock[h] = this.hkBlock[last];
+    this.hkKind[h] = this.hkKind[last];
+    this.hkAng[h] = this.hkAng[last];
+    this.hkWork[h] = this.hkWork[last];
+    if (blocking && this.towerAt[c] < 0) {
+      this.blocked[c] = 0;
+      for (const f of this.fields) f.compute(this.blocked);
+    }
+    this.burst(((c % COLS) + 0.5) * TILE, (((c / COLS) | 0) + 0.5) * TILE, 0x6a6058, 6, FX_SMOKE, 0);
+    this.hulksChanged(c);
+  }
+
+  /**
+   * The hulks changed round cell c: cover and sight-blocking cells, the guns whose line of fire it
+   * may cross (their sight is worked out again), and the maze signal for everything derived from it.
+   */
+  private hulksChanged(c: number): void {
+    this.hulkGrid.fill(0);
+    for (let h = 0; h < this.hkCount; h++) {
+      const k = this.hkCell[h];
+      const col = k % COLS;
+      const row = (k / COLS) | 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const cc = col + dx;
+          const rr = row + dy;
+          if (cc >= 0 && rr >= 0 && cc < COLS && rr < ROWS && !this.hulkGrid[rr * COLS + cc]) this.hulkGrid[rr * COLS + cc] = 2;
+        }
+      }
+    }
+    for (let h = 0; h < this.hkCount; h++) this.hulkGrid[this.hkCell[h]] = 1;
+    const t = this.map.grid[c];
+    this.sightBlock[c] = this.hulkGrid[c] === 1 || t === T_ROCK || t === T_MOUNT || t === T_TREE ? 1 : 0;
+    const x = ((c % COLS) + 0.5) * TILE;
+    const y = (((c / COLS) | 0) + 0.5) * TILE;
+    for (const [id, m] of this.losMasks) if (Math.abs(m.x - x) <= (m.r + 1) * TILE && Math.abs(m.y - y) <= (m.r + 1) * TILE) this.losMasks.delete(id);
+    this.towerVersion++;
+  }
+
+  /** Engineers (ours) or sappers (theirs) at work on the hulk in cell c; true while there is one. */
+  private clearHulk(c: number, work: number): boolean {
+    for (let h = 0; h < this.hkCount; h++) {
+      if (this.hkCell[h] !== c) continue;
+      this.hkWork[h] += work;
+      return true;
+    }
+    return false;
+  }
+
   // ============================================================ WW2: counter-battery
 
   /**
@@ -1588,6 +1756,93 @@ export class Sim {
     }
     for (let k = 0; k < 6; k++) this.fx(FX_SMOKE, 0, this.gX[g], this.gY[g], this.vr.range(-40, 40), this.vr.range(-40, 40), 1.4, 8, 30, 0.6, 0xb8b0a0, 1.5, 8);
     this.ev(EV_ESHOT, this.gX[g], this.gY[g], ENEMY_FX.indexOf('barrage'));
+  }
+
+  // ============================================================ WW2: night and weather
+
+  /** The hour of the day (0-24): it runs with the game, a day in DAY_S s. */
+  get clock(): number {
+    return (this.startHour + (this.time * 24) / DAY_S) % 24;
+  }
+
+  /** 0 in daylight … 1 at night (dusk 18-20 h, dawn 5-7 h). */
+  get night(): number {
+    if (!WW2) return 0;
+    const h = this.clock;
+    if (h >= 7 && h < 18) return 0;
+    if (h >= 20 || h < 5) return 1;
+    return h >= 18 ? (h - 18) / 2 : 1 - (h - 5) / 2;
+  }
+
+  /** How far everyone sees compared with a clear day: night and weather. */
+  get sightMult(): number {
+    return (1 - NIGHT_SIGHT * this.night) * (this.weather === 'fog' ? 0.55 : this.weather === 'rain' ? 0.85 : 1);
+  }
+
+  /** Direct fire reaches this share of its range (night: as far as the crews can see). */
+  get dimMult(): number {
+    return 1 - NIGHT_RANGE * this.night;
+  }
+
+  /** Ground speed in this weather: mud for vehicles, snow for everyone. */
+  private weatherSpeed(inf: boolean): number {
+    return this.weather === 'rain' ? (inf ? 0.95 : 0.8) : this.weather === 'snow' ? 0.85 : 1;
+  }
+
+  /** A mortar in flare mode lights the attackers it hears in the dark. */
+  private fireFlare(t: Tower, range: number): boolean {
+    let best = -1;
+    let bestD = range * range;
+    const n = this.hash.query(t.x, t.y, range, this.qbuf);
+    for (let k = 0; k < n; k++) {
+      const i = this.qbuf[k];
+      if (!this.eAlive[i] || this.eAir[i] || this.litGrid[this.eGCell[i]] || this.eGar[i] >= 0) continue;
+      const d2 = (this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2;
+      if (d2 < bestD) {
+        bestD = d2;
+        best = i;
+      }
+    }
+    if (best < 0 || this.flCount >= MAX_FLARES) return false;
+    const f = this.flCount++;
+    this.flX[f] = this.eX[best] + Math.cos(this.eAng[best]) * 40;
+    this.flY[f] = this.eY[best] + Math.sin(this.eAng[best]) * 40;
+    this.flT[f] = FLARE_T;
+    this.lightFlares();
+    this.aim(t, this.eX[best], this.eY[best]);
+    this.muzzleFlash(t.x, t.y, 10, 0xffffff);
+    this.ev(EV_SHOT, t.x, t.y, t.type);
+    return true;
+  }
+
+  /** Flares burn down; the cells they light are worked out again when they change. */
+  private updateFlares(): void {
+    let gone = false;
+    for (let f = this.flCount - 1; f >= 0; f--) {
+      if ((this.flT[f] -= DT) > 0) continue;
+      const last = --this.flCount;
+      this.flX[f] = this.flX[last];
+      this.flY[f] = this.flY[last];
+      this.flT[f] = this.flT[last];
+      gone = true;
+    }
+    if (gone) this.lightFlares();
+  }
+
+  private lightFlares(): void {
+    this.litGrid.fill(0);
+    const r = Math.ceil(FLARE_R / TILE);
+    for (let f = 0; f < this.flCount; f++) {
+      const c0 = Math.floor(this.flX[f] / TILE);
+      const r0 = Math.floor(this.flY[f] / TILE);
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const c = c0 + dx;
+          const row = r0 + dy;
+          if (c >= 0 && row >= 0 && c < COLS && row < ROWS && dx * dx + dy * dy <= r * r) this.litGrid[row * COLS + c] = 1;
+        }
+      }
+    }
   }
 
   // ============================================================ WW2: line of sight and fog of war
@@ -1658,12 +1913,19 @@ export class Sim {
    * commander see now (raycast round each). Gameplay: the guns fire at what can be seen.
    */
   private updateSight(): void {
+    // night and weather: everyone sees less (the towers' part is redone when that changes)
+    const mult = this.sightMult;
+    const step = Math.round(mult * 20);
+    if (step !== this.sightStep) {
+      this.sightStep = step;
+      this.towerSightVersion = -1;
+    }
     if (this.towerSightVersion !== this.towerVersion) {
       this.towerSightVersion = this.towerVersion;
       this.towerSight.fill(0);
       for (const t of this.towers) {
         if (t.wreck) continue;
-        const range = Math.max(TOWERS[t.type].levels[t.level].range * t.rangeMult, TOWER_SIGHT);
+        const range = Math.max(TOWERS[t.type].levels[t.level].range * t.rangeMult, TOWER_SIGHT) * mult;
         const m = this.losMask(t, range);
         const side = 2 * m.r + 1;
         const c0 = Math.floor(t.x / TILE);
@@ -1697,11 +1959,13 @@ export class Sim {
     };
     for (let u = 0; u < MAX_UNITS; u++) {
       if (!this.uAlive[u]) continue;
-      if (this.uAir[u]) look(this.uX[u], this.uY[u], AIR_SIGHT, false);
-      else look(this.uX[u], this.uY[u], Math.max(UNIT_SIGHT, UNITS[this.uKind[u]].gun?.range ?? 0), true);
+      if (this.uAir[u]) look(this.uX[u], this.uY[u], AIR_SIGHT * mult, false);
+      else look(this.uX[u], this.uY[u], Math.max(UNIT_SIGHT, UNITS[this.uKind[u]].gun?.range ?? 0) * mult, true);
     }
     const h = this.hero;
-    if (h && h.downT <= 0) look(h.x, h.y, UNIT_SIGHT, true);
+    if (h && h.downT <= 0) look(h.x, h.y, UNIT_SIGHT * mult, true);
+    // flares light up the night for everyone
+    if (this.flCount) for (let c = 0; c < COLS * ROWS; c++) if (this.litGrid[c]) this.seenGrid[c] = 1;
     this.sightVersion++;
   }
 
@@ -2371,6 +2635,8 @@ export class Sim {
         }
       }
     };
+    // climbing past a hulk that doesn't block the way
+    for (let h = 0; h < this.hkCount; h++) if (!this.hkBlock[h]) this.tarGrid[this.hkCell[h]] = Math.min(this.tarGrid[this.hkCell[h]], 0.5);
     for (const t of this.towers) {
       const lv = TOWERS[t.type].levels[t.level];
       const buff = lv.buff ?? 0;
@@ -2860,6 +3126,15 @@ export class Sim {
     const c = Math.floor(this.eX[i] / TILE);
     const r = Math.floor(this.eY[i] / TILE);
     if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
+    // a hulk next to them: they blow it apart and clear the way (called every 6 ticks)
+    if (this.hulkGrid[r * COLS + c]) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const k = (r + dy) * COLS + c + dx;
+          if (c + dx >= 0 && c + dx < COLS && r + dy >= 0 && r + dy < ROWS && this.hulkGrid[k] === 1 && this.clearHulk(k, 6 * DT)) return;
+        }
+      }
+    }
     const id = this.towerAt[r * COLS + c];
     const t = id >= 0 ? this.towerById.get(id) : undefined;
     if (!t || (t.kind !== 'mine' && t.kind !== 'wire')) {
@@ -3083,6 +3358,8 @@ export class Sim {
       // veterans keep their heads
       this.uSupp[u] = Math.min(1, this.uSupp[u] + supp * (dug ? 0.5 : 1) * (1 - 0.2 * this.unitVet(u)));
       a *= (1 - 0.35 * this.uSupp[u]) * (dug ? 0.5 : 1);
+      const c = Math.floor(this.uY[u] / TILE) * COLS + Math.floor(this.uX[u] / TILE);
+      if (c >= 0 && c < COLS * ROWS && this.hulkGrid[c]) a *= HULK_COVER;
     }
     a *= 1 - 0.08 * this.unitVet(u);
     if (a <= 0) return;
@@ -3256,13 +3533,14 @@ export class Sim {
     if (this.uLay[u] >= 0) this.layMine(u, moving);
     else if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
     if (d.repair && this.uTask[u] >= 0) this.doRepair(u, d.repair);
+    else if (d.repair && this.uTask[u] <= -HULK_TASK) this.doClear(u);
     if (d.heal) this.doHeal(u, d.heal);
 
     // ---- target
     let t = this.uTgt[u];
     if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
     if (g && think) {
-      const look = stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range;
+      const look = (stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range) * this.dimMult;
       t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range, 2);
       this.uTgt[u] = t;
       if (t >= 0) this.uTuid[u] = this.eUid[t];
@@ -3301,7 +3579,7 @@ export class Sim {
         const dx = tx - x;
         const dy = ty - y;
         const dist = Math.hypot(dx, dy);
-        let sp = d.speed * this.groundSlow[Math.min(COLS * ROWS - 1, Math.max(0, Math.floor(y / TILE) * COLS + Math.floor(x / TILE)))];
+        let sp = d.speed * this.groundSlow[Math.min(COLS * ROWS - 1, Math.max(0, Math.floor(y / TILE) * COLS + Math.floor(x / TILE)))] * this.weatherSpeed(!!d.inf);
         if (d.inf) sp *= 1 - 0.5 * this.uSupp[u];
         const step = sp * DT;
         if (dist <= step) {
@@ -3342,7 +3620,8 @@ export class Sim {
     const tx = this.eX[t];
     const ty = this.eY[t];
     const d2 = (tx - x) ** 2 + (ty - y) ** 2;
-    if (d2 > g.range * g.range) return;
+    // (at night as far as they can see)
+    if (d2 > (g.range * this.dimMult) ** 2) return;
     if (g.still && moving) return;
     const want = Math.atan2(ty - y, tx - x);
     if (!moving) {
@@ -3489,6 +3768,8 @@ export class Sim {
       }
       this.uTask[u] = pick ? pick.id : -1;
       if (pick) this.unitPathTo(u, pick.col - 1, pick.row - 1, pick.col + pick.size, pick.row + pick.size, pick.col, pick.row, pick.col + pick.size - 1, pick.row + pick.size - 1);
+      else if (this.uTask[u] <= -HULK_TASK && this.hulkGrid[-this.uTask[u] - HULK_TASK] === 1) return; // still clearing
+      else if (this.pickHulk(u, ox, oy, bestD)) return;
       else if (this.uStance[u] !== ST_HUNT && (this.uX[u] - this.uPostX[u]) ** 2 + (this.uY[u] - this.uPostY[u]) ** 2 > 14 * 14 && this.uPathI[u] >= this.uPathLen[u]) this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
       return;
     }
@@ -3505,6 +3786,35 @@ export class Sim {
     this.uTask[u] = best;
     if (best === -2) this.unitGoto(u, h!.x, h!.y, 1);
     else if (best >= 0) this.unitGoto(u, this.uX[best], this.uY[best], 1);
+  }
+
+  /** Engineers with nothing to repair go for the nearest hulk within reach of their post, to clear it. */
+  private pickHulk(u: number, ox: number, oy: number, reach2: number): boolean {
+    let best = -1;
+    for (let h = 0; h < this.hkCount; h++) {
+      const c = this.hkCell[h];
+      const d2 = (((c % COLS) + 0.5) * TILE - ox) ** 2 + ((((c / COLS) | 0) + 0.5) * TILE - oy) ** 2;
+      if (d2 < reach2) {
+        reach2 = d2;
+        best = c;
+      }
+    }
+    if (best < 0) return false;
+    const col = best % COLS;
+    const row = (best / COLS) | 0;
+    if (!this.unitPathTo(u, col - 1, row - 1, col + 1, row + 1, col, row, col, row)) return false;
+    this.uTask[u] = -HULK_TASK - best;
+    return true;
+  }
+
+  /** Engineers clearing a hulk they stand next to. */
+  private doClear(u: number): void {
+    const c = -this.uTask[u] - HULK_TASK;
+    const x = ((c % COLS) + 0.5) * TILE;
+    const y = (((c / COLS) | 0) + 0.5) * TILE;
+    if ((x - this.uX[u]) ** 2 + (y - this.uY[u]) ** 2 > (TILE * 1.6) ** 2) return;
+    if (!this.clearHulk(c, DT)) this.uTask[u] = -1;
+    else if ((this.ticks + u) % 12 === 0) this.fx(FX_SPARK, 1, x + this.vr.range(-6, 6), y + this.vr.range(-6, 6), this.vr.range(-40, 40), -40, 0.3, 3, 1, 1, 0xffd070, 4, 8);
   }
 
   /** Engineers at work: hit points back, and rubble raised again once it is a third rebuilt. */
@@ -3665,6 +3975,8 @@ export class Sim {
       }
     }
     if (WW2) {
+      if (this.hkCount) this.updateHulks();
+      if (this.flCount) this.updateFlares();
       this.updateGarrison();
       this.updateConvoy();
       // the HUD's lives counter shows what is left of our headquarters
@@ -3986,7 +4298,7 @@ export class Sim {
         this.eStunT[i] -= DT;
         sp = 0;
       }
-      if (!air) sp *= this.tarGrid[g];
+      if (!air) sp *= this.tarGrid[g] * (WW2 ? this.weatherSpeed(!!def.inf) : 1);
       if (WW2 && def.gun && !this.eRetreat[i] && this.enemyFire(i, def, def.gun)) sp = 0; // halted to fire
       if (!this.eAlive[i]) continue; // a kamikaze dived in
       if (def.inf) {
@@ -4143,6 +4455,7 @@ export class Sim {
     if (src && this.hero && src === this.hero.src) this.gainHeroXp(reward);
     this.ev(EV_KILL, this.eX[i], this.eY[i], this.eKind[i], reward);
     const kind = this.eKind[i];
+    if (WW2 && ENEMIES[kind].arm && !this.eAir[i] && !ENEMIES[kind].fixed) this.addHulk(i);
     const big = ENEMIES[kind].boss ? 3 : ENEMIES[kind].radius >= 10 ? 1.6 : ENEMIES[kind].inf ? 0.6 : 1.1;
     this.explosion(this.eX[i], this.eY[i], big, this.eAir[i] ? AIR_Z : 4);
     this.freeEnemy(i);
@@ -4195,6 +4508,8 @@ export class Sim {
       return a;
     }
     if (def.inf) {
+      // in the cover of a hulk: shots and splinters stop on the steel
+      if (this.hulkGrid[this.eGCell[i]]) a *= HULK_COVER;
       const supp = lv ? lv.supp ?? 0 : src === this.unitSrc ? this.proxySupp : 0;
       if (supp > 0) this.eSupp[i] = Math.min(1, this.eSupp[i] + supp);
       a *= 1 - 0.35 * this.eSupp[i];
@@ -4242,6 +4557,7 @@ export class Sim {
   fireStatus(t: Tower): string {
     const def = TOWERS[t.type];
     if (!def.targeted || def.manual || t.wreck || t.buildT > 0) return '';
+    if (WW2 && t.mode === MODE_FLARE) return this.night > 0.3 ? 'Firing flares over the attackers it hears coming: they light up the night for every gun.' : 'Flares at night; by day it fires as usual (First).';
     const lv = def.levels[t.level];
     const range = lv.range * t.rangeMult;
     const pen = WW2 ? lv.pen ?? 0 : 0;
@@ -4251,8 +4567,10 @@ export class Sim {
     let unseen = 0;
     let blind = 0;
     let fog = 0;
+    let dark = 0;
     let smoke = 0;
     const sight = !WW2 ? 0 : t.kind === 'arty' || t.kind === 'cannon' ? 3 : 1;
+    const dim2 = sight === 1 ? (range * this.dimMult) ** 2 : Infinity;
     let armoured = -1;
     let armD = Infinity;
     for (let n = 0; n < this.liveCount; n++) {
@@ -4262,7 +4580,8 @@ export class Sim {
       if (d2 > range * range) continue;
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       inRange++;
-      if (sight === 1 && !this.towerSees(t, i, range)) blind++;
+      if (d2 > dim2 && !this.eAir[i] && !this.litGrid[this.eGCell[i]]) dark++;
+      else if (sight === 1 && !this.towerSees(t, i, range)) blind++;
       else if (sight === 3 && !this.seen(i)) fog++;
       else if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
       else if (this.eSmoked[i] && d2 > 50 * 50) smoke++;
@@ -4276,6 +4595,7 @@ export class Sim {
         : '';
     }
     if (!inRange) return '';
+    if (dark && dark === inRange) return `Too dark to see that far: ${dark} in range beyond ${Math.round(Math.sqrt(dim2))} px. A mortar firing flares would light them up.`;
     if (blind && blind === inRange) return `No line of sight: ${blind} in range behind trees, hills or ruins.`;
     if (fog && fog === inRange) return `Can't see them: ${fog} in range that nothing of ours has in sight (behind cover, or in the fog).`;
     if (unseen) return `Needs a spotter: ${unseen} in range that nobody sees. It fires at what an observation post sees, or within ${spot} px of itself.`;
@@ -4313,6 +4633,7 @@ export class Sim {
       if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
       if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
       if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
+      if (this.dimR2 && d2 > this.dimR2 && !this.litGrid[this.eGCell[i]] && !this.eAir[i]) continue;
       // WW2 sight: the shooter's own line of sight (1: a tower's mask, 2: a raycast), or anyone's (3: indirect fire)
       if (sight === 1 ? !this.towerSees(this.sightTower!, i, range) : sight === 2 ? !this.eAir[i] && !this.clearLine(x, y, this.eX[i], this.eY[i]) : sight === 3 && !this.seen(i)) continue;
       let s: number;
@@ -4592,9 +4913,22 @@ export class Sim {
     const pen = WW2 ? lv.pen ?? 0 : 0;
     const ambush = t.mode === MODE_AMBUSH;
     // WW2: direct fire needs its own line of sight; mortars and artillery fire at what anyone of ours sees
-    const sight = !WW2 ? 0 : t.kind === 'arty' || t.kind === 'cannon' ? 3 : 1;
+    const indirect = t.kind === 'arty' || t.kind === 'cannon';
+    const sight = !WW2 ? 0 : indirect ? 3 : 1;
+    // at night a mortar in flare mode lights up what it hears coming
+    if (WW2 && t.mode === MODE_FLARE && this.night > 0.3) {
+      if (t.cd <= 0 && this.fireFlare(t, range)) {
+        t.cd = FLARE_CD;
+        this.spend(t, lv.rate);
+      }
+      return;
+    }
+    // at night direct fire only reaches as far as the crews can see, except into the light of a flare
+    const dim = WW2 && !indirect ? this.dimMult : 1;
+    if (dim < 1 && this.flCount) this.dimR2 = (range * dim) ** 2;
     this.sightTower = t;
-    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, ambush ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at', range, sight);
+    const tgt = this.findTarget(t.x, t.y, this.dimR2 ? range : range * dim, def.hitsAir, def.hitsGround, ambush || t.mode === MODE_FLARE ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at', range, sight);
+    this.dimR2 = 0;
     if (tgt < 0) {
       if (t.kind === 'gatling') t.spin = Math.max(0, t.spin - DT * 0.5);
       if (t.kind === 'gatling') t.heat = Math.max(0, t.heat - DT * 0.4);

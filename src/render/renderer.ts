@@ -5,7 +5,7 @@ import type { FlowField } from '../game/flow';
 import {
   AIR_Z, ARC_HEIGHT, BOLT_NODES, EV_BOOM, EV_HIT, EV_KILL, EV_LEVEL, EV_SIZE, EV_STATUS, FX_GLOW, FX_RING, FX_SMOKE, FX_SPARK, MUZZLE_Z, P_ACID, P_AP, P_BULLET,
   MAX_UNITS, P_CRYO, P_FLAK, P_MISSILE, P_NUKE, P_SHELL, UNIT_PATH, Z_HOLE, Z_ORBITAL, type Sim, type Tower,
-  ENEMY_ZONE, MODE_AMBUSH, ST_AMBUSH,
+  ENEMY_ZONE, FLARE_R, MODE_AMBUSH, ST_AMBUSH,
 } from '../game/sim';
 import { DIRS, MODEL_TOP, SCENERY, dirFrame, scenery, type Atlas, type Scenery } from './atlas';
 import { T_WATER } from '../game/maps';
@@ -230,6 +230,9 @@ export class GameRenderer {
   private readonly glow: ParticleLayer;
   private readonly bars: ParticleLayer;
   private readonly beams = new Graphics();
+  /** WW2: the night wash and the weather (rain, snow, fog haze) over the world, below the glows. */
+  private readonly sky = new Graphics();
+  private readonly weatherG = new Graphics();
   private readonly ghost = new Container();
   private readonly ghostBase = new Sprite();
   private readonly ghostTurret = new Sprite();
@@ -358,6 +361,8 @@ export class GameRenderer {
       this.smoke.view,
       this.proj.view,
       this.air.view,
+      this.sky,
+      this.weatherG,
       this.glow.view,
       this.beams,
       this.bars.view,
@@ -382,7 +387,8 @@ export class GameRenderer {
       const a = ev[k + 3];
       const b = ev[k + 4];
       if (type === EV_KILL) {
-        if (settings.wrecks && !ENEMIES[a].air && !ENEMIES[a].inf) this.addMark(this.wrecks, MAX_WRECKS, { x, y, a: Math.random() * TWO_PI, kind: a, t: WRECK_LIFE });
+        // (WW2: knocked-out tanks stay as hulks in the simulation, drawn from there)
+        if (settings.wrecks && !ENEMIES[a].air && !ENEMIES[a].inf && !(WW2 && ENEMIES[a].arm)) this.addMark(this.wrecks, MAX_WRECKS, { x, y, a: Math.random() * TWO_PI, kind: a, t: WRECK_LIFE });
         if (settings.numbers && b > 0) this.floatText(`+$${b}`, x, y, 0xffd84a, 0.9, ENEMIES[a].air ? AIR_Z : 10);
       } else if (type === EV_BOOM) {
         if (settings.wrecks && a >= 0.8) this.addMark(this.scorch, MAX_SCORCH, { x, y, a, kind: 0, t: SCORCH_LIFE });
@@ -464,6 +470,21 @@ export class GameRenderer {
       const a = Math.min(1, m.t / 5) * 0.85;
       if (iso) this.wreckLayer.push(this.enemyFrames[m.kind][dirIndex(m.a) % this.enemyFrames[m.kind].length], sx, sy, 0, 0.95, 0.85, 0x2e2a26, a);
       else this.wreckLayer.push(this.enemyTopTex[m.kind], sx, sy, m.a, 0.95, 0.95, 0x2e2a26, a);
+    }
+    // WW2 hulks: burnt-out tanks that block or slow the way and give cover
+    const s = this.sim;
+    for (let h = 0; h < s.hkCount; h++) {
+      const c = s.hkCell[h];
+      const x = ((c % COLS) + 0.5) * TILE;
+      const y = (((c / COLS) | 0) + 0.5) * TILE;
+      const sx = this.p.x(x, y);
+      const sy = this.p.y(x, y);
+      if (!this.visible(sx, sy)) continue;
+      const k = s.hkKind[h];
+      const a = Math.min(1, s.hkT[h] / 4) * 0.95;
+      const tint = s.hkBlock[h] ? 0x3a3430 : 0x4a443e;
+      if (iso) this.wreckLayer.push(this.enemyFrames[k][dirIndex(s.hkAng[h]) % this.enemyFrames[k].length], sx, sy, 0, 0.95, 0.85, tint, a);
+      else this.wreckLayer.push(this.enemyTopTex[k], sx, sy, s.hkAng[h], 0.95, 0.95, tint, a);
     }
     this.wreckLayer.end();
   }
@@ -587,6 +608,7 @@ export class GameRenderer {
     const airOrder = airSorter.sort();
     for (let k = 0; k < airSorter.n; k++) this.drawItem(airOrder[k], alpha, time);
     this.drawZones(alpha);
+    if (WW2) this.drawSky(time);
     this.world.end();
     this.air.end();
     this.shadows.end();
@@ -1269,6 +1291,51 @@ export class GameRenderer {
         const r = s.stats(t).range;
         if (r > 14) g.circle(t.x, t.y, r).stroke({ width: 1.5, color: 0xffffff, alpha: 0.35 });
       }
+    }
+  }
+
+  /**
+   * WW2 night and weather, drawn over the visible part of the world: a dark blue wash at night (flares
+   * and muzzle flashes glow through it), a grey haze in fog, rain streaks or falling snow. Cosmetic.
+   */
+  private drawSky(time: number): void {
+    const s = this.sim;
+    const g = this.sky;
+    const w = this.weatherG;
+    g.clear();
+    w.clear();
+    const x0 = Number.isFinite(this.vx0) ? this.vx0 : 0;
+    const y0 = Number.isFinite(this.vy0) ? this.vy0 : 0;
+    const x1 = Number.isFinite(this.vx1) ? this.vx1 : MAP_W;
+    const y1 = Number.isFinite(this.vy1) ? this.vy1 : MAP_H;
+    const night = s.night;
+    if (night > 0) g.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: 0x08122e, alpha: 0.5 * night });
+    if (s.weather === 'fog') g.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: 0xc8ccd0, alpha: 0.22 * (1 - 0.5 * night) });
+    else if (s.weather === 'rain') g.rect(x0, y0, x1 - x0, y1 - y0).fill({ color: 0x1a2430, alpha: 0.1 });
+    // flares: a pool of white light under each, swinging gently on its parachute
+    for (let f = 0; f < s.flCount; f++) {
+      const fx = this.p.x(s.flX[f], s.flY[f]) + Math.sin(time * 1.3 + f) * 4;
+      const fy = this.p.y(s.flX[f], s.flY[f]);
+      const life = Math.min(1, s.flT[f] / 2);
+      const k = (FLARE_R * 2.2) / 64;
+      this.glow.push(this.fxTex[FX_GLOW], fx, fy, 0, k, k * (this.iso ? 0.6 : 1), 0xfff4d8, (0.32 + 0.04 * Math.sin(time * 17 + f)) * life, 0.5);
+      this.glow.push(this.fxTex[FX_GLOW], fx, fy - 40 * this.p.lift - (1 - s.flT[f] / 12) * 20, 0, 0.4, 0.4, 0xffffff, 0.95 * life, 0.5);
+    }
+    if (s.weather === 'rain' || s.weather === 'snow') {
+      // a field of streaks or flakes fixed to the view, drifting down
+      const snow = s.weather === 'snow';
+      const n = snow ? 160 : 140;
+      const W = x1 - x0;
+      const H = y1 - y0;
+      for (let k = 0; k < n; k++) {
+        const seed = k * 7919;
+        const px = x0 + ((seed % 997) / 997) * W + (snow ? Math.sin(time * 0.8 + k) * 12 : -time * 60);
+        const py = y0 + ((((seed % 613) / 613) * H + time * (snow ? 45 : 520) * (0.7 + (k % 5) * 0.08)) % H);
+        const x = x0 + ((((px - x0) % W) + W) % W);
+        if (snow) w.circle(x, py, 1.1 + (k % 3) * 0.4).fill({ color: 0xffffff, alpha: 0.75 });
+        else w.moveTo(x, py).lineTo(x - 3, py + 14);
+      }
+      if (!snow) w.stroke({ width: 1, color: 0xa8c0d8, alpha: 0.35 });
     }
   }
 

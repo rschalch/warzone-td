@@ -90,23 +90,18 @@ Three problems the user reported (October 2026). Do these before the realism fea
 - [x] Their battery is hidden until an observer sees it, a recon flight marks it (marks also spot for our
   artillery) or it fires; then our howitzers can take it on.
 
-## 6. Wrecks stay on the field
+## 6. Wrecks stay on the field — done
 
-- [ ] A destroyed tank leaves a hulk: a blocked cell (or a slow one, like rubble) for some time, giving cover
-  to infantry next to it (less damage taken) and blocking line of fire for direct-fire guns.
-- [ ] Engineers (ours) can clear hulks; the enemy's sappers too.
-- Notes: today wrecks are cosmetic (`renderer.wrecks`). A hulk that blocks must go through the same path
-  checks as a tower (it may not cut a route: if it would, make it slow instead of blocked). Saved state:
-  typed arrays of hulk cells and timers.
+- [x] Knocked-out tanks leave hulks (typed arrays, saved): blocking if no route needs the cell, slowing otherwise;
+  cover for infantry next to them (both sides); they block sight and the line of fire.
+- [x] Our engineers clear hulks near their post; the enemy's sappers clear those next to them.
 
-## 7. Night and weather
+## 7. Night and weather — done
 
-- [ ] A day/night cycle over the waves: at night spotting and tower ranges shrink, the camouflage of both sides
-  rises, and flares (a commander ability or a mortar mode) light an area for a while.
-- [ ] Weather per battle and in skirmish: rain / mud (tanks slower, off-road even more), snow (everyone
-  slower, `Moscow`), fog (short sight, no air support: like `airLocked`).
-- Notes: the terrain shader (`terrainGL.ts`) can tint for night and weather; drive it from sim state but never
-  read it back. Battles (`battles.ts`) can set their weather and time of day.
+- [x] A day/night clock through the battle: at night shorter direct fire and sight, more camouflage for everyone;
+  mortars fire flares ("Flares" mode) that light an area for every gun.
+- [x] Weather per battle (and from the seed in skirmish): rain/mud, snow, fog (short sight, no aircraft for either
+  side). Drawn as a night wash, flare light, rain, snow and haze; the wave preview shows the hour and the weather.
 
 ## 8. A moving front
 

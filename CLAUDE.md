@@ -238,6 +238,18 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `fixed: 'arty'`, from the arsenal's howitzer slot) answers with `CB_SHELLS` shells (the `rk*` arrays) and is seen
   for a while. Their battery is the one base position that is hidden (`seen()`) until found: observers, recon marks
   (which also spot for our artillery) or its own fire.
+- Hulks: a knocked-out tank stays (`addHulk()`, the `hk*` arrays, `MAX_HULKS`, `HULK_T` s): its cell is blocked if no
+  route or walking attacker depends on it (one path check per tick at most; else it slows like rubble via
+  `tarGrid`), it blocks sight and fire (`sightBlock`, saved since it changes; the masks of guns round it are
+  dropped), and infantry next to it (`hulkGrid` 2) take `HULK_COVER` damage — ours too. Our engineers clear hulks
+  near their post (`pickHulk()`/`doClear()`, task `-(HULK_TASK + cell)`), the enemy's sappers those next to them.
+  `hulksChanged()` bumps `towerVersion`. The renderer draws hulks from the sim (no cosmetic wreck for armour).
+- Night and weather: `clock` runs with the game time (`DAY_S` per day, from `Battle.hour`, default 8); `night`
+  (0..1, dusk 18-20, dawn 5-7) shortens direct fire (`dimMult`) and everyone's sight (`sightMult`, also fog 0.55,
+  rain 0.85) and adds camouflage to every position (`camoOf`). Mortars in `MODE_FLARE` fire flares at night
+  (`fl*` arrays, `litGrid`): lit cells are seen and in full range (`dimR2` in findTarget). `weather` (`Battle.weather`,
+  skirmish from the seed): rain slows vehicles, snow everyone (`weatherSpeed()`), fog grounds air (`airLocked()`,
+  air groups dropped in `waveGroups()`). Renderer: `drawSky()` (night wash, flare light, rain/snow, fog haze).
 - Music: each faction plays real recordings, public domain on Wikimedia Commons, in `public/music/<faction>/`
   (MP3, loudness-matched). `node scripts/fetch-music.mjs` downloads and converts them and writes
   `public/music/credits.json` (the playlist `sound.ts` reads) and `CREDITS.md`; add a track by adding a line there.

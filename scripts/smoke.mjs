@@ -561,6 +561,96 @@ try {
   });
   check(cb.battery && cb.hidden && cb.answered && cb.revealed, `WW2 counter-battery: their hidden battery (${cb.hidden}) answers our mortar (${cb.answered}) and gives itself away (${cb.revealed})`);
 
+  // hulks: a knocked-out tank stays (blocking or slowing its cell), shelters infantry, blocks fire, is cleared by engineers; saves and restores
+  const hulk = await page.evaluate(() => {
+    const { Sim, session, towerIndex, unitIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const tank = s.spawnEnemy(7, 6);
+    for (let n = 0; n < 60 * 8; n++) s.step();
+    const x = s.eX[tank];
+    const y = s.eY[tank];
+    s.damage(tank, 1e9, true, null, false, 999);
+    const made = s.hkCount === 1;
+    const c = s.hkCell[0];
+    const cx = (c % s.map.def.cols + 0.5) * 20;
+    const cy = (Math.floor(c / s.map.def.cols) + 0.5) * 20;
+    // a rifle squad next to it takes less from the same burst than one in the open
+    const a = s.spawnEnemy(0, 3);
+    const b = s.spawnEnemy(0, 3);
+    s.eX[a] = cx + 20; s.eY[a] = cy; s.eX[b] = cx + 200; s.eY[b] = cy + 200;
+    s.step();
+    const ha = s.eHp[a];
+    const hb = s.eHp[b];
+    s.damage(a, 5, true, null);
+    s.damage(b, 5, true, null);
+    const covered = ha - s.eHp[a] < hb - s.eHp[b];
+    const blocksFire = !s.clearLine(cx - 60, cy, cx + 60, cy);
+    // save and restore with it, the same game afterwards
+    const r = Sim.restore(structuredClone(s.snapshot()));
+    for (let n = 0; n < 300; n++) {
+      s.step();
+      r.step();
+    }
+    const same = s.stateHash() === r.stateHash() && r.hkCount === s.hkCount;
+    // an engineer clears it
+    s.money = 5000;
+    let bar = null;
+    for (let k = 0; k < 900 && !bar; k++) bar = s.place(towerIndex('barracks'), Math.floor(cx / 20) + (k % 30) - 15, Math.floor(cy / 20) + Math.floor(k / 30) - 15, true);
+    let cleared = false;
+    if (bar) {
+      s.exec({ t: 'train', id: bar.id, unit: unitIndex('pioneer') });
+      let sent = false;
+      for (let n = 0; n < 60 * 70 && !cleared; n++) { // (well before it would burn out by itself)
+        s.step();
+        if (!sent && s.unitVersion > 0) {
+          for (let u = 0; u < 192; u++) if (s.uAlive[u]) sent = s.exec({ t: 'unitMove', ids: [s.uUid[u]], x: cx + 30, y: cy });
+        }
+        cleared = s.hkCount === 0;
+      }
+    }
+    return { made, blocks: s.hkBlock[0], covered, blocksFire, same, cleared, x, y };
+  });
+  check(hulk.made && hulk.covered && hulk.blocksFire, `WW2 hulks: a knocked-out tank stays (${hulk.made}), shelters infantry (${hulk.covered}) and blocks fire (${hulk.blocksFire})`);
+  check(hulk.same && hulk.cleared, `WW2 hulks: restore exactly with them (${hulk.same}); engineers clear them (${hulk.cleared})`);
+
+  // night and weather: an MG reaches less far at night, a mortar's flares light the target up again; fog grounds the aircraft
+  const dark = await page.evaluate(() => {
+    const { Sim, session, towerIndex } = window.game;
+    const map = { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 };
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map };
+    const shots = (night, flare) => {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      if (night) s.time = 15 * 30; // 23:00
+      const mg = s.place(towerIndex('mg42'), 30, 30, true);
+      let mortar = null;
+      if (flare) {
+        mortar = s.place(towerIndex('mortar'), 32, 34, true);
+        s.exec({ t: 'mode', id: mortar.id, mode: 5 });
+      }
+      const e = s.spawnEnemy(0, 3);
+      let n = 0;
+      for (let k = 0; k < 60 * 6; k++) {
+        s.eX[e] = s.ePx[e] = mg.x + s.stats(mg).range * 0.9; s.eY[e] = s.ePy[e] = mg.y; s.eSpeed[e] = 0; s.eHp[e] = s.eMaxHp[e];
+        s.step();
+        for (let j = 0; j < s.events.length; j += 5) if (s.events[j] === 0 && s.events[j + 1] === mg.x) n++;
+        s.events.length = 0;
+      }
+      return { n, night: s.night, flares: s.flCount };
+    };
+    const day = shots(false, false);
+    const night = shots(true, false);
+    const lit = shots(true, true);
+    const arnhem = window.game.BATTLES.find((b) => b.id === 'arnhem');
+    const f = Sim.create({ ...cfg, ww2: { side: 'us', foe: 'de', battle: 'arnhem' }, map: arnhem.map });
+    const strike = window.game.towerDef ? Array.from({ length: 30 }, (_, k) => k).find((k) => window.game.towerDef(k)?.slot === 'strike') : -1;
+    return { day: day.n, night: night.n, nightLevel: night.night, lit: lit.n, flares: lit.flares, fog: f.weather === 'fog', grounded: strike >= 0 && f.airLocked(strike), noAir: f.waveGroups(5).every((g) => !window.game.enemyDef(g.kind).air) };
+  });
+  check(dark.day > 0 && dark.night === 0 && dark.nightLevel === 1 && dark.lit > 0 && dark.flares > 0, `WW2 night: an MG fires at 90% of its range by day (${dark.day}), not at night (${dark.night}), again under a mortar's flares (${dark.lit})`);
+  check(dark.fog && dark.grounded && dark.noAir, `WW2 weather: fog at Arnhem grounds our aircraft (${dark.grounded}) and theirs (${dark.noAir})`);
+
   // weapon ranges: one gun per role fires at a soldier at 95% of the range it shows; an MG holds fire at a tank's front and says why
   const ranges = await page.evaluate(() => {
     const { Sim, session, towerIndex } = window.game;

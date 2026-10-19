@@ -35,7 +35,13 @@ export interface Battle {
   airFrom?: number;
   /** Start money multiplier (time to prepare the defence). */
   money?: number;
+  /** The weather (default clear) and the hour the battle starts at (default 8). */
+  weather?: Weather;
+  hour?: number;
 }
+
+/** WW2 weather: rain turns the ground to mud (vehicles slower), snow slows everyone, fog cuts sight and grounds aircraft. */
+export type Weather = 'clear' | 'rain' | 'snow' | 'fog';
 
 // ---------------------------------------------------------------- a tiny terrain painter
 
@@ -241,17 +247,17 @@ export const BATTLES: Battle[] = [
   {
     id: 'moscow', name: 'Moscow', place: 'Moscow, December 1941', year: 1941, side: 'su', foe: 'de', map: moscow(), waves: 20,
     brief: 'Operation Typhoon has brought the Wehrmacht to the gates of Moscow, and the winter has come early. The German columns are frozen and short of everything — but they keep coming. Hold until the Siberian divisions arrive.',
-    foeSpeed: 0.85, roster: { medium2: 7, heavy: 7, boss: 9 }, banned: ['super'],
+    foeSpeed: 0.85, roster: { medium2: 7, heavy: 7, boss: 9 }, banned: ['super'], weather: 'snow', hour: 10,
   },
   {
     id: 'stalingrad', name: 'Stalingrad', place: 'Stalingrad, autumn 1942', year: 1942, side: 'su', foe: 'de', map: stalingrad(), waves: 25,
     brief: '"There is no land beyond the Volga." Every ruined block is a fortress. The 6th Army throws its infantry and pioneers at the city; snipers hunt in the rubble. Keep Pavlov\'s House standing and hold the river bank.',
-    objective: { slot: 'hq', col: 70, row: 26, name: 'Pavlov\'s House' }, roster: { medium2: 7, boss: 9 }, doctrine: { inf: 1.25, armour: 0.7 },
+    objective: { slot: 'hq', col: 70, row: 26, name: 'Pavlov\'s House' }, roster: { medium2: 7, boss: 9 }, doctrine: { inf: 1.25, armour: 0.7 }, hour: 15,
   },
   {
     id: 'alamein', name: 'El Alamein', place: 'El Alamein, July 1942', year: 1942, side: 'us', foe: 'de', map: alamein(), waves: 20,
     brief: 'Rommel\'s Afrika Korps races for Alexandria and the Suez Canal. Between the sea and the impassable Qattara Depression there is one line left to hold. The minefields are already laid.',
-    roster: { medium2: 7, heavy: 7, boss: 9 }, banned: ['super'],
+    roster: { medium2: 7, heavy: 7, boss: 9 }, banned: ['super'], hour: 5,
     preset: [
       ...[0, 1, 2, 3, 4, 5].map((k) => ({ slot: 'atmine' as Slot, col: 54 + (k % 3) * 2, row: 29 + Math.floor(k / 3) * 3 })),
       ...[0, 1, 2, 3].map((k) => ({ slot: 'apmine' as Slot, col: 60 + (k % 2) * 2, row: 30 + Math.floor(k / 2) * 2 })),
@@ -260,12 +266,12 @@ export const BATTLES: Battle[] = [
   {
     id: 'kursk', name: 'Kursk', place: 'Prokhorovka, July 1943', year: 1943, side: 'su', foe: 'de', map: kursk(), waves: 30,
     brief: 'Operation Citadel: the Panthers and Tigers make their debut against the Kursk salient. The Red Army has had three months to dig belts of anti-tank guns and mines. Build a Pakfront deep enough to stop the greatest tank battle in history.',
-    doctrine: { inf: 0.8, armour: 1.4 }, money: 1.4,
+    doctrine: { inf: 0.8, armour: 1.4 }, money: 1.4, hour: 7,
   },
   {
     id: 'omaha', name: 'Omaha Beach', place: 'Normandy, 6 June 1944', year: 1944, side: 'de', foe: 'us', map: omaha(), waves: 20,
     brief: 'D-Day. The Allied landing craft are coming in on the beach under your bluffs. The Atlantic Wall bunkers and hedgehogs are in place; the draws are the only ways up. Few tanks make it ashore — the infantry come in waves.',
-    doctrine: { inf: 1.35, armour: 0.5, air: 1.4 },
+    doctrine: { inf: 1.35, armour: 0.5, air: 1.4 }, weather: 'rain', hour: 6,
     preset: [
       { slot: 'bunker', col: 16, row: 38, level: 2 }, { slot: 'bunker', col: 48, row: 38, level: 2 }, { slot: 'bunker', col: 78, row: 38, level: 2 },
       { slot: 'mg', col: 22, row: 38 }, { slot: 'mg', col: 72, row: 38 },
@@ -275,22 +281,22 @@ export const BATTLES: Battle[] = [
   {
     id: 'bocage', name: 'Normandy Bocage', place: 'Saint-Lô, July 1944', year: 1944, side: 'de', foe: 'us', map: bocage(), waves: 25,
     brief: 'Behind the beaches the Allies are stuck in the hedgerow country: every small field is a fortress. The enemy rules the sky — the fighter-bombers come every wave.',
-    doctrine: { inf: 1.0, armour: 0.9, air: 1.7 },
+    doctrine: { inf: 1.0, armour: 0.9, air: 1.7 }, weather: 'rain', hour: 9,
   },
   {
     id: 'arnhem', name: 'Arnhem', place: 'Arnhem, September 1944', year: 1944, side: 'us', foe: 'de', map: arnhem(), waves: 15,
     brief: 'Market Garden: the paratroopers hold the north end of the bridge and wait for XXX Corps. They have no tanks and no heavy guns, and two SS Panzer divisions are refitting nearby. Keep the bridge until relieved.',
-    objective: { slot: 'hq', col: 52, row: 36, name: 'Arnhem Bridge' }, banned: ['tank', 'motorpool', 'heavyaa', 'howitzer', 'rockets', 'super'], money: 1.3,
+    objective: { slot: 'hq', col: 52, row: 36, name: 'Arnhem Bridge' }, banned: ['tank', 'motorpool', 'heavyaa', 'howitzer', 'rockets', 'super'], money: 1.3, weather: 'fog', hour: 11,
   },
   {
     id: 'bastogne', name: 'Bastogne', place: 'The Ardennes, December 1944', year: 1944, side: 'us', foe: 'de', map: bastogne(), waves: 25,
     brief: 'The Battle of the Bulge. The 101st Airborne is surrounded in Bastogne, attacked from every side by King Tigers in the snow. The sky is closed: no air support until the weather clears. "Nuts!"',
-    objective: { slot: 'hq', col: 96, row: 33, name: '101st Airborne HQ' }, airFrom: 12,
+    objective: { slot: 'hq', col: 96, row: 33, name: '101st Airborne HQ' }, airFrom: 12, weather: 'snow', hour: 13,
   },
   {
     id: 'guadalcanal', name: 'Guadalcanal', place: 'Henderson Field, October 1942', year: 1942, side: 'us', foe: 'jp', map: guadalcanal(), waves: 20,
     brief: 'The Marines hold the perimeter round Henderson Field. At night the Japanese come out of the jungle in banzai charges. Lose the airfield and the island is lost.',
-    objective: { slot: 'airfield', col: 84, row: 30, name: 'Henderson Field' }, doctrine: { inf: 1.6, armour: 0.4 }, banned: ['super'],
+    objective: { slot: 'airfield', col: 84, row: 30, name: 'Henderson Field' }, doctrine: { inf: 1.6, armour: 0.4 }, banned: ['super'], weather: 'rain', hour: 17,
   },
   {
     id: 'iwojima', name: 'Iwo Jima', place: 'Iwo Jima, February 1945', year: 1945, side: 'jp', foe: 'us', map: iwojima(), waves: 25,
@@ -299,17 +305,17 @@ export const BATTLES: Battle[] = [
       { slot: 'bunker', col: 30, row: 44, level: 1 }, { slot: 'bunker', col: 62, row: 44, level: 1 }, { slot: 'bunker', col: 46, row: 30, level: 1 },
       { slot: 'bunker', col: 38, row: 52, level: 1 }, { slot: 'bunker', col: 56, row: 52, level: 1 }, { slot: 'bunker', col: 46, row: 16, level: 1 },
     ],
-    doctrine: { inf: 1.15, armour: 0.6 }, money: 1.5, foeSpeed: 0.85,
+    doctrine: { inf: 1.15, armour: 0.6 }, money: 1.5, foeSpeed: 0.85, hour: 9,
   },
   {
     id: 'okinawa', name: 'Okinawa', place: 'The Shuri Line, May 1945', year: 1945, side: 'jp', foe: 'us', map: okinawa(), waves: 25,
     brief: 'Ridge after ridge across southern Okinawa: the Shuri Line. The May rains have turned the ground to mud under the American tanks and flamethrowers; every ridge must cost them dearly.',
-    doctrine: { inf: 0.9, armour: 0.6 }, money: 1.8, foeSpeed: 0.85,
+    doctrine: { inf: 0.9, armour: 0.6 }, money: 1.8, foeSpeed: 0.85, weather: 'rain', hour: 8,
   },
   {
     id: 'seelow', name: 'Seelow Heights', place: 'The Oder, April 1945', year: 1945, side: 'de', foe: 'su', map: seelow(), waves: 30,
     brief: 'The last defensive line before Berlin. Zhukov\'s fronts cross the Oder with a million men, thousands of Katyushas and the IS-2s. Hold the heights.',
-    doctrine: { inf: 1.1, armour: 1.3 },
+    doctrine: { inf: 1.1, armour: 1.3 }, hour: 3,
   },
 ];
 

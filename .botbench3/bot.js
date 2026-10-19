@@ -7508,6 +7508,27 @@ function garrison(foe) {
 			tex: TRUCKS[foe][1],
 			bio: .6,
 			supply: true
+		},
+		{
+			name: `${gun("howitzer").name} battery`,
+			hp: 420,
+			speed: 0,
+			reward: 30,
+			armor: 0,
+			air: false,
+			radius: 11,
+			lives: 0,
+			tex: gun("howitzer").turret,
+			bio: .5,
+			arm: [
+				25,
+				20,
+				20,
+				10
+			],
+			fixed: "arty",
+			base: base(3),
+			spot: 120
 		}
 	];
 }
@@ -8436,6 +8457,16 @@ var ASSAULT_SLOTS = /* @__PURE__ */ new Set([
 	"bunker",
 	"sniper"
 ]);
+/** WW2 counter-battery: shots of ours before the enemy has a fix on a gun, how fast the fix fades (per s), its answer (shells, damage). */
+var FIX_SHOTS = 4;
+var FIX_FADE = .01;
+var CB_SHELLS = 5;
+var CB_DMG = 46;
+var HULK_T = 100;
+var HULK_COVER = .6;
+var CLEAR_WORK = 6;
+/** An engineer's task clearing the hulk in cell c is -(HULK_TASK + c). */
+var HULK_TASK = 1e3;
 /** WW2 sight: how far our emplacements, units and commander see (at least), ticks between fog updates, s an attacker stays seen after firing. */
 var TOWER_SIGHT = 140;
 var UNIT_SIGHT = 130;
@@ -8662,6 +8693,17 @@ var Sim = class Sim {
 	smT = /* @__PURE__ */ new Float32Array(64);
 	smCount = 0;
 	rkShell = /* @__PURE__ */ new Uint8Array(512);
+	hkCell = /* @__PURE__ */ new Int32Array(48);
+	hkT = /* @__PURE__ */ new Float32Array(48);
+	hkBlock = /* @__PURE__ */ new Uint8Array(48);
+	hkKind = /* @__PURE__ */ new Int16Array(48);
+	hkAng = /* @__PURE__ */ new Float32Array(48);
+	hkWork = /* @__PURE__ */ new Float32Array(48);
+	hkCount = 0;
+	/** Per cell: 0 nothing, 1 a hulk, 2 in the cover of one (next to it). */
+	hulkGrid = new Uint8Array(COLS * ROWS);
+	/** The hulk test (a path search) runs at most once a tick. */
+	hulkTick = -1;
 	uAlive = /* @__PURE__ */ new Uint8Array(192);
 	uUid = /* @__PURE__ */ new Int32Array(192);
 	uKind = /* @__PURE__ */ new Uint8Array(192);
@@ -8801,7 +8843,8 @@ var Sim = class Sim {
 			base: 0,
 			ammo: 1,
 			shakeT: 0,
-			nadeCd: 0
+			nadeCd: 0,
+			fix: 0
 		};
 	}
 	/** Builds the map (which sets the live map size) before any grid-sized arrays exist. */
@@ -8929,6 +8972,7 @@ var Sim = class Sim {
 				post(kind("at"), cx, cy, ix, iy, 6.5, 7.5);
 				post(kind("mg"), cx, cy, ix, iy, 7, 2);
 				post(kind("depot"), cx, cy, ix, iy, 1.5, 8.5);
+				post(kind("arty"), cx, cy, ix, iy, 1, -1);
 			} else {
 				post(kind("mg"), cx, cy, ix, iy, 4, 3);
 				post(kind("at"), cx, cy, ix, iy, 5, -3.5);
@@ -9057,7 +9101,6 @@ var Sim = class Sim {
 			"hasTeeth",
 			"back",
 			"backVersion",
-			"sightBlock",
 			"losMasks",
 			"sightVersion"
 		]);
@@ -9133,6 +9176,7 @@ var Sim = class Sim {
 			t.ammo ??= 1;
 			t.shakeT ??= 0;
 			t.nadeCd ??= 0;
+			t.fix ??= 0;
 			sim.towers.push(t);
 			sim.towerById.set(t.id, t);
 		}
@@ -9449,7 +9493,8 @@ var Sim = class Sim {
 			base: 0,
 			ammo: 1,
 			shakeT: 0,
-			nadeCd: 0
+			nadeCd: 0,
+			fix: 0
 		};
 		const reroutes = this.checkReroutes;
 		t.open = this.checkOpenGate;
@@ -9646,6 +9691,130 @@ var Sim = class Sim {
 		this.explosion(ex, ey, .8, 6);
 		return true;
 	}
+	/**
+	* A knocked-out tank stays where it died as a hulk: it blocks its cell if no route (and nobody on
+	* the way) depends on it — else it only slows the way, like rubble. Either way it blocks the line
+	* of fire and gives cover to infantry next to it.
+	*/
+	addHulk(i) {
+		if (this.hkCount >= 48) return;
+		const c = this.eCell[i];
+		if (c < 0 || this.hulkGrid[c] === 1 || this.towerAt[c] >= 0 || this.blocked[c] || this.map.grid[c] !== 0) return;
+		for (const r of this.map.routes) if (r.entry.includes(c) || r.exit.includes(c)) return;
+		let block = 0;
+		if (this.hulkTick !== this.ticks) {
+			this.hulkTick = this.ticks;
+			this.blocked[c] = 1;
+			let ok = true;
+			for (let k = 0; k < this.scratch.length && ok; k++) {
+				const f = this.scratch[k];
+				f.compute(this.blocked);
+				for (const e of this.map.routes[k].entry) if (f.dist[e] === Infinity) ok = false;
+			}
+			for (let n = 0; n < this.liveCount && ok; n++) {
+				const j = this.live[n];
+				if (j !== i && this.eAlive[j] && !this.eAir[j] && this.eGar[j] < 0 && this.eCell[j] !== c && this.scratch[this.eRoute[j]].dist[this.eCell[j]] === Infinity) ok = false;
+			}
+			if (ok) {
+				block = 1;
+				for (let k = 0; k < this.fields.length; k++) this.fields[k].copyFrom(this.scratch[k]);
+			} else this.blocked[c] = 0;
+		}
+		const h = this.hkCount++;
+		this.hkCell[h] = c;
+		this.hkT[h] = HULK_T;
+		this.hkBlock[h] = block;
+		this.hkKind[h] = this.eKind[i];
+		this.hkAng[h] = this.eAng[i];
+		this.hkWork[h] = 0;
+		this.hulksChanged(c);
+	}
+	/** Hulks burn out and are towed away in time (or cleared sooner by engineers and sappers). */
+	updateHulks() {
+		for (let h = this.hkCount - 1; h >= 0; h--) {
+			const c = this.hkCell[h];
+			if ((this.ticks + h * 11) % 50 === 0 && this.hkT[h] > HULK_T * .6) this.fx(1, 0, (c % COLS + .5) * 20, ((c / COLS | 0) + .5) * 20, this.vr.range(-6, 6), -16, 2.6, 8, 30, .45, 3814962, .8, 10);
+			if ((this.hkT[h] -= .016666666666666666) <= 0 || this.hkWork[h] >= CLEAR_WORK) this.removeHulk(h);
+		}
+	}
+	removeHulk(h) {
+		const c = this.hkCell[h];
+		const blocking = this.hkBlock[h] === 1;
+		const last = --this.hkCount;
+		this.hkCell[h] = this.hkCell[last];
+		this.hkT[h] = this.hkT[last];
+		this.hkBlock[h] = this.hkBlock[last];
+		this.hkKind[h] = this.hkKind[last];
+		this.hkAng[h] = this.hkAng[last];
+		this.hkWork[h] = this.hkWork[last];
+		if (blocking && this.towerAt[c] < 0) {
+			this.blocked[c] = 0;
+			for (const f of this.fields) f.compute(this.blocked);
+		}
+		this.burst((c % COLS + .5) * 20, ((c / COLS | 0) + .5) * 20, 6971480, 6, 1, 0);
+		this.hulksChanged(c);
+	}
+	/**
+	* The hulks changed round cell c: cover and sight-blocking cells, the guns whose line of fire it
+	* may cross (their sight is worked out again), and the maze signal for everything derived from it.
+	*/
+	hulksChanged(c) {
+		this.hulkGrid.fill(0);
+		for (let h = 0; h < this.hkCount; h++) {
+			const k = this.hkCell[h];
+			const col = k % COLS;
+			const row = k / COLS | 0;
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+				const cc = col + dx;
+				const rr = row + dy;
+				if (cc >= 0 && rr >= 0 && cc < COLS && rr < ROWS && !this.hulkGrid[rr * COLS + cc]) this.hulkGrid[rr * COLS + cc] = 2;
+			}
+		}
+		for (let h = 0; h < this.hkCount; h++) this.hulkGrid[this.hkCell[h]] = 1;
+		const t = this.map.grid[c];
+		this.sightBlock[c] = this.hulkGrid[c] === 1 || t === 1 || t === 4 || t === 5 ? 1 : 0;
+		const x = (c % COLS + .5) * 20;
+		const y = ((c / COLS | 0) + .5) * 20;
+		for (const [id, m] of this.losMasks) if (Math.abs(m.x - x) <= (m.r + 1) * 20 && Math.abs(m.y - y) <= (m.r + 1) * 20) this.losMasks.delete(id);
+		this.towerVersion++;
+	}
+	/** Engineers (ours) or sappers (theirs) at work on the hulk in cell c; true while there is one. */
+	clearHulk(c, work) {
+		for (let h = 0; h < this.hkCount; h++) {
+			if (this.hkCell[h] !== c) continue;
+			this.hkWork[h] += work;
+			return true;
+		}
+		return false;
+	}
+	/**
+	* The enemy has a fix on gun t: its battery (if it stands and is ready) answers with a few shells
+	* on that position, and its muzzle flashes give it away for a moment.
+	*/
+	counterBattery(t) {
+		let g = -1;
+		for (let k = 0; k < MAX_GARRISON; k++) if (this.gKind[k] >= 0 && ENEMIES[this.gKind[k]].fixed === "arty" && this.gSlot[k] >= 0 && this.eBuild[this.gSlot[k]] <= 0) g = k;
+		if (g < 0) return;
+		t.fix = 0;
+		const i = this.gSlot[g];
+		this.eSeenT[i] = 6;
+		const dmg = CB_DMG * (.6 + .4 * this.hpMult);
+		for (let k = 0; k < CB_SHELLS && this.rkCount < 512; k++) {
+			const r = this.rkCount++;
+			const a = this.rng.next() * TWO_PI;
+			const d = Math.sqrt(this.rng.next()) * 26;
+			this.rkSx[r] = this.gX[g];
+			this.rkSy[r] = this.gY[g];
+			this.rkTx[r] = t.x + Math.cos(a) * d;
+			this.rkTy[r] = t.y + Math.sin(a) * d;
+			this.rkWait[r] = 1.5 + k * .5;
+			this.rkT[r] = this.rkT0[r] = 1.4 + Math.hypot(t.x - this.gX[g], t.y - this.gY[g]) / 900;
+			this.rkDmg[r] = dmg;
+			this.rkShell[r] = 1;
+		}
+		for (let k = 0; k < 6; k++) this.fx(1, 0, this.gX[g], this.gY[g], this.vr.range(-40, 40), this.vr.range(-40, 40), 1.4, 8, 30, .6, 12103840, 1.5, 8);
+		this.ev(15, this.gX[g], this.gY[g], ENEMY_FX.indexOf("barrage"));
+	}
 	/** Does a straight line from (x0, y0) to (x1, y1) stay clear of forests, mountains and ruins? */
 	clearLine(x0, y0, x1, y1) {
 		const dx = x1 - x0;
@@ -9702,7 +9871,7 @@ var Sim = class Sim {
 	}
 	/** WW2 fog of war: is attacker i seen by anything of ours (or marked, or just gave itself away by firing)? Always in classic games. */
 	seen(i) {
-		return !WW2$1 || this.eAir[i] === 1 || this.eGar[i] >= 0 || this.eMarkT[i] > 0 || this.eSeenT[i] > 0 || this.seenGrid[this.eGCell[i]] === 1;
+		return !WW2$1 || this.eAir[i] === 1 || this.eGar[i] >= 0 && ENEMIES[this.eKind[i]].fixed !== "arty" || this.eMarkT[i] > 0 || this.eSeenT[i] > 0 || this.seenGrid[this.eGCell[i]] === 1;
 	}
 	/**
 	* The fog of war: what our emplacements see (rebuilt when they change), plus what our units and the
@@ -9870,6 +10039,7 @@ var Sim = class Sim {
 	*/
 	updateSupply() {
 		const dt = SUPPLY_TICKS * DT;
+		for (const t of this.towers) if (t.fix > 0) t.fix = Math.max(0, t.fix - FIX_FADE * dt);
 		const scrounge = SCROUNGE * dt * (this.attackers > 0 ? 1 : LULL_SUPPLY);
 		for (const t of this.towers) if (t.ammo < 1 && !t.wreck && this.usesAmmo(t)) t.ammo = Math.min(1, t.ammo + scrounge);
 		for (const s of this.towers) {
@@ -10012,6 +10182,7 @@ var Sim = class Sim {
 	/** The emplacement is knocked out: it becomes rubble that units can climb through (slowly). */
 	wreckTower(t) {
 		t.hp = 0;
+		t.fix = 0;
 		t.wreck = true;
 		t.supp = 0;
 		t.beam = -1;
@@ -10374,6 +10545,7 @@ var Sim = class Sim {
 				if (dx * dx + dy * dy <= r * r) fn(row * COLS + col);
 			}
 		};
+		for (let h = 0; h < this.hkCount; h++) if (!this.hkBlock[h]) this.tarGrid[this.hkCell[h]] = Math.min(this.tarGrid[this.hkCell[h]], .5);
 		for (const t of this.towers) {
 			const lv = TOWERS[t.type].levels[t.level];
 			const buff = lv.buff ?? 0;
@@ -10568,7 +10740,8 @@ var Sim = class Sim {
 			base: 0,
 			ammo: 1,
 			shakeT: 0,
-			nadeCd: 0
+			nadeCd: 0,
+			fix: 0
 		};
 		level = Math.min(10, level);
 		this.hero = {
@@ -10899,6 +11072,10 @@ var Sim = class Sim {
 		const c = Math.floor(this.eX[i] / 20);
 		const r = Math.floor(this.eY[i] / 20);
 		if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return;
+		if (this.hulkGrid[r * COLS + c]) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+			const k = (r + dy) * COLS + c + dx;
+			if (c + dx >= 0 && c + dx < COLS && r + dy >= 0 && r + dy < ROWS && this.hulkGrid[k] === 1 && this.clearHulk(k, .1)) return;
+		}
 		const id = this.towerAt[r * COLS + c];
 		const t = id >= 0 ? this.towerById.get(id) : void 0;
 		if (!t || t.kind !== "mine" && t.kind !== "wire") {
@@ -11108,6 +11285,8 @@ var Sim = class Sim {
 			const dug = this.uDig[u] >= 1;
 			this.uSupp[u] = Math.min(1, this.uSupp[u] + supp * (dug ? .5 : 1) * (1 - .2 * this.unitVet(u)));
 			a *= (1 - .35 * this.uSupp[u]) * (dug ? .5 : 1);
+			const c = Math.floor(this.uY[u] / 20) * COLS + Math.floor(this.uX[u] / 20);
+			if (c >= 0 && c < COLS * ROWS && this.hulkGrid[c]) a *= HULK_COVER;
 		}
 		a *= 1 - .08 * this.unitVet(u);
 		if (a <= 0) return;
@@ -11281,6 +11460,7 @@ var Sim = class Sim {
 		if (this.uLay[u] >= 0) this.layMine(u, moving);
 		else if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? "repair" : "heal");
 		if (d.repair && this.uTask[u] >= 0) this.doRepair(u, d.repair);
+		else if (d.repair && this.uTask[u] <= -1e3) this.doClear(u);
 		if (d.heal) this.doHeal(u, d.heal);
 		let t = this.uTgt[u];
 		if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
@@ -11486,6 +11666,8 @@ var Sim = class Sim {
 			}
 			this.uTask[u] = pick ? pick.id : -1;
 			if (pick) this.unitPathTo(u, pick.col - 1, pick.row - 1, pick.col + pick.size, pick.row + pick.size, pick.col, pick.row, pick.col + pick.size - 1, pick.row + pick.size - 1);
+			else if (this.uTask[u] <= -1e3 && this.hulkGrid[-this.uTask[u] - HULK_TASK] === 1) return;
+			else if (this.pickHulk(u, ox, oy, bestD)) return;
 			else if (this.uStance[u] !== 2 && (this.uX[u] - this.uPostX[u]) ** 2 + (this.uY[u] - this.uPostY[u]) ** 2 > 196 && this.uPathI[u] >= this.uPathLen[u]) this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
 			return;
 		}
@@ -11502,6 +11684,33 @@ var Sim = class Sim {
 		this.uTask[u] = best;
 		if (best === -2) this.unitGoto(u, h.x, h.y, 1);
 		else if (best >= 0) this.unitGoto(u, this.uX[best], this.uY[best], 1);
+	}
+	/** Engineers with nothing to repair go for the nearest hulk within reach of their post, to clear it. */
+	pickHulk(u, ox, oy, reach2) {
+		let best = -1;
+		for (let h = 0; h < this.hkCount; h++) {
+			const c = this.hkCell[h];
+			const d2 = ((c % COLS + .5) * 20 - ox) ** 2 + (((c / COLS | 0) + .5) * 20 - oy) ** 2;
+			if (d2 < reach2) {
+				reach2 = d2;
+				best = c;
+			}
+		}
+		if (best < 0) return false;
+		const col = best % COLS;
+		const row = best / COLS | 0;
+		if (!this.unitPathTo(u, col - 1, row - 1, col + 1, row + 1, col, row, col, row)) return false;
+		this.uTask[u] = -1e3 - best;
+		return true;
+	}
+	/** Engineers clearing a hulk they stand next to. */
+	doClear(u) {
+		const c = -this.uTask[u] - HULK_TASK;
+		const x = (c % COLS + .5) * 20;
+		const y = ((c / COLS | 0) + .5) * 20;
+		if ((x - this.uX[u]) ** 2 + (y - this.uY[u]) ** 2 > 1024) return;
+		if (!this.clearHulk(c, .016666666666666666)) this.uTask[u] = -1;
+		else if ((this.ticks + u) % 12 === 0) this.fx(2, 1, x + this.vr.range(-6, 6), y + this.vr.range(-6, 6), this.vr.range(-40, 40), -40, .3, 3, 1, 1, 16765040, 4, 8);
 	}
 	/** Engineers at work: hit points back, and rubble raised again once it is a third rebuilt. */
 	doRepair(u, rate) {
@@ -11642,6 +11851,7 @@ var Sim = class Sim {
 			}
 		}
 		if (WW2$1) {
+			if (this.hkCount) this.updateHulks();
 			this.updateGarrison();
 			this.updateConvoy();
 			this.lives = Math.ceil(100 * this.baseHealth);
@@ -12072,6 +12282,7 @@ var Sim = class Sim {
 		if (src && this.hero && src === this.hero.src) this.gainHeroXp(reward);
 		this.ev(2, this.eX[i], this.eY[i], this.eKind[i], reward);
 		const kind = this.eKind[i];
+		if (WW2$1 && ENEMIES[kind].arm && !this.eAir[i] && !ENEMIES[kind].fixed) this.addHulk(i);
 		const big = ENEMIES[kind].boss ? 3 : ENEMIES[kind].radius >= 10 ? 1.6 : ENEMIES[kind].inf ? .6 : 1.1;
 		this.explosion(this.eX[i], this.eY[i], big, this.eAir[i] ? 34 : 4);
 		this.freeEnemy(i);
@@ -12118,6 +12329,7 @@ var Sim = class Sim {
 			return a;
 		}
 		if (def.inf) {
+			if (this.hulkGrid[this.eGCell[i]]) a *= HULK_COVER;
 			const supp = lv ? lv.supp ?? 0 : src === this.unitSrc ? this.proxySupp : 0;
 			if (supp > 0) this.eSupp[i] = Math.min(1, this.eSupp[i] + supp);
 			a *= 1 - .35 * this.eSupp[i];
@@ -12182,7 +12394,7 @@ var Sim = class Sim {
 			inRange++;
 			if (sight === 1 && !this.towerSees(t, i, range)) blind++;
 			else if (sight === 3 && !this.seen(i)) fog++;
-			else if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) unseen++;
+			else if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
 			else if (this.eSmoked[i] && d2 > 2500) smoke++;
 			else if (pen > 0 && !this.canHurt(i, pen, top, t.x, t.y, range)) {
 				if (d2 < armD) {
@@ -12229,7 +12441,7 @@ var Sim = class Sim {
 			const d2 = dx * dx + dy * dy;
 			if (d2 > r2) continue;
 			if (this.eStealth[i] && !this.eSeen[i] && d2 > 2025) continue;
-			if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]]) continue;
+			if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
 			if (this.eSmoked[i] && d2 > 2500) continue;
 			if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
 			if (sight === 1 ? !this.towerSees(this.sightTower, i, range) : sight === 2 ? !this.eAir[i] && !this.clearLine(x, y, this.eX[i], this.eY[i]) : sight === 3 && !this.seen(i)) continue;
@@ -12704,7 +12916,10 @@ var Sim = class Sim {
 			}
 		}
 		t.cd = cd;
-		if (WW2$1) this.spend(t, lv.rate);
+		if (WW2$1) {
+			this.spend(t, lv.rate);
+			if ((t.kind === "arty" || t.kind === "cannon") && (t.fix += (1 - .7 * this.camoOf(t)) / FIX_SHOTS) >= 1) this.counterBattery(t);
+		}
 		this.ev(0, t.x, t.y, t.type);
 		if (WW2$1) t.seenT = Math.max(t.seenT, t.kind === "sniper" ? 1.2 : REVEAL_T);
 	}

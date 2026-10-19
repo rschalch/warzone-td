@@ -58,6 +58,11 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
 - **Counter-battery fire**: the enemy's sound rangers take a bearing on every salvo of your artillery and their
   hidden battery answers once it has a fix; find it with observers or a recon flight, or catch it firing, and
   shell it back. Camouflage muffles your guns; moving a gun starts the count again.
+- **Wrecks stay on the field**: a knocked-out tank becomes a hulk that blocks (or slows) the way, blocks the
+  line of fire and gives infantry cover, until it burns out or engineers (or their sappers) clear it.
+- **Night and weather**: the clock runs through the battle; at night guns reach and everyone sees less and
+  positions are harder to spot — mortars can fire flares to light the attackers up. Rain turns the ground to mud,
+  snow slows everyone, fog cuts sight and grounds the aircraft of both sides. Each battle has its own weather.
 - **Commander**: fire missions, Hold the Line (rallies suppressed crews) and recon flights that mark attackers.
 - **Stealth**: camouflaged guns are hidden until spotted or until they fire; recon units find them; Ambush mode.
 - **Enemy intelligence**: tanks and sappers breach long thin mazes, tanks pop smoke, artillery prepares the
