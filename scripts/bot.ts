@@ -5,7 +5,7 @@
 // WW2=1 plays the WW2 mode (Germany against the Soviet attack) with its own build order.
 
 import type { Difficulty } from '../src/game/config';
-import { COLS, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
+import { COLS, ENEMIES, TILE, TOTAL_WAVES, TOWERS, towerIndex } from '../src/game/defs';
 import type { Faction } from '../src/game/ww2';
 import { BATTLES, type Battle } from '../src/game/battles';
 import { rulesetFor } from '../src/game/rules';
@@ -244,7 +244,42 @@ function diagnose(sim: Sim, tick: number, prevCd: Map<number, number>, lastFire:
     diag.set(`${key.padEnd(10)} ${why}`, (diag.get(`${key.padEnd(10)} ${why}`) ?? 0) + 1);
   }
 }
+/** DIAG=base: for each tank near our headquarters, why each gun that has it in range can't take it. */
+const baseDiag = new Map<string, number>();
+function diagnoseBase(sim: Sim, tick: number, lastFire: Map<number, number>): void {
+  const s = sim as any;
+  const hq = sim.towers.find((t) => t.id === s.bases?.[0]);
+  if (!hq) return;
+  for (let k = 0; k < sim.liveCount; k++) {
+    const i = sim.live[k];
+    const e = ENEMIES[sim.eKind[i]];
+    if (!sim.eAlive[i] || sim.eAir[i] || !e.arm || e.inf || s.eGar[i] >= 0) continue;
+    if ((sim.eX[i] - hq.x) ** 2 + (sim.eY[i] - hq.y) ** 2 > 200 * 200) continue;
+    for (const t of sim.towers) {
+      const def = TOWERS[t.type];
+      if (!def.targeted || def.manual || t.wreck || t.buildT > 0 || t.base || !def.hitsGround) continue;
+      const lv = def.levels[t.level];
+      const range = lv.range * t.rangeMult;
+      const d2 = (sim.eX[i] - t.x) ** 2 + (sim.eY[i] - t.y) ** 2;
+      if (d2 > range * range) continue;
+      const pen = lv.pen ?? 0;
+      const top = !!lv.splash && t.kind !== 'at';
+      const indirect = t.kind === 'arty' || t.kind === 'cannon';
+      let why = 'ok';
+      if (!indirect && !s.gunSees(t, i, range)) why = s.towerSees(t, i, range) ? 'blind' : sim.seen(i) ? 'blind (terrain, seen)' : 'blind (unseen)';
+      else if (!indirect && s.dimMult < 1 && d2 > (range * s.dimMult) ** 2 && !s.litGrid[s.eGCell[i]] && !sim.seen(i)) why = 'dark';
+      else if (indirect && !sim.seen(i)) why = 'fog';
+      else if (s.eSmoked[i] && d2 > 2500) why = 'smoke';
+      else if (pen > 0 && !s.canHurt(i, pen, top, t.x, t.y, range)) why = `armour(${['front', 'side', 'rear', 'top'][top ? 3 : s.facing(i, t.x, t.y)]} pen${pen})`;
+      else if (pen === 0) why = 'no pen (mg?)';
+      if (why === 'ok' && tick - (lastFire.get(t.id) ?? -1e9) > Math.max(120, 150 / (sim.stats(t).rate || 1))) why = `ok but idle: ${sim.fireStatus(t).slice(0, 50) || '-'} ${t.ammo < 0.05 ? 'dry' : ''} ${t.supp > 0.5 ? 'supp' : ''} mode${t.mode}`;
+      const key = `${def.kind.padEnd(10)} vs ${e.name.padEnd(14)} ${why}`;
+      baseDiag.set(key, (baseDiag.get(key) ?? 0) + 1);
+    }
+  }
+}
 process.on('exit', () => {
+  if (baseDiag.size) for (const [k, n] of [...baseDiag].sort((a, b) => b[1] - a[1]).slice(0, 60)) console.log(String(n).padStart(6), k);
   if (!DIAG) return;
   console.log('samples with something in range:', JSON.stringify([...diagIdle]));
   for (const [k, n] of [...diag].sort((a, b) => b[1] - a[1]).slice(0, 60)) console.log(String(n).padStart(6), k);
@@ -291,9 +326,10 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
       const i = sim.live[0];
       sim.exec({ t: 'item', item: 0, x: sim.eX[i], y: sim.eY[i] });
     }
-    if (DIAG) for (const t of sim.towers) prevCd.set(t.id, t.cd);
+    if (DIAG || process.env.DIAG) for (const t of sim.towers) prevCd.set(t.id, t.cd);
     sim.step();
     if (DIAG) diagnose(sim, tick, prevCd, lastFire);
+    if (process.env.DIAG === 'base' && tick % 20 === 0) diagnoseBase(sim, tick, lastFire);
     for (let k = 0; k < sim.events.length; k += 5) {
       if (sim.events[k] === 3) leaks.set(sim.events[k + 3], (leaks.get(sim.events[k + 3]) ?? 0) + 1);
     }

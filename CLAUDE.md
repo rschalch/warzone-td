@@ -178,7 +178,8 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - Intelligence: `breach` flow fields (emplacement cells passable at a cost of their max HP and fort; corner
   rule from the real walls; rebuilt when `towerVersion` changes, not saved). Tanks and sappers compare the
   way round with the way through (`thinkBreach`, never on Easy) and shell the wall in front (`eWall`).
-  Sappers lift mines and wire; tanks pop smoke under AT fire (`sm*`, blinds both ways); armoured waves open
+  Sappers lift mines and wire; tanks with historical smoke gear (`EnemyDef.smoke`) pop smoke under AT fire (`sm*`,
+  clears in `SMOKE_MIN`-`SMOKE_MAX` s, hides only attackers standing still in it, never laid within `NO_SMOKE_R` of our HQ); armoured waves open
   with a barrage on known positions (`barrage`, shells in the `rk*` arrays); `adapt()` trades infantry for
   armour by what you built and adds Il-2s if you have no flak.
 - Campaign: `src/game/battles.ts` (`BATTLES`; `GameConfig.ww2.battle`). `Sim` reads the battle for `totalWaves`,
@@ -207,7 +208,8 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   themselves, and fortified targets take damage by (pen/armour)² (`ballistics`). Skirmish (`siege`): waves never stop
   and only their HQ's fall wins; a battle can also be won by holding out. New and rebuilt emplacements take
   `buildTime(cost)` to finish (`Tower.buildT`, no firing meanwhile); infantry throw grenades at emplacements next to them.
-- Supply: `Tower.ammo` (0..1 of a full stock; a depot's store) drops with every shot (`spend()`, `AMMO_S` s of fire
+- Supply: our ammunition is switched off (`SUPPLY_ON = false`: guns never run dry, no trucks; the depot pays out and
+  adds manpower); the code below stays for reference. `Tower.ammo` (0..1 of a full stock; a depot's store) drops with every shot (`spend()`, `AMMO_S` s of fire
   by role), an empty gun fires at `EMPTY_RATE`. `updateSupply()` (every `SUPPLY_TICKS`): depots hand ammunition to
   guns in their radius (the depot's `range`) from their store, our headquarters (`HQ_SUPPLY` px) from an endless one,
   crews out of reach scrounge; a depot below `DEPOT_CALL` gets a truck (`UnitDef.truck`, kind `truckKind`, appended
@@ -236,8 +238,9 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `eLeadUid`, up to `ESCORTS` each) and keep pace (`escortPace()`: they wait when ahead, hurry when behind). A tank
   with no infantry within `ESCORT_R` (`eEscort`, `checkEscort()` every 15 ticks) takes `CLOSE_BONUS` from infantry
   AT weapons (`closeAssaulter()`) and is close-assaulted (`closeAssault()`: satchels on its deck) by our infantry
-  positions (`ASSAULT_SLOTS`, `Tower.nadeCd`) and soldiers (`uNadeCd`); escorted tanks spot 1.5× further. A wave
-  lays up to two smoke screens ahead of its tanks when they close on a known strongpoint (fort ≥ 25 or an HQ).
+  positions (`ASSAULT_SLOTS`, `Tower.nadeCd`) and soldiers (`uNadeCd`); escorted tanks spot 1.5× further. A smoke-
+  equipped tank closing on a known strongpoint (fort ≥ 25, not the HQ) smokes it, up to two per wave: a gun inside a
+  cloud (`inSmoke()`) and shots at a target in smoke hit at `SMOKE_HIT` ×.
 - Counter-battery: every shot of our mortars, rockets and howitzers adds to the enemy's sound-ranging fix on that gun
   (`Tower.fix`, `FIX_SHOTS` shots, less with camouflage, fades with `FIX_FADE`); at 1 their battery (garrison
   `fixed: 'arty'`, from the arsenal's howitzer slot) answers with `CB_SHELLS` shells (the `rk*` arrays) and is seen
@@ -287,8 +290,17 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - Artillery (`arty` role) fires at any attacker something of ours sees (`seen()`); only shelling their base positions
   needs a spotter (within 140 px, an observer's `radarGrid` or a recon mark). Towed AT guns outrange the tanks they
   face (the `atgun` slot ~220-240 px, `heavyaa` 270-290, dug-in `tank` 210-255).
-- `DIAG=1 npm run bot` lists why guns with an attacker in range didn't fire (sampled; idle 2 s / 2 reloads).
-  Legitimate causes: night (flares), armour too thick (MG vs tank), no line of sight, smoke, no spotter for their base.
+- Our guns fire at whatever they see: direct fire takes its own sight or field vision (`gunSees()`: `seen()` plus a
+  line of fire clear of terrain, `fireLine()`, hulks don't stop a shell); at night beyond `dimMult` only what something
+  of ours sees or a flare lights. Anti-tank guns (pen ≥ `AT_PEN`, `anyTarget` in findTarget) fire at any tank, even one
+  they bounce off (hits button its crew up: `eSupp` on vehicles worsens their aim); lighter weapons hold fire at armour
+  they can't pierce. Attackers need a clear line too (`pickDefender`, except `E_INDIRECT`) and at night reach only
+  `dimMult` unless the target just fired or is lit. Units on Guard look `GUARD_LEASH` px past their range and close
+  in on anything seen (sight mode 4). The selected gun's (or the placement ghost's) blind cells are shaded red
+  (`Sim.blindRuns()`, `Renderer.drawBlind()`).
+- `DIAG=1 npm run bot` lists why guns with an attacker in range didn't fire (sampled; idle 2 s / 2 reloads);
+  `DIAG=base` lists, for each tank within 200 px of our HQ, why each gun with it in range can't take it.
+  Legitimate causes: night (flares), armour too thick (MG vs tank), no line of sight, no spotter for their base.
 
 ## Balance notes
 
@@ -307,6 +319,8 @@ After the crew ranks / accuracy / 5×5 HQ round: Easy wins Open Field 3 of 5 and
 can't reach it and it stops winning.
 With our HQ across the map from theirs (one HQ for every route): Easy wins Crossfire 3 of 3, Open Field and Boulder
 Pass 1 of 3, Badlands 3 of 3; Normal Open Field ~28, Crossfire ~28, Boulder Pass ~19, Badlands won 1 of 3.
+After field vision / AT guns never stop / no ammunition / smoke rework: Easy wins Open Field 2 of 3, Crossfire 3 of 3,
+Boulder Pass ~30; Normal Open Field ~25, Crossfire ~29, Boulder Pass ~24.
 
 ## Known limitations
 

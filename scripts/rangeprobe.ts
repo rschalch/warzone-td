@@ -104,10 +104,11 @@ for (const m of matchups()) {
         const res = FRACS.map((f) => probe(m, type, tg.k, f, face, level));
         const line = `${d.short.padEnd(12)} L${String(level + 1).padEnd(2)} ${tg.name.padEnd(26)} ${face === Math.PI ? 'front' : 'side '}  ` +
           res.map((r, j) => `${FRACS[j]}:${r.shot ? (r.hurt ? 'hit ' : 'miss') : '----'}${r.shot ? `@${r.t.toFixed(1)}` : '    '}`).join('  ');
-        // trouble: fires closer in but not at the edge, or fires without hurting what it could hurt nearer
-        // (armour may be out of its reach further out: then it must hold fire, not fire and bounce)
+        // trouble: doesn't fire at a soft target in range; an anti-tank gun (pen >= 40) that doesn't fire at a
+        // tank (it fires even where it can't go through); a lighter weapon that fires at armour and bounces
         const soft = !ENEMIES[tg.k].arm;
-        const bad = res.some((r) => r.shot && !r.hurt) || (soft && res.some((r) => !r.shot));
+        const at = !!process.env.WW2 && (d.levels[0].pen ?? 0) * (level ? 1.6 : 1) >= 40 && d.role !== 'arty';
+        const bad = (soft || (at && !air) ? res.some((r) => !r.shot) : false) || (!at && res.some((r) => r.shot && !r.hurt));
         if (bad) problems++;
         if (bad || verbose) console.log((bad ? '! ' : '  ') + line);
         }

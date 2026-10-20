@@ -219,6 +219,9 @@ export class GameRenderer {
   private readonly unitTop: number[];
   private selUnits = new Set<number>();
   private routeLabel: BitmapText;
+  /** drawBlind(): the last runs worked out, and for which spot, range and walls. */
+  private blindKey = '';
+  private blindRuns: number[] = [];
   private readonly boxG = new Graphics();
   /** Selection rectangle being dragged (projected screen space). */
   box: [number, number, number, number] | null = null;
@@ -1151,6 +1154,19 @@ export class GameRenderer {
   }
 
   /** Follows a flow field from the middle of each route's entry to its exit (ground plane). */
+  /** WW2: the part of a direct-fire gun's circle its crew can't see (trees, rocks, hills, hulks), in red. */
+  private drawBlind(g: Graphics, s: Sim, x: number, y: number, r: number, def: (typeof TOWERS)[number]): void {
+    if (!WW2 || !def.targeted || def.role === 'arty' || def.role === 'cannon' || def.manual) return;
+    const key = `${x},${y},${r},${s.towerVersion}`;
+    if (key !== this.blindKey) {
+      this.blindKey = key;
+      this.blindRuns = s.blindRuns(x, y, r);
+    }
+    const b = this.blindRuns;
+    for (let k = 0; k < b.length; k += 3) g.rect(b[k + 1] * TILE, b[k] * TILE, (b[k + 2] - b[k + 1] + 1) * TILE, TILE);
+    if (b.length) g.fill({ color: 0xff3a2a, alpha: 0.22 });
+  }
+
   private drawRoutes(fields: readonly FlowField[], color: number, alpha: number): void {
     const g = this.overlay;
     this.sim.map.routes.forEach((route, k) => {
@@ -1243,6 +1259,7 @@ export class GameRenderer {
     if (sel) {
       const r = s.stats(sel).range;
       if (r > 0) g.circle(sel.x, sel.y, r).fill({ color: 0xffffff, alpha: 0.07 }).stroke({ width: 2, color: 0xffffff, alpha: 0.55 });
+      if (r > 0 && !sel.wreck) this.drawBlind(g, s, sel.x, sel.y, r, TOWERS[sel.type]);
       // an ambush holds fire outside the inner ring (unless it gets a flank shot)
       if (sel.mode === MODE_AMBUSH && WW2) g.circle(sel.x, sel.y, r * 0.6).stroke({ width: 1.5, color: 0xffc04a, alpha: 0.7 });
       if (sel.kind === 'arty') {
@@ -1299,6 +1316,7 @@ export class GameRenderer {
       const r = def.levels[0].range;
       const col = ok ? pal.ok : pal.bad;
       if (r > 14) g.circle(x, y, r).fill({ color: col, alpha: 0.07 }).stroke({ width: 2, color: col, alpha: 0.55 });
+      if (r > 14) this.drawBlind(g, s, x, y, r, def);
       g.rect(ov.hoverCol * TILE, ov.hoverRow * TILE, box, box).fill({ color: col, alpha: 0.3 });
       if (status === 'blocked') {
         g.moveTo(x - 10, y - 10).lineTo(x + 10, y + 10).moveTo(x + 10, y - 10).lineTo(x - 10, y + 10)

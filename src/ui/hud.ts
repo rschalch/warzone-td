@@ -595,8 +595,6 @@ export class Hud {
       if (sim.usesAmmo(t)) {
         const out = t.ammo <= 0 ? '<span class="bad">out — a third of its rate</span>' : pct(t.ammo);
         supplyRow = `<tr><td>Ammunition</td><td>${out}${sim.supplied(t) ? '' : ' · <span class="bad">no supply</span>'}</td><td></td></tr>`;
-      } else if (WW2 && def.role === 'depot') {
-        supplyRow = `<tr><td>Store</td><td><span class="${t.ammo < 0.25 ? 'bad' : ''}">${pct(t.ammo)}</span>${t.ammo < 0.6 ? ' · truck called' : ''}</td><td></td></tr>`;
       }
       // WW2 counter-battery: how close the enemy's sound rangers are to a fix on this gun
       if (WW2 && (def.role === 'arty' || def.role === 'cannon')) {
@@ -731,7 +729,7 @@ export class Hud {
     if (sim.eBurnT[i] > 0) tags.push('burning');
     if (sim.eSlowT[i] > 0) tags.push('slowed');
     if (sim.eJam[i] > 0) tags.push('jammed');
-    if (sim.eSupp[i] > 0.05) tags.push(`suppressed ${Math.round(sim.eSupp[i] * 100)}%`);
+    if (sim.eSupp[i] > 0.05) tags.push(`${ENEMIES[sim.eKind[i]].inf ? 'suppressed' : 'buttoned up'} ${Math.round(sim.eSupp[i] * 100)}%`);
     if (sim.eWall[i] > 0) tags.push('breaking through a wall');
     else if (sim.eBreach[i]) tags.push('going for a breach');
     if (sim.eSmoked[i]) tags.push('in smoke');

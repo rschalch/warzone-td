@@ -41,6 +41,8 @@ export interface EnemyDef {
   armor: number; // flat damage reduction per hit (classic rules)
   /** WW2 rules: armour in mm [front, side, rear, top]; undefined for soft targets. */
   arm?: readonly [number, number, number, number];
+  /** WW2: carries smoke dischargers or a smoke mortar (as it did historically): pops smoke under fire, screens an assault. */
+  smoke?: boolean;
   /** Foot soldiers: suppressible, slowed by wire, set off anti-personnel mines. */
   inf?: boolean;
   boss?: boolean;

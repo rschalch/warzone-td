@@ -313,7 +313,7 @@ export const STANCES = [
   { name: 'Ambush', desc: 'Hidden while still; holds fire until a close or flank shot, which hits harder.' },
 ];
 /** How far a Guard leaves its post to chase, and how far a Hunt looks for prey (px). */
-const GUARD_LEASH = 150;
+const GUARD_LEASH = 200;
 const HUNT_RANGE = 420;
 /** s to dig a foxhole or a hull-down scrape, and to bury a mine. */
 const DIG_TIME = 4;
@@ -334,10 +334,16 @@ export const CREW_KILLS = [8, 25, 60];
  */
 const MISS: Record<string, number> = { gun: 0.35, bunker: 0.35, at: 0.4, sniper: 0.2, cannon: 0.45, arty: 0.5, air: 0.5, unit: 0.35 };
 const MISS_MID = 1 / 3 + (2 / 3) * 0.6;
+/** WW2: our hit chance on a target in smoke (beyond 50 px), times the usual. */
+const SMOKE_HIT = 0.5;
+/** WW2: penetration (mm) from which a gun counts as anti-tank: it fires at any tank, even one it can't get through. */
+const AT_PEN = 40;
 /**
  * The attackers' misses the same way, by weapon (EnemyGun.fx): rising with distance, their suppression and
  * the dark; hits are compensated alike. Salvo rockets scatter anyway; satchels, flames and rams don't miss.
  */
+/** WW2: attackers' weapons that fire on known positions without a line of sight (and by night). */
+const E_INDIRECT = new Set(['mortar', 'arty', 'rocket', 'katyusha', 'nebel', 'stuka']);
 const E_MISS: Record<string, number> = {
   rifle: 0.35, mosin: 0.35, smg: 0.4, ppsh: 0.4, mg: 0.35, maxim: 0.35, dt: 0.35, sniper: 0.2,
   tank: 0.4, tiger: 0.35, ptrd: 0.4, bazooka: 0.45, schreck: 0.45, rocket: 0.5, mortar: 0.5, arty: 0.5, stuka: 0.5,
@@ -355,6 +361,8 @@ export const MODE_AMBUSH = 4;
 const REVEAL_T = 3;
 const KNOWN_T = 4;
 /** WW2 supply: s of sustained fire in a full stock of ammunition, by role (artillery and AT guns run dry first). */
+/** WW2 ammunition supply (stocks, depots refilling guns, trucks): switched off, guns never run dry. */
+const SUPPLY_ON = false;
 const AMMO_S: Partial<Record<Role, number>> = { gun: 100, bunker: 100, sniper: 80, flame: 40, at: 60, cannon: 60, arty: 50 };
 /** Fire rate of a gun that has run dry: the crew scrounges what it can. */
 export const EMPTY_RATE = 0.4;
@@ -437,10 +445,13 @@ const SIGHT_TICKS = 15;
 const FLASH_SEEN = 2.5;
 /** Ticks between supply rounds (depots, headquarters, trucks). */
 const SUPPLY_TICKS = 30;
-/** WW2 smoke screens at once; s they last; px radius. */
+/** WW2 smoke screens at once; px radius (a cloud clears in SMOKE_MIN..SMOKE_MAX s). */
 export const MAX_SMOKE = 64;
-const SMOKE_T = 6;
+const SMOKE_MIN = 5;
+const SMOKE_MAX = 8;
 export const SMOKE_R = 40;
+/** WW2: px round our headquarters (beyond its walls) where smoke is never laid. */
+const NO_SMOKE_R = 220;
 
 /** WW2 skirmish weather, from the seed (without touching the game's random numbers). */
 function skirmishWeather(seed: number): Weather {
@@ -534,6 +545,8 @@ export class Sim {
   readonly litGrid = new Uint8Array(COLS * ROWS);
   /** findTarget(): past this (squared) distance, only lit targets (night; 0 off). */
   private dimR2 = 0;
+  /** findTarget(): an anti-tank gun falls back on armour it can't get through (it never stops firing at tanks). */
+  private anyTarget = false;
   /** The sight multiplier the towers' part of the fog was built with. */
   private sightStep = -1;
   /** WW2 supply: s until a headquarters can send the next truck; our trucks' unit kind (-1 none). */
@@ -1754,18 +1767,22 @@ export class Sim {
       if (j !== i && ENEMIES[this.eKind[j]].inf) n++;
     });
     this.eEscort[i] = n > 0 ? 1 : 0;
-    if (def.fixed || this.eRetreat[i] || this.smokeWave[this.eWave[i] & 63] >= 2 || this.smCount >= MAX_SMOKE) return;
-    // a strongpoint ahead (concrete, a dug-in tank, our headquarters) that they know about
+    if (!def.smoke || def.fixed || this.eRetreat[i] || this.smokeWave[this.eWave[i] & 63] >= 2 || this.smCount >= MAX_SMOKE) return;
+    // a strongpoint ahead (concrete, a dug-in tank: not our headquarters) that they know about
     for (const t of this.towers) {
-      if (t.wreck || (!t.base && this.fortOf(t) < 25) || this.towerHidden(t)) continue;
+      if (t.wreck || t.base || this.fortOf(t) < 25 || this.towerHidden(t)) continue;
       const d2 = (t.x - x) ** 2 + (t.y - y) ** 2;
       if (d2 > 230 * 230 || d2 < 90 * 90) continue;
+      // smoke shells on the strongpoint itself: its crew can't see out
+      const sx = t.x;
+      const sy = t.y;
+      if (this.nearBase(sx, sy)) return;
       const k = this.smCount++;
-      this.smX[k] = x + (t.x - x) * 0.65;
-      this.smY[k] = y + (t.y - y) * 0.65;
-      this.smT[k] = SMOKE_T * 1.5;
+      this.smX[k] = sx;
+      this.smY[k] = sy;
+      this.smT[k] = this.rng.range(SMOKE_MIN, SMOKE_MAX);
       this.smokeWave[this.eWave[i] & 63]++;
-      for (let s = 0; s < 8; s++) this.fx(FX_SMOKE, 0, this.smX[k], this.smY[k], this.vr.range(-60, 60), this.vr.range(-60, 60), 1.8, 12, 44, 0.8, 0xe8e8e0, 1.2, 6);
+      this.smokePuffs(k, 16);
       this.ev(EV_BOOM, this.smX[k], this.smY[k], 0.5);
       return;
     }
@@ -2077,6 +2094,31 @@ export class Sim {
     return Math.max(r * CREW_SIGHT, TOWER_SIGHT) * mult * (this.crewRank(t) >= 2 ? 1.15 : 1);
   }
 
+  /**
+   * For the overlay (read-only): the cells within `range` of (x, y) that a crew there can't see (trees, rocks,
+   * hills or hulks in the way), as runs of [row, first col, last col].
+   */
+  blindRuns(x: number, y: number, range: number): number[] {
+    const out: number[] = [];
+    const r = Math.ceil(range / TILE);
+    const c0 = Math.floor(x / TILE);
+    const r0 = Math.floor(y / TILE);
+    for (let row = Math.max(0, r0 - r); row <= Math.min(ROWS - 1, r0 + r); row++) {
+      let run = -1;
+      for (let c = Math.max(0, c0 - r); c <= Math.min(COLS - 1, c0 + r) + 1; c++) {
+        const cx = (c + 0.5) * TILE;
+        const cy = (row + 0.5) * TILE;
+        const blind = c <= Math.min(COLS - 1, c0 + r) && (cx - x) ** 2 + (cy - y) ** 2 <= range * range && !this.clearLine(x, y, cx, cy);
+        if (blind && run < 0) run = c;
+        else if (!blind && run >= 0) {
+          out.push(row, run, c - 1);
+          run = -1;
+        }
+      }
+    }
+    return out;
+  }
+
   /** Can tower t see cell c (within `range`)? */
   private towerSeesCell(t: Tower, c: number, range: number): boolean {
     const m = this.losMask(t, range);
@@ -2094,6 +2136,28 @@ export class Sim {
     const dy = ((this.eY[i] / TILE) | 0) - Math.floor(t.y / TILE);
     if (dx < -m.r || dx > m.r || dy < -m.r || dy > m.r) return false;
     return m.mask[(dy + m.r) * (2 * m.r + 1) + dx + m.r] === 1;
+  }
+
+  /**
+   * Direct fire (WW2): the gun sees the target itself, or anything of ours does and the line of fire is
+   * clear of trees, rocks and hills (a hulk hides what is behind it from the crew, but doesn't stop a shell).
+   */
+  private gunSees(t: Tower, i: number, range: number): boolean {
+    return this.towerSees(t, i, range) || (this.seen(i) && this.fireLine(t.x, t.y, this.eX[i], this.eY[i]));
+  }
+
+  /** clearLine() that ignores hulks: only the terrain stops a shot. */
+  private fireLine(x0: number, y0: number, x1: number, y1: number): boolean {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const n = Math.ceil(Math.hypot(dx, dy) / (TILE * 0.5));
+    for (let k = 1; k < n; k++) {
+      const c = ((x0 + (dx * k) / n) / TILE) | 0;
+      const r = ((y0 + (dy * k) / n) / TILE) | 0;
+      const g = r * COLS + c;
+      if (c >= 0 && r >= 0 && c < COLS && r < ROWS && this.sightBlock[g] && this.hulkGrid[g] !== 1) return false;
+    }
+    return true;
   }
 
   /** WW2 fog of war: is attacker i seen by anything of ours (or marked, or just gave itself away by firing)? Always in classic games. */
@@ -2253,15 +2317,15 @@ export class Sim {
 
   // ============================================================ WW2: supply
 
-  /** Does this emplacement fire ammunition that runs out? */
+  /** Does this emplacement fire ammunition that runs out? (No longer: guns are always supplied.) */
   usesAmmo(t: Tower): boolean {
-    return WW2 && !t.base && AMMO_S[t.kind] !== undefined && TOWERS[t.type].targeted;
+    return SUPPLY_ON && WW2 && !t.base && AMMO_S[t.kind] !== undefined && TOWERS[t.type].targeted;
   }
 
   /** A shot (or `n` s of a flamethrower's spray) out of tower t's stock. */
   private spend(t: Tower, rate: number, n = 1): void {
     const s = AMMO_S[t.kind];
-    if (s && !t.base) t.ammo = Math.max(0, t.ammo - n / (s * Math.max(0.05, rate)));
+    if (s && SUPPLY_ON && !t.base) t.ammo = Math.max(0, t.ammo - n / (s * Math.max(0.05, rate)));
   }
 
   /** How far depot or headquarters t supplies the guns round it (0: it doesn't). */
@@ -2539,6 +2603,12 @@ export class Sim {
     const x = this.eX[i];
     const y = this.eY[i];
     const r2 = g.range * g.range;
+    // direct fire needs a clear line (trees, rocks, hills); at night they see only so far, unless a flare
+    // lights the target or its muzzle flash just gave it away
+    const direct = !g.air && !this.eAir[i] && !E_INDIRECT.has(g.fx);
+    const dim = this.dimMult < 1 && !E_INDIRECT.has(g.fx) ? (g.range * this.dimMult) ** 2 : Infinity;
+    const sees = (tx: number, ty: number, d2: number, flash: boolean) =>
+      (d2 <= dim || flash || this.litGrid[((ty / TILE) | 0) * COLS + ((tx / TILE) | 0)] === 1) && (!direct || this.fireLine(x, y, tx, ty));
     let best = 0;
     let bestScore = -Infinity;
     for (const t of this.towers) {
@@ -2553,7 +2623,7 @@ export class Sim {
       else if (def.inf) s += lv.supp ? 50 : 0;
       if (g.fx === 'rocket') s += t.size * 20;
       else if (g.fx === 'kamikaze') s += t.spent / 6; // the most valuable target in reach
-      if (s > bestScore) {
+      if (s > bestScore && sees(t.x, t.y, d2, t.seenT > 0)) {
         bestScore = s;
         best = t.id;
       }
@@ -2566,7 +2636,7 @@ export class Sim {
       let s = -Math.sqrt(d2);
       if (g.fx === 'tank') s += ud.arm ? 110 : 0;
       else if (def.inf) s += ud.inf ? 40 : 0;
-      if (s > bestScore) {
+      if (s > bestScore && sees(this.uX[u], this.uY[u], d2, false)) {
         bestScore = s;
         best = -u - UNIT_ID0;
       }
@@ -2576,7 +2646,7 @@ export class Sim {
       const d2 = (h.x - x) ** 2 + (h.y - y) ** 2;
       if (d2 <= r2) {
         const s = -Math.sqrt(d2) + (def.stealth ? 200 : def.inf ? 30 : 0);
-        if (s > bestScore) best = -1;
+        if (s > bestScore && sees(h.x, h.y, d2, false)) best = -1;
       }
     }
     return best;
@@ -3378,13 +3448,38 @@ export class Sim {
   /** A tank under anti-tank fire screens itself with smoke: guns can't pick targets inside it except point-blank. */
   private popSmoke(i: number): void {
     this.eSmokeUsed[i] = 1;
-    if (this.smCount >= MAX_SMOKE) return;
+    if (this.smCount >= MAX_SMOKE || this.nearBase(this.eX[i], this.eY[i])) return;
     const k = this.smCount++;
     // the cloud drifts out ahead of the tank
     this.smX[k] = this.eX[i] + Math.cos(this.eAng[i]) * 14;
     this.smY[k] = this.eY[i] + Math.sin(this.eAng[i]) * 14;
-    this.smT[k] = SMOKE_T;
-    for (let n = 0; n < 6; n++) this.fx(FX_SMOKE, 0, this.smX[k], this.smY[k], this.vr.range(-50, 50), this.vr.range(-50, 50), 1.6, 10, 40, 0.8, 0xe8e8e0, 1.2, 6);
+    this.smT[k] = this.rng.range(SMOKE_MIN, SMOKE_MAX);
+    this.smokePuffs(k, 14);
+  }
+
+  /** Is the point inside a smoke cloud (a gun there fires half blind)? */
+  inSmoke(x: number, y: number): boolean {
+    for (let k = 0; k < this.smCount; k++) if ((x - this.smX[k]) ** 2 + (y - this.smY[k]) ** 2 <= SMOKE_R * SMOKE_R) return true;
+    return false;
+  }
+
+  /** Our headquarters' guns have every approach ranged: smoke near it hides nothing (none is laid there). */
+  private nearBase(x: number, y: number): boolean {
+    for (const t of this.towers) {
+      if (t.wreck || (!t.base && (!this.objectiveId || t.id !== this.objectiveId))) continue;
+      const r = NO_SMOKE_R + t.size * TILE * 0.5;
+      if ((t.x - x) ** 2 + (t.y - y) ** 2 <= r * r) return true;
+    }
+    return false;
+  }
+
+  /** A burst of `n` thick puffs filling smoke cloud k (cosmetic). */
+  private smokePuffs(k: number, n: number): void {
+    for (let s = 0; s < n; s++) {
+      const a = this.vr.next() * TWO_PI;
+      const r = Math.sqrt(this.vr.next()) * SMOKE_R * 0.7;
+      this.fx(FX_SMOKE, 0, this.smX[k] + Math.cos(a) * r, this.smY[k] + Math.sin(a) * r, this.vr.range(-30, 30), this.vr.range(-30, 30), 2.6, 26, 62, 0.9, 0xeeeee8, 0.6, 8);
+    }
   }
 
   private updateSmoke(): void {
@@ -3396,16 +3491,23 @@ export class Sim {
         this.smT[k] = this.smT[last];
         continue;
       }
-      if ((this.ticks + k * 5) % 8 === 0) {
+      // a thick white bank that thins out as it fades
+      if ((this.ticks + k * 5) % 3 === 0) {
         const a = this.vr.next() * TWO_PI;
-        const r = this.vr.next() * SMOKE_R * 0.8;
-        this.fx(FX_SMOKE, 0, this.smX[k] + Math.cos(a) * r, this.smY[k] + Math.sin(a) * r, this.vr.range(-8, 8), this.vr.range(-8, 8), 2.4, 18, 44, 0.55, 0xdcdcd4, 0.6, 8);
+        const r = Math.sqrt(this.vr.next()) * SMOKE_R * 0.85;
+        const fade = Math.min(1, this.smT[k] / 1.5);
+        this.fx(FX_SMOKE, 0, this.smX[k] + Math.cos(a) * r, this.smY[k] + Math.sin(a) * r, this.vr.range(-10, 10), this.vr.range(-10, 10), 3, 30, 66, 0.85 * fade, 0xe6e6e0, 0.4, 10);
       }
     }
-    // who is inside a cloud this tick (read by targeting)
+    // who is hidden in a cloud this tick (read by targeting): only those standing still in it, a tank
+    // driving through comes out of it at once
     for (let n = 0; n < this.liveCount; n++) {
       const i = this.live[n];
       let inside = 0;
+      if ((this.eX[i] - this.ePx[i]) ** 2 + (this.eY[i] - this.ePy[i]) ** 2 > 0.01) {
+        this.eSmoked[i] = 0;
+        continue;
+      }
       for (let k = 0; k < this.smCount && !inside; k++) {
         if ((this.eX[i] - this.smX[k]) ** 2 + (this.eY[i] - this.smY[k]) ** 2 <= SMOKE_R * SMOKE_R) inside = 1;
       }
@@ -3775,8 +3877,13 @@ export class Sim {
     let t = this.uTgt[u];
     if (t >= 0 && (!this.eAlive[t] || this.eUid[t] !== this.uTuid[u])) t = this.uTgt[u] = -1;
     if (g && think) {
-      const look = (stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH * 0.6 : g.range) * this.dimMult;
-      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range, 2);
+      // troops look for a fight round their post: anything in their own sight, or that the rest of us see
+      const look = stance === ST_HUNT ? HUNT_RANGE : stance === ST_GUARD ? g.range + GUARD_LEASH : g.range;
+      this.anyTarget = g.pen >= AT_PEN;
+      if (this.dimMult < 1) this.dimR2 = (g.range * this.dimMult) ** 2;
+      t = this.findTarget(x, y, look, !!g.hitsAir, true, 3, -1, 0, g.pen, false, g.range, 4);
+      this.anyTarget = false;
+      this.dimR2 = 0;
       this.uTgt[u] = t;
       if (t >= 0) this.uTuid[u] = this.eUid[t];
       if (!this.uOrder[u] && this.uTask[u] < 0 && this.uLay[u] < 0 && !dug) {
@@ -3855,8 +3962,8 @@ export class Sim {
     const tx = this.eX[t];
     const ty = this.eY[t];
     const d2 = (tx - x) ** 2 + (ty - y) ** 2;
-    // (at night as far as they can see)
-    if (d2 > (g.range * this.dimMult) ** 2) return;
+    // (at night as far as they can see, unless a flare or someone of ours has it in sight)
+    if (d2 > g.range * g.range || (d2 > (g.range * this.dimMult) ** 2 && !this.seen(t) && !this.litGrid[this.eGCell[t]])) return;
     if (g.still && moving) return;
     const want = Math.atan2(ty - y, tx - x);
     if (!moving) {
@@ -4562,7 +4669,7 @@ export class Sim {
           if (!def.banzai) sp *= 1 - 0.55 * this.eSupp[i];
           this.eSupp[i] = Math.max(0, this.eSupp[i] - 0.45 * DT);
         }
-      }
+      } else if (this.eSupp[i] > 0) this.eSupp[i] = Math.max(0, this.eSupp[i] - 0.3 * DT); // a buttoned-up crew looks out again
       const route = this.map.routes[this.eRoute[i]];
       let tx: number;
       let ty: number;
@@ -4796,7 +4903,9 @@ export class Sim {
       const range = !src ? 0 : lv ? lv.range * src.rangeMult : src === this.unitSrc ? this.proxyRange : this.heroRange();
       const r = this.penRatio(i, pen, top || !src, src?.x ?? 0, src?.y ?? 0, range);
       // under anti-tank fire, a tank crew pops smoke once
-      if (!top && pen >= 40 && def.arm[0] >= 40 && !this.eSmokeUsed[i] && this.rng.next() < 0.35) this.popSmoke(i);
+      if (!top && pen >= 40 && def.smoke && !this.eSmokeUsed[i] && this.rng.next() < 0.35) this.popSmoke(i);
+      // anything hitting the hull makes the crew button up: they aim worse for a while
+      if (src && !top) this.eSupp[i] = Math.min(1, this.eSupp[i] + (lv?.supp ?? 0) * 0.5 + 0.03);
       if (r < 1) {
         // bounced: a glancing hit near the limit still chips something off
         const big = a >= 20;
@@ -4890,8 +4999,8 @@ export class Sim {
       if (d2 > range * range) continue;
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       inRange++;
-      if (d2 > dim2 && !this.eAir[i] && !this.litGrid[this.eGCell[i]]) dark++;
-      else if (sight === 1 && !this.towerSees(t, i, range)) blind++;
+      if (sight === 1 && !this.gunSees(t, i, range)) blind++;
+      else if (d2 > dim2 && !this.eAir[i] && !this.litGrid[this.eGCell[i]] && !this.seen(i)) dark++;
       else if (sight === 3 && !this.seen(i)) fog++;
       else if (spot && d2 > spot * spot && (!WW2 || this.eGar[i] >= 0) && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
       else if (this.eSmoked[i] && d2 > 50 * 50) smoke++;
@@ -4905,8 +5014,8 @@ export class Sim {
         : '';
     }
     if (!inRange) return '';
-    if (dark && dark === inRange) return `Too dark to see that far: ${dark} in range beyond ${Math.round(Math.sqrt(dim2))} px. A mortar firing flares would light them up.`;
-    if (blind && blind === inRange) return `No line of sight: ${blind} in range behind trees, hills or ruins.`;
+    if (dark && dark === inRange) return `Too dark to see that far: ${dark} in range beyond ${Math.round(Math.sqrt(dim2))} px. A mortar firing flares, or a scout or post that sees them, would let it fire.`;
+    if (blind && blind === inRange) return `No line of sight: ${blind} in range behind trees, hills or ruins (or wrecks nothing of ours sees past).`;
     if (fog && fog === inRange) return `Can't see them: ${fog} in range that nothing of ours has in sight (behind cover, or in the fog).`;
     if (unseen) return WW2
       ? `Needs a spotter: their base positions in range are shelled only with an observation post in sight of them (or a recon flight).`
@@ -4915,9 +5024,11 @@ export class Sim {
       const e = ENEMIES[this.eKind[armoured]];
       const side = top ? 3 : this.facing(armoured, t.x, t.y);
       const here = top ? pen : pen * penFalloff(Math.sqrt(armD) / range);
-      return `Holding fire: the ${e.name}'s ${['front', 'side', 'rear', 'top'][side]} armour is too thick from here (${Math.round(here)} mm against ${e.arm![side]} mm). It waits for it to come closer or turn.`;
+      if (smoke) return 'Firing into smoke: about half its rounds go astray.';
+      if (pen < AT_PEN) return `Holding fire: the ${e.name}'s ${['front', 'side', 'rear', 'top'][side]} armour is too thick from here (${Math.round(here)} mm against ${e.arm![side]} mm). It waits for it to come closer or turn.`;
+      return `Firing, but the ${e.name}'s ${['front', 'side', 'rear', 'top'][side]} armour is too thick from here (${Math.round(here)} mm against ${e.arm![side]} mm): the rounds bounce off, though they make its crew button up and aim worse. Closer or from the side they would go through.`;
     }
-    if (smoke) return 'Holding fire: the targets in range are in smoke.';
+    if (smoke) return 'Firing into smoke: about half its rounds go astray.';
     return '';
   }
 
@@ -4944,11 +5055,19 @@ export class Sim {
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
       // artillery: beyond its own eyes it needs a spotter (WW2: only to shell their base; attackers in sight are fair game)
       if (spot > 0 && d2 > spot * spot && (!WW2 || this.eGar[i] >= 0) && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
-      if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
-      if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
-      if (this.dimR2 && d2 > this.dimR2 && !this.litGrid[this.eGCell[i]] && !this.eAir[i]) continue;
-      // WW2 sight: the shooter's own line of sight (1: a tower's mask, 2: a raycast), or anyone's (3: indirect fire)
-      if (sight === 1 ? !this.towerSees(this.sightTower!, i, range) : sight === 2 ? !this.eAir[i] && !this.clearLine(x, y, this.eX[i], this.eY[i]) : sight === 3 && !this.seen(i)) continue;
+      // into smoke: only if there is nothing clearer (and fewer hits); armour too thick: only for a gun told to
+      // fire at anything (the rounds bounce, but the crew buttons up)
+      const smoked = this.eSmoked[i] && d2 > 50 * 50;
+      const bounce = pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange);
+      if (bounce && !this.anyTarget) continue;
+      // WW2 sight: the shooter's own line of sight (1: a tower's mask, 2: a raycast), or anyone's (3: indirect fire);
+      // direct fire also takes what the rest of us see (field vision), with a clear line of fire past any hulks
+      // (4, units: their own raycast or field vision in gun range, field vision beyond it, where they go to fight)
+      if (sight === 1 ? !this.gunSees(this.sightTower!, i, range) : sight === 2 ? !this.eAir[i] && !this.clearLine(x, y, this.eX[i], this.eY[i])
+        : sight === 3 ? !this.seen(i)
+        : sight === 4 && !this.eAir[i] && !(d2 <= gunRange * gunRange ? this.clearLine(x, y, this.eX[i], this.eY[i]) || (this.seen(i) && this.fireLine(x, y, this.eX[i], this.eY[i])) : this.seen(i))) continue;
+      // at night only as far as the crew sees, unless a flare or someone of ours has it in sight
+      if (this.dimR2 && d2 > this.dimR2 && !this.litGrid[this.eGCell[i]] && !this.eAir[i] && !this.seen(i)) continue;
       let s: number;
       switch (mode) {
         case 0: s = -this.eRemain[i]; break;
@@ -4956,6 +5075,8 @@ export class Sim {
         case 2: s = this.eHp[i] + this.eShield[i]; break;
         default: s = -d2;
       }
+      if (smoked) s -= 1e9;
+      if (bounce) s -= 2e9;
       if (s > bestScore) {
         bestScore = s;
         best = i;
@@ -5245,10 +5366,12 @@ export class Sim {
     }
     // at night direct fire only reaches as far as the crews can see, except into the light of a flare
     const dim = WW2 && !indirect ? this.dimMult : 1;
-    if (dim < 1 && this.flCount) this.dimR2 = (range * dim) ** 2;
+    if (dim < 1) this.dimR2 = (range * dim) ** 2;
     this.sightTower = t;
-    const tgt = this.findTarget(t.x, t.y, this.dimR2 ? range : range * dim, def.hitsAir, def.hitsGround, ambush || t.mode === MODE_FLARE ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at', range, sight);
+    this.anyTarget = WW2 && pen >= AT_PEN;
+    const tgt = this.findTarget(t.x, t.y, range, def.hitsAir, def.hitsGround, ambush || t.mode === MODE_FLARE ? 0 : t.mode, -1, spot, pen, !!lv.splash && t.kind !== 'at', range, sight);
     this.dimR2 = 0;
+    this.anyTarget = false;
     if (tgt < 0) {
       if (t.kind === 'gatling') t.spin = Math.max(0, t.spin - DT * 0.5);
       if (t.kind === 'gatling') t.heat = Math.max(0, t.heat - DT * 0.4);
@@ -5324,7 +5447,8 @@ export class Sim {
     let hit = true;
     if (WW2 && !lv.salvo) {
       const air = this.eAir[tgt] === 1;
-      hit = this.rng.next() < this.hitChance(t, Math.hypot(tx - t.x, ty - t.y), range, air);
+      const d = Math.hypot(tx - t.x, ty - t.y);
+      hit = this.rng.next() < this.hitChance(t, d, range, air) * ((this.eSmoked[tgt] && d > 50) || this.inSmoke(t.x, t.y) ? SMOKE_HIT : 1);
       dmg *= this.hitComp(air ? 'air' : t.kind);
     }
     const splash = (lv.splash ?? 0) * (rank === 3 && (t.kind === 'cannon' || t.kind === 'arty') ? ELITE_SPLASH : 1);
