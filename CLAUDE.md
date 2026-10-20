@@ -365,6 +365,13 @@ Pass ~20; battles 11 of 12 on Easy (Seelow Heights lost at 24/30). Growing the a
 made every map fall by wave 12-20 even at emplacement hp ×5: don't.
 With turrets, moving fire, paid engineers and units of the war's level: Easy wins Open Field and Crossfire 3 of 3,
 Boulder Pass ~28; Normal Open Field ~26, Crossfire ~36, Boulder Pass ~23; battles 12 of 12 on Easy.
+Normal was then never won: the bot's defence held to wave ~25 but its howitzers came too late to take their HQ
+(it heals itself when left alone). Now the WW2 attackers have `WW2_HP` (0.85) × the difficulty's hit points (`Sim.waveHp`;
+`hpMult` itself stays, it gates breaching and scales their damage), kills pay `WW2_BOUNTY` (1.2) and their HQ has 3,600 hp
+(was 6,000). `VERBOSE=1` shows their HQ's health each wave. Results (SEEDS=3): Normal wins Open Field 3 of 3, Crossfire
+3 of 3, Boulder Pass 2 of 3; Easy 9 of 9; Hard 3 of 9 (Boulder Pass falls at ~22); battles 12 of 12 on Easy and 11 of
+12 on Normal (Seelow Heights lost at 25/30). Other sides on Normal (SEEDS=2): su, us and jp win Open Field 2 of 2 and
+Crossfire 1-2 of 2; Boulder Pass su 1 of 2, us and jp 0 of 2.
 
 ## Known limitations
 

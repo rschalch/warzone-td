@@ -307,7 +307,7 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
       lastWave = sim.wave;
       const kinds = new Map<string, number>();
       for (const t of sim.towers) kinds.set(TOWERS[t.type].kind, (kinds.get(TOWERS[t.type].kind) ?? 0) + 1);
-      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} wrecks ${sim.towers.filter((t) => t.wreck).length} hurt ${sim.towers.filter((t) => t.hp < sim.maxHp(t)).length} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}`);
+      console.log(`  w${sim.wave} t${(sim.time | 0)}s lives ${sim.lives} money ${sim.money | 0} wrecks ${sim.towers.filter((t) => t.wreck).length} hurt ${sim.towers.filter((t) => t.hp < sim.maxHp(t)).length} towers ${[...kinds].map(([k, n]) => k + n).join(' ')} leaks ${JSON.stringify([...leaks])}${WW2 ? ` enemyHQ ${Math.round(100 * sim.enemyHqHealth)}%` : ''}`);
     }
     if (tick % 30 === 0 && !solo) decide(sim, built);
     if (WW2 && tick % 30 === 15 && !solo) offensive(sim, built);

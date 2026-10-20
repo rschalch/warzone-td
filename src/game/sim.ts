@@ -274,6 +274,9 @@ const RELIEF_T = 90;
 /** WW2 bases: s without being hit before the enemy repairs a position, and the share of its hp per s. */
 const GARRISON_QUIET = 12;
 const GARRISON_REPAIR = 0.005;
+/** WW2: attackers' hit points against the difficulty's, and the bounty per kill (repairs and rubble eat into the money). */
+const WW2_HP = 0.85;
+const WW2_BOUNTY = 1.2;
 /** WW2 bases: hit points of the player's headquarters compared with a Field HQ of its level. */
 const BASE_HP = 9;
 const BASE_FORT = 80;
@@ -610,6 +613,8 @@ export class Sim {
   money = 0;
   lives = 0;
   private readonly hpMult: number;
+  /** the attackers' hit points against their def (hpMult, less in WW2) */
+  private readonly waveHp: number;
   private readonly routeFactor: number;
   private readonly bountyMult: number;
   readonly events: number[] = [];
@@ -929,7 +934,8 @@ export class Sim {
     this.money = Math.round(START_MONEY * diff.money * this.routeFactor * (this.battle?.money ?? 1)) + 50 * perk(config, 'logistics');
     this.lives = config.modifiers.includes('oneLife') ? 1 : diff.lives + 5 * perk(config, 'fortify');
     this.hpMult = diff.hp;
-    this.bountyMult = 1 + 0.1 * perk(config, 'bounty');
+    this.waveHp = diff.hp * (config.ww2 ? WW2_HP : 1);
+    this.bountyMult = (1 + 0.1 * perk(config, 'bounty')) * (config.ww2 ? WW2_BOUNTY : 1);
     this.itemMax = 1 + perk(config, 'airpower');
     this.items.fill(this.itemMax);
     for (let i = 0; i < map.grid.length; i++) {
@@ -4742,7 +4748,7 @@ export class Sim {
     this.eKind[i] = kind;
     this.eAir[i] = def.air ? 1 : 0;
     this.eRoute[i] = routeIdx;
-    this.eMaxHp[i] = this.eHp[i] = def.hp * hpScale(wave) * this.hpMult;
+    this.eMaxHp[i] = this.eHp[i] = def.hp * hpScale(wave) * this.waveHp;
     this.eMaxShield[i] = this.eShield[i] = (def.shield ?? 0) * this.eMaxHp[i];
     this.eShieldCd[i] = 0;
     this.eHealCd[i] = 1;

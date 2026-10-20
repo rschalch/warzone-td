@@ -72,7 +72,7 @@ function garrison(foe: Faction): EnemyDef[] {
   // their positions fire the very guns of their arsenal (the headquarters: its MGs, at a longer reach from the walls)
   const arms = (slot: Slot) => gun(slot).weapon as WeaponId;
   return [
-    { name: `${adj} Headquarters`, hp: 6000, speed: 0, reward: 0, armor: 0, air: false, radius: 36, lives: 0, tex: `${gun('hq').turret!}_base`, bio: 0,
+    { name: `${adj} Headquarters`, hp: 3600, speed: 0, reward: 0, armor: 0, air: false, radius: 36, lives: 0, tex: `${gun('hq').turret!}_base`, bio: 0,
       arm: [100, 100, 100, 70], fixed: 'hq', spot: 220, gun: armsGun(arms('mg'), 'mg', { range: 150 }) },
     { name: gun('mg').name, hp: 260, speed: 0, reward: 12, armor: 0, air: false, radius: 9, lives: 0, tex: gun('mg').turret!, bio: 0.5,
       arm: [25, 25, 25, 12], fixed: 'mg', base: base(3), spot: 180, gun: armsGun(arms('mg'), 'mg') },
