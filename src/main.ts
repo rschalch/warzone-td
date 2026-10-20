@@ -10,7 +10,7 @@ import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
 import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from './game/defs';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
-import { parseMapCode } from './game/mapgen';
+import { parseMapCode, randomMap } from './game/mapgen';
 import { PARTNER } from './game/partner';
 import {
   Sim as SimClass,
@@ -1269,6 +1269,7 @@ async function boot(): Promise<void> {
     },
     Session,
     Sim: SimClass,
+    randomMap,
     /** Tower type and unit kind by name, for scripted checks. */
     towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),
     towerDef: (type: number) => TOWERS[type],

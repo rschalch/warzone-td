@@ -116,7 +116,9 @@ easiest with a small `playwright-core` script like `scripts/smoke.mjs`; take scr
   (`Hud.buildPalette()`); a column of badges on each tile says what it is good against (soldier, tank, plane:
   `targetRating()` in defs.ts; dim = only somewhat, also in the panel); the names show under the icons when the
   window is at least 840 px tall (squeezed to fit by `Hud.fitNames()`), and always in the tooltip and the explain
-  panel. Info-panel buttons must fit their labels on one line (`npm run smoke` checks).
+  panel. Info-panel buttons must fit their labels on one line (`npm run smoke` checks). The info panel and banner
+  are rebuilt with innerHTML when their content changes; never while a pointer is pressed on them (`Hud.held`), or the
+  click is lost. Range sliders have their own CSS (no box padding) so the thumb reaches both ends.
 - Clicking a tower on the battlefield **selects it even while a build tool is active**.
 - The side panel **explains** whatever is clicked or hovered (towers, enemies, commander, items, abilities).
 - **10 upgrade levels** per tower; every level raises damage, range and fire rate and **looks different**.
@@ -194,9 +196,10 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - The bot attacks the enemy HQ (`offensive()` in bot.ts: Fire Missions, the super-weapon, howitzers within reach).
 - AI partner: `Partner.chooseWW2()` picks arsenal slots by the next waves' armour / aircraft / infantry share, and
   rebuilds its own rubble first.
-- Bases (all WW2 games): `Sim.setUpBases()` puts our headquarters (the `hq` slot, `Tower.base` = its hp multiplier,
-  `bases[route]` = its id; a battle's objective serves instead) near each exit and makes the cells round it the
-  route's goal (`route.exit` is rewritten in place, so the flow fields march on it); attackers that get there hold
+- Bases (all WW2 games): `Sim.setUpBases()` puts our one headquarters (the `hq` slot, `Tower.base` = its hp multiplier,
+  `bases[route]` = its id; a battle's objective serves instead) across the map from theirs (their HQ mirrored through
+  the map centre, 3 cells in from the edges); a route whose entry would be near it enters from its other end instead
+  (entry/exit swapped, other entries' guns skipped near our HQ). The cells round it become every route's goal (`route.exit` is rewritten in place, so the flow fields march on it); attackers that get there hold
   and fight, aircraft bomb it and fly home (`overBase`), nothing leaks. `lives` shows its health in %. The enemy's
   base is fixed attackers (`EnemyDef.fixed`: 'hq' | 'mg' | 'at', appended to every army by `garrison()` in ww2.ts)
   at the entries, tracked in the `g*` arrays (slot 0 = their HQ) and excluded from wave-clear checks (`attackers`,
@@ -295,6 +298,8 @@ units, so it never captures positions. Single runs vary a lot between seeds: com
 After the crew ranks / accuracy / 5×5 HQ round: Easy wins Open Field 3 of 5 and Crossfire 3 of 3, Boulder Pass
 ~28; Normal Crossfire ~27, Boulder Pass ~22. Keep the enemy HQ where it is: further from the road, the bot's guns
 can't reach it and it stops winning.
+With our HQ across the map from theirs (one HQ for every route): Easy wins Crossfire 3 of 3, Open Field and Boulder
+Pass 1 of 3, Badlands 3 of 3; Normal Open Field ~28, Crossfire ~28, Boulder Pass ~19, Badlands won 1 of 3.
 
 ## Known limitations
 

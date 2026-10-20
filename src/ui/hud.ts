@@ -203,6 +203,8 @@ export class Hud {
   private readonly heroBtn: HTMLButtonElement;
   private cache = new Map<HTMLElement, string>();
   private infoKey = '';
+  /** A panel being pressed: it isn't rebuilt until the button is released, or the click would be lost. */
+  private held: HTMLElement | null = null;
   private infoSubject = '';
   private reportTimer = 0;
   /** Recent damage totals per tower, sampled once a second, for live DPS. */
@@ -331,6 +333,9 @@ export class Hud {
       else if (el.dataset.ab) act.ability(Number(el.dataset.ab));
       else if (el.dataset.mode) act.mode(Number(el.dataset.mode));
     });
+    for (const el of [this.info, this.bannerEl]) el.addEventListener('pointerdown', () => (this.held = el));
+    // the click follows the pointerup in the same task, before the next rebuild
+    for (const ev of ['pointerup', 'pointercancel'] as const) window.addEventListener(ev, () => (this.held = null));
     this.bannerEl.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('[data-act="skip"]')) act.skipWave();
     });
@@ -408,7 +413,7 @@ export class Hud {
     const replay = ui.mode === 'replay';
     this.next.disabled = !sim.canCallWave || replay;
     this.undoBtn.disabled = !sim.canUndo || replay;
-    this.set(this.bannerEl, ui.banner, true);
+    if (this.held !== this.bannerEl) this.set(this.bannerEl, ui.banner, true);
     this.bannerEl.classList.toggle('show', !!ui.banner);
 
     for (let i = 0; i < this.buttons.length; i++) {
@@ -526,7 +531,7 @@ export class Hud {
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
-    if (key === this.infoKey) return;
+    if (key === this.infoKey || this.held === this.info) return;
     this.infoKey = key;
     // something else selected: start its panel at the top, where its buttons are
     const subject = what ? `i${what.kind}:${what.index}` : ui.units.length ? `u${ui.units.join()}` : ui.enemy >= 0 ? `e${ui.enemy}`

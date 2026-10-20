@@ -279,6 +279,8 @@ const BASE_FORT = 80;
 const BASE_VALUE = 400;
 /** WW2: our headquarters is a walled compound this many cells across (smaller where the ground won't take it). */
 const BASE_SIZE = 5;
+/** WW2: where their headquarters stands from the first entry, in cells (inwards, sideways). */
+const HQ_POST: [number, number] = [3.5, 4.5];
 /** WW2 bases: the headquarters' own machine guns, and its anti-tank gun (damage, penetration, reload). */
 const BASE_GUN_RANGE = 150;
 const BASE_AT = [90, 110, 3] as const;
@@ -895,33 +897,51 @@ export class Sim {
   }
 
   /**
-   * WW2: both sides have a base. Ours is a headquarters near the end of every route (a battle's
-   * objective if it has one): the attackers march on it and fight there instead of leaving the map.
-   * Theirs is a headquarters with gun positions around it at the first entry, and guns at the others.
+   * WW2: both sides have a base. Theirs is a headquarters with gun positions around it at the first
+   * entry, and guns at the others. Ours is one headquarters across the map from theirs (the point
+   * opposite through the centre; a battle's objective if it has one): every route now ends there, so
+   * the attackers march on it and fight there instead of leaving the map.
    */
   private setUpBases(): void {
+    const routes = this.map.routes;
+    // where their headquarters stands: a little in from where the first columns enter
+    const gate = (r: (typeof routes)[number]) => {
+      const c = r.entry[r.entry.length >> 1];
+      return [((c % COLS) + 0.5) * TILE, (((c / COLS) | 0) + 0.5) * TILE] as const;
+    };
+    const spot = (cx: number, cy: number, [ix, iy]: [number, number], fwd: number, side: number) =>
+      [Math.min(MAP_W - TILE, Math.max(TILE, cx + (ix * fwd - iy * side) * TILE)), Math.min(MAP_H - TILE, Math.max(TILE, cy + (iy * fwd + ix * side) * TILE))] as const;
+    const [hx, hy] = routes.length ? spot(...gate(routes[0]), routes[0].inDir, ...HQ_POST) : [MAP_W / 2, MAP_H / 2];
+
     const hq = TOWERS.findIndex((d) => d.slot === 'hq');
     const lifeScale = DIFFICULTIES[this.config.difficulty].lives / START_LIVES;
-    const routes = this.map.routes;
-    for (let k = 0; k < routes.length && k < this.bases.length; k++) {
-      const r = routes[k];
-      let t = this.objectiveId ? this.towerById.get(this.objectiveId) ?? null : null;
-      if (!t) {
-        const c = r.exit[r.exit.length >> 1];
-        const col = (c % COLS) - r.outDir[0] * 5;
-        const row = ((c / COLS) | 0) - r.outDir[1] * 5;
-        // one headquarters serves the routes that end near it
-        t = this.towers.find((o) => o.base > 0 && Math.abs(o.col - col) + Math.abs(o.row - row) < 12) ?? null;
-        for (let size = BASE_SIZE; !t && size >= TOWERS[hq].size; size--) t = this.placeNear(hq, col - (size >> 1), row - (size >> 1), 3, size);
+    let t = this.objectiveId ? this.towerById.get(this.objectiveId) ?? null : null;
+    if (!t) {
+      const col = Math.floor((MAP_W - hx) / TILE);
+      const row = Math.floor((MAP_H - hy) / TILE);
+      // with room behind it for guns, as in from the edge as theirs
+      const fit = (v: number, n: number, size: number) => Math.min(n - 3 - size, Math.max(3, v - (size >> 1)));
+      for (let size = BASE_SIZE; !t && size >= TOWERS[hq].size; size--) t = this.placeNear(hq, fit(col, COLS, size), fit(row, ROWS, size), 3, size);
+    }
+    if (t) {
+      // a route that would enter on our doorstep comes in from its other end instead
+      const centre = (cells: number[]) => {
+        const c = cells[cells.length >> 1];
+        return Math.hypot(((c % COLS) + 0.5) * TILE - t!.x, (((c / COLS) | 0) + 0.5) * TILE - t!.y);
+      };
+      for (let k = 1; k < routes.length; k++) {
+        const r = routes[k];
+        if (centre(r.entry) > Math.hypot(MAP_W, MAP_H) * 0.4 || centre(r.exit) <= centre(r.entry)) continue;
+        [r.entry, r.exit] = [r.exit, r.entry];
+        r.inDir = [-r.outDir[0], -r.outDir[1]];
+        r.airFrom = [r.airTo[0], r.airTo[1]];
       }
-      if (!t) continue;
       if (!t.base) {
         t.base = BASE_HP * lifeScale;
         t.hp = this.maxHp(t);
         t.spent = BASE_VALUE; // what repairs are reckoned from (it can't be sold)
       }
-      this.bases[k] = t.id;
-      // the route now ends all round the headquarters (the cells it is reached from)
+      // every route now ends all round the headquarters (the cells it is reached from)
       const ring: number[] = [];
       for (let dy = -1; dy <= t.size; dy++) {
         for (let dx = -1; dx <= t.size; dx++) {
@@ -930,41 +950,43 @@ export class Sim {
           if ((dx < 0 || dx >= t.size || dy < 0 || dy >= t.size) && c >= 0 && rr >= 0 && c < COLS && rr < ROWS) ring.push(rr * COLS + c);
         }
       }
-      r.exit.splice(0, r.exit.length, ...ring);
-      r.airTo[0] = t.x;
-      r.airTo[1] = t.y;
+      for (let k = 0; k < routes.length && k < this.bases.length; k++) {
+        const r = routes[k];
+        this.bases[k] = t.id;
+        r.exit.splice(0, r.exit.length, ...ring);
+        r.airTo[0] = t.x;
+        r.airTo[1] = t.y;
+      }
+      for (const f of this.fields) f.compute(this.blocked);
+      this.towerVersion++;
     }
-    for (const f of this.fields) f.compute(this.blocked);
-    this.towerVersion++;
 
-    // the enemy's base, a little in from where its columns enter
+    // the enemy's base
     const kind = (f: string) => ENEMIES.findIndex((e) => e.fixed === f);
     const at: [number, number][] = [];
     let g = 0;
-    const post = (k: number, cx: number, cy: number, ix: number, iy: number, fwd: number, side: number) => {
+    const post = (k: number, cx: number, cy: number, dir: [number, number], fwd: number, side: number) => {
       if (k < 0 || g >= MAX_GARRISON) return;
+      [this.gX[g], this.gY[g]] = spot(cx, cy, dir, fwd, side);
       this.gKind[g] = k;
-      this.gX[g] = Math.min(MAP_W - TILE, Math.max(TILE, cx + (ix * fwd - iy * side) * TILE));
-      this.gY[g] = Math.min(MAP_H - TILE, Math.max(TILE, cy + (iy * fwd + ix * side) * TILE));
-      this.gAng[g] = Math.atan2(iy, ix);
+      this.gAng[g] = Math.atan2(dir[1], dir[0]);
       this.raiseGarrison(g++, 0);
     };
     for (const r of routes) {
-      const c = r.entry[r.entry.length >> 1];
-      const cx = ((c % COLS) + 0.5) * TILE;
-      const cy = (((c / COLS) | 0) + 0.5) * TILE;
+      const [cx, cy] = gate(r);
       if (at.some(([x, y]) => Math.hypot(x - cx, y - cy) < TILE * 8)) continue;
-      const [ix, iy] = r.inDir;
+      const d = r.inDir;
       if (!at.length) {
-        post(kind('hq'), cx, cy, ix, iy, 3.5, 4.5); // a walled compound (further out, our artillery can't reach it)
-        post(kind('mg'), cx, cy, ix, iy, 5, -3.5);
-        post(kind('at'), cx, cy, ix, iy, 6.5, 7.5);
-        post(kind('mg'), cx, cy, ix, iy, 7, 2);
-        post(kind('depot'), cx, cy, ix, iy, 1.5, 8.5); // their supply dump, behind the headquarters
-        post(kind('arty'), cx, cy, ix, iy, 1, -1); // and their guns, by the road in
-      } else {
-        post(kind('mg'), cx, cy, ix, iy, 4, 3);
-        post(kind('at'), cx, cy, ix, iy, 5, -3.5);
+        post(kind('hq'), cx, cy, d, ...HQ_POST); // a walled compound (further out, our artillery can't reach it)
+        post(kind('mg'), cx, cy, d, 5, -3.5);
+        post(kind('at'), cx, cy, d, 6.5, 7.5);
+        post(kind('mg'), cx, cy, d, 7, 2);
+        post(kind('depot'), cx, cy, d, 1.5, 8.5); // their supply dump, behind the headquarters
+        post(kind('arty'), cx, cy, d, 1, -1); // and their guns, by the road in
+      } else if (!t || Math.hypot(t.x - cx, t.y - cy) > TILE * 24) {
+        // guns at the other entries, unless that entry is on our doorstep
+        post(kind('mg'), cx, cy, d, 4, 3);
+        post(kind('at'), cx, cy, d, 5, -3.5);
       }
       at.push([cx, cy]);
     }

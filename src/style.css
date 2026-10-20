@@ -42,7 +42,7 @@ button.primary:hover:not(:disabled) { background: #5d6c2a; }
 #mute.off { color: var(--bad); }
 #audio .vol { display: flex; flex-direction: column; gap: 1px; width: 132px; }
 #trackname { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#musicvol { width: 100%; margin: 0; height: 14px; accent-color: var(--accent); }
+#musicvol { width: 100%; height: 14px; }
 
 /* laptop widths: everything on one line */
 @media (max-width: 1500px) {
@@ -210,6 +210,14 @@ label.mod { display: block; margin: 5px 0; font-size: 13px; }
 label.mod .d { display: block; margin-left: 22px; }
 .row-mini { display: flex; gap: 6px; align-items: center; }
 input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+/* sliders: no box padding, so the track runs edge to edge and the thumb reaches both ends */
+input[type=range] { appearance: none; -webkit-appearance: none; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; height: 18px; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+input[type=range]:disabled { cursor: default; opacity: 0.5; }
 .link { color: var(--accent); cursor: pointer; text-decoration: underline; font-size: 12px; }
 .perks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .perk { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 9px; display: flex; flex-direction: column; gap: 4px; }

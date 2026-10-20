@@ -750,6 +750,36 @@ try {
     return { size: hq.size, scoutHidden: s.unitHidden(u), moved, uncovered: maxSeen - seen0, green, elite: c.hitChance(mg, r, r, false), rank: c.crewRank(mg) };
   });
   check(late.size === 5, `WW2 HQ: our headquarters is a 5×5 compound (${late.size})`);
+  // the two headquarters stand across the map from each other, on every map (random ones too)
+  const apart = await page.evaluate(() => {
+    const { Sim, session, MAPS, randomMap } = window.game;
+    const maps = [...MAPS, ...[1, 5, 9, 11].map((seed) => randomMap({ seed: seed * 7, size: 'S', routes: 3, density: 1, terrain: 1 }))];
+    let worst = 9;
+    for (const map of maps) {
+      const s = Sim.create({ ...session.config, map, seed: 3, difficulty: 'normal', ww2: { side: 'de', foe: 'su' } });
+      const hq = s.towers.find((t) => t.base);
+      worst = Math.min(worst, Math.hypot(hq.x - s.gX[0], hq.y - s.gY[0]) / Math.hypot(s.map.def.cols, s.map.def.rows) / 20);
+    }
+    return worst;
+  });
+  check(apart > 0.6, `WW2 HQ: ours stands across the map from theirs (at least ${Math.round(apart * 100)}% of the diagonal apart)`);
+  // a panel button still takes a click when the panel is rebuilt while it is held down
+  const tid = await page.evaluate(() => {
+    const { sim, towerIndex, select } = window.game;
+    sim.money += 5000;
+    let t = null;
+    for (let r = 10; !t && r < 50; r++) for (let c = 20; !t && c < 70; c++) t = sim.place(towerIndex('mg42'), c, r, true);
+    select(t);
+    window.__bump = setInterval(() => (t.damage += 60), 30);
+    return t.id;
+  });
+  await page.waitForTimeout(200);
+  const up = await page.evaluate(() => { const b = document.querySelector('#info [data-act="up"]').getBoundingClientRect(); return [b.left + 4, b.top + 4]; });
+  const lv0 = await page.evaluate((id) => window.game.sim.towerById.get(id).level, tid);
+  await page.mouse.move(up[0], up[1]); await page.mouse.down(); await page.waitForTimeout(120); await page.mouse.up();
+  await page.waitForTimeout(250);
+  const lv1 = await page.evaluate((id) => { clearInterval(window.__bump); return window.game.sim.towerById.get(id).level; }, tid);
+  check(lv1 === lv0 + 1, `UI: a held panel button isn't rebuilt under the pointer (upgrade by its edge: ${lv0} → ${lv1})`);
   check(late.scoutHidden && late.moved > 100 && late.uncovered > 100, `WW2 scouts: stay hidden (${late.scoutHidden}), roam (${Math.round(late.moved)} px) and uncover ground (${late.uncovered} cells)`);
   check(late.rank === 3 && late.elite > late.green, `WW2 crews: kills make an Elite crew (${late.rank}), which hits more (${Math.round(late.green * 100)}% → ${Math.round(late.elite * 100)}%)`);
 
