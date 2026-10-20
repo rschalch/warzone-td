@@ -1008,7 +1008,7 @@ export class GameRenderer {
       if (a === 1) this.shadows.push(this.unitTopTex[s.uKind[u]], x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
       this.world.push(this.unitTopTex[s.uKind[u]], sx, sy, ang, 1, 1, 0xffffff, a);
     }
-    const f = s.uHp[u] / d.hp;
+    const f = s.uHp[u] / s.unitMaxHp(u);
     const vet = s.unitVet(u);
     if (vet) {
       // rank chevrons above the unit

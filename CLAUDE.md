@@ -161,10 +161,34 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   `setsFor(cfg.ww2)`; `startGame` rebuilds it when the sets differ. About 1,900 px tall per matchup.
 - Balance: `WW2=1 SIDE=us FOE=jp npm run bot` and `WW2=1 SIDE=.. FOE=.. npm run gauntlet` (any matchup).
 - Return fire: attackers with an `EnemyDef.gun` pick a defender (`pickDefender`: towers with `hp`, or the
-  commander as id -1; `eTgt`), tanks halt to aim (`eAimT`), and `hitDefender()` applies pen against the
-  emplacement's `fort` (mm, rises with level like the base visuals). Small arms mostly suppress crews
-  (`Tower.supp` slows their fire). At 0 HP a tower becomes rubble (`wreck`: walkable, slow, rebuilt with the
-  `repair` command); the Workshop role heals towers in range. Katyusha salvos are typed arrays (`rk*`).
+  commander as id -1; `eTgt`), tanks halt and lay the gun at its traverse (`eAimT`, fire once within `ON_TARGET`),
+  and `hitDefender()` applies pen (falling off over the gun's range) against the emplacement's `fort` (mm, rises
+  every level). Small arms mostly suppress crews (`Tower.supp` slows their fire). At 0 HP a tower becomes rubble
+  (`wreck`: walkable, slow, rebuilt with the `repair` command); the Workshop role heals towers in range. Rocket
+  salvos and shells are typed arrays (`rk*`, each with its weapon's pen, blast radius and suppression).
+- Weapons (`ww2_arms.ts`): one catalogue `ARMS` for both sides. Every emplacement (`TowerDef.weapon`, level-1 stats
+  from `armsLv()`), unit (`armsUnit()`) and attacker (`armsGun()`, `EnemyGun.w`) fires a catalogue gun with the same
+  damage, range, rate, penetration, accuracy (`miss`, `aa` against aircraft) and traverse; the garrison of either
+  base fires its arsenal's guns. Rates are historical practical rates × `TIME` (2.2), traverse historical °/s ×
+  `TRAVERSE` (4); `note` says where the figures come from (shown in the help). Range bands: short ≤ 100 px, medium
+  ≤ 220, long beyond (`bandOf()`); every side has all three. A weapon improves level by level along `GROW` (defs.ts):
+  ours by upgrades; the attackers' guns and the units we train by `Sim.warLevel` (a level every `WAR_WAVES` waves;
+  `eLvl`, `uLvl`) in range, rate, penetration, accuracy, traverse and suppression but not damage per hit (the waves'
+  numbers and `hpScale` are their side of that: with it the bot fell by wave 12-20 whatever the emplacements' hp).
+  Upgrades add damage, range, rate, penetration, accuracy, traverse, hit points (× the damage curve) and cover
+  (`fort`) at every level; `npm run smoke` checks it for every arsenal. Emplacements' hp were tripled and units'
+  doubled (engineers, crews and medics work as much faster) when the attackers got their guns' real rates.
+- One set of hit rules for both sides: `fortHit()` (positions, theirs and ours: (pen/cover)² from 0.3),
+  `armourHit()` (vehicles, theirs and ours: bounce below 0.7, chip, through and through), `penFalloff()` for every
+  shooter (`hitDefender()`/`hitUnit()` take the gun's range), `missChance()` (distance, level, rank, suppression,
+  night), `SMOKE_HIT` into or out of smoke, suppression slows every crew's reload, hits button tank crews up
+  (`BUTTON_UP`), small arms hold fire at what they can't hurt and AT weapons (pen ≥ `AT_PEN`) fire at any tank,
+  hidden shooters hit harder (`HIDDEN_HIT`), their infantry close-assault our unescorted tanks (`enemyCloseAssault()`).
+  New guns are laid facing the attack (`facingFront()`).
+- Repair crew (`UnitDef.crew`, `repairCrew()` in ww2.ts, trained at the workshop): drives round the camp by itself
+  (`crewTask()`: wrecks first, by value and distance; not where an attacker is within `CREW_CLEAR`), works at
+  `repair` hp/s and pays the repair price per hit point as it goes (`crewPrice()`), waits when the money runs out
+  (`crewStatus()`). Hunt (its default) roams everywhere, Guard and Hold keep it near its post.
 - Units: `UNITS` (live binding, `UnitDef` in defs.ts, German ones in ww2.ts), SoA slots `u*` in `Sim` (stable
   slots, `uUid` in commands). Barracks / motor pool train them (`train`, manpower from HQs and depots), the
   airfield launches Fw 190 patrols (manual). Units path with their own BFS (`unitPathTo`, never touch the flow
@@ -240,7 +264,7 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   AT weapons (`closeAssaulter()`) and is close-assaulted (`closeAssault()`: satchels on its deck) by our infantry
   positions (`ASSAULT_SLOTS`, `Tower.nadeCd`) and soldiers (`uNadeCd`); escorted tanks spot 1.5× further. A smoke-
   equipped tank closing on a known strongpoint (fort ≥ 25, not the HQ) smokes it, up to two per wave: a gun inside a
-  cloud (`inSmoke()`) and shots at a target in smoke hit at `SMOKE_HIT` ×.
+  cloud (`inSmoke()`) and shots at a target in smoke hit at `SMOKE_HIT` × — for both sides (attackers in smoke fire too).
 - Counter-battery: every shot of our mortars, rockets and howitzers adds to the enemy's sound-ranging fix on that gun
   (`Tower.fix`, `FIX_SHOTS` shots, less with camouflage, fades with `FIX_FADE`); at 1 their battery (garrison
   `fixed: 'arty'`, from the arsenal's howitzer slot) answers with `CB_SHELLS` shells (the `rk*` arrays) and is seen
@@ -281,19 +305,19 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   renderer remembers explored cells (cosmetic): never-seen ground is darker (`DARK_ALPHA`) than unwatched ground.
 - Crews and accuracy: towers rank up by kills (`CREW_KILLS`, `crewRank()`: Veteran aims better and takes 25% less
   suppression, Hardened +10% rate and +15% sight, Elite a knack by role: `ELITE_*`), chevrons on the map, rows in
-  the panel. Direct fire and shells roll `hitChance()` (`MISS` by role, falls with level and rank, rises with
-  distance, suppression and night); a miss flies wide (`missShot()`); hits do `hitComp()` × damage so a green
-  level-1 crew at 60% range matches its listed damage. Units roll the same way (`MISS.unit`, better with
+  the panel. Direct fire and shells roll `hitChance()` (the weapon's `miss` at its level, falls with rank, rises with
+  distance, suppression and night: `missChance()`); a miss flies wide (`missShot()`); hits do `hitComp()` × damage so a
+  green level-1 crew at 60% range matches its listed damage. Units roll the same way (their weapon's `miss`, better with
   veterancy); Hardened units see 25% further, Elite soldiers are hidden while still. Attackers roll too
-  (`E_MISS` by `EnemyGun.fx`, `enemyHitChance()`: distance, their suppression, night; salvos, satchels, flames and
-  rams can't miss): a miss lands wide (splash still hurts what is there, near misses suppress), hits are compensated.
+  (`enemyHitChance()`, the same `missChance()`; salvos, satchels, flames and rams can't miss): a miss lands wide
+  (splash still hurts what is there, near misses suppress), hits are compensated.
 - Artillery (`arty` role) fires at any attacker something of ours sees (`seen()`); only shelling their base positions
-  needs a spotter (within 140 px, an observer's `radarGrid` or a recon mark). Towed AT guns outrange the tanks they
-  face (the `atgun` slot ~220-240 px, `heavyaa` 270-290, dug-in `tank` 210-255).
+  needs a spotter (within 140 px, an observer's `radarGrid` or a recon mark). Towed AT guns outrange most tanks they
+  face (the `atgun` slot 220-240 px, `heavyaa` 270-290); a dug-in tank has its tank's gun (200-245).
 - Our guns fire at whatever they see: direct fire takes its own sight or field vision (`gunSees()`: `seen()` plus a
   line of fire clear of terrain, `fireLine()`, hulks don't stop a shell); at night beyond `dimMult` only what something
   of ours sees or a flare lights. Anti-tank guns (pen ≥ `AT_PEN`, `anyTarget` in findTarget) fire at any tank, even one
-  they bounce off (hits button its crew up: `eSupp` on vehicles worsens their aim); lighter weapons hold fire at armour
+  they bounce off (hits button its crew up: `eSupp` on vehicles worsens their aim); lighter weapons (theirs too) hold fire at armour
   they can't pierce. Attackers need a clear line too (`pickDefender`, except `E_INDIRECT`) and at night reach only
   `dimMult` unless the target just fired or is lit. Units on Guard look `GUARD_LEASH` px past their range and close
   in on anything seen (sight mode 4). The selected gun's (or the placement ghost's) blind cells are shaded red
@@ -321,6 +345,10 @@ With our HQ across the map from theirs (one HQ for every route): Easy wins Cross
 Pass 1 of 3, Badlands 3 of 3; Normal Open Field ~28, Crossfire ~28, Boulder Pass ~19, Badlands won 1 of 3.
 After field vision / AT guns never stop / no ammunition / smoke rework: Easy wins Open Field 2 of 3, Crossfire 3 of 3,
 Boulder Pass ~30; Normal Open Field ~25, Crossfire ~29, Boulder Pass ~24.
+After one weapon catalogue for both sides (attackers at their guns' real rates, war levels, emplacement hp ×3, unit hp
+×2): Easy wins Open Field 3 of 3, Crossfire 3 of 3, Boulder Pass ~34; Normal Open Field ~24, Crossfire ~37, Boulder
+Pass ~20; battles 11 of 12 on Easy (Seelow Heights lost at 24/30). Growing the attackers' damage with the war level too
+made every map fall by wave 12-20 even at emplacement hp ×5: don't.
 
 ## Known limitations
 

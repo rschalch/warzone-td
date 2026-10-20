@@ -1,9 +1,10 @@
 import {
-  CATEGORIES, COMBOS, RANKS, ENEMIES, TARGET_MODES, TOWERS, UNITS, WW2, hpScale, targetRating,
+  CATEGORIES, COMBOS, GROW, RANKS, ENEMIES, TARGET_MODES, TOWERS, UNITS, WW2, hpScale, targetRating,
   type EnemyDef, type TowerDef, type TowerLevel,
 } from '../game/defs';
 import { rulesetKey } from '../game/rules';
 import { penVerdict } from '../game/ww2';
+import { BANDS, bandOf, weaponOf } from '../game/ww2_arms';
 import { DIFFICULTIES } from '../game/config';
 import { CREW_KILLS, MODE_AMBUSH, MODE_FLARE, VET_KILLS, heroAbilities, penFalloff, HERO_MAX_LEVEL, ITEMS, STANCES, type Sim, type Tower, type TowerStats } from '../game/sim';
 import { ABILITY_HELP, ABILITY_HELP_WW2, FOREST_HELP, HERO_HELP, HERO_HELP_WW2, ITEM_HELP, MOUNTAIN_HELP, RIVER_HELP, enemyHelp, towerHelp } from './codex';
@@ -85,6 +86,8 @@ function targetBadges(def: TowerDef, words = false): string {
 }
 
 const num = (n: number) => (Math.abs(n - Math.round(n)) < 0.05 ? `${Math.round(n)}` : n.toFixed(1));
+/** A rate of fire in shots a minute (game time), to one decimal below ten. */
+const perMin = (rate: number) => (rate * 60 >= 10 ? `${Math.round(rate * 60)}` : (rate * 60).toFixed(1));
 const pct = (f: number) => `${Math.round(f * 100)}%`;
 /** Kinds whose damage figure is per second rather than per shot. */
 const DPS_KINDS = new Set(['laser', 'flame', 'napalm', 'gas', 'gravity', 'spikes', 'hacker', 'orbital', 'blackhole']);
@@ -97,6 +100,9 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
   const range = eff?.range ?? lv.range;
   const rate = eff?.rate ?? lv.rate;
   const role = def.role;
+  // WW2: the gun it fires (the same as anyone's who fires it) and how far it reaches
+  const w = WW2 ? weaponOf(def.weapon) : undefined;
+  if (w) rows.push(['Weapon', `${w.name} · ${BANDS[bandOf(lv.range)].toLowerCase()}`]);
   if (lv.damage) rows.push([role === 'hacker' ? 'Hijacked DPS' : DPS_KINDS.has(role) ? 'DPS' : 'Damage', num(dmg)]);
   // (it falls off with range: more point-blank, less at the edge of the circle)
   if (lv.pen !== undefined) {
@@ -104,7 +110,10 @@ function stats(def: TowerDef, lv: TowerLevel, eff?: TowerStats): [string, string
     else rows.push(['Pen. close / far', `${Math.round(lv.pen * penFalloff(0))} / ${Math.round(lv.pen * penFalloff(1))} mm`]);
   }
   if (lv.range > 14) rows.push([AURA_KINDS.has(role) ? 'Radius' : 'Range', num(range)]);
-  if (lv.rate && !lv.charge) rows.push([role === 'mine' ? 'Re-arm' : 'Rate', role === 'mine' ? `${num(1 / rate)}s` : `${num(rate)}/s`]);
+  if (lv.rate && !lv.charge) rows.push([role === 'mine' ? 'Re-arm' : 'Rate', role === 'mine' ? `${num(1 / rate)}s` : WW2 ? `${perMin(rate)}/min` : `${num(rate)}/s`]);
+  // WW2: how many of a green crew's rounds hit point blank and at full range, and how fast the gun swings round
+  if (WW2 && lv.miss) rows.push(['Accuracy', `${Math.round(100 * (1 - lv.miss / 3))}% close · ${Math.round(100 * (1 - lv.miss))}% far`]);
+  if (WW2 && lv.traverse) rows.push(['Traverse', `${Math.round((lv.traverse * 180) / Math.PI)}°/s`]);
   if (lv.salvo) rows.push(['Rockets', `${lv.salvo}`]);
   if (lv.supp) rows.push(['Suppression', `${pct(lv.supp)}/hit`]);
   if (lv.splash) rows.push(['Splash', `${lv.splash}`]);
@@ -142,12 +151,15 @@ function moraleWord(m: number): string {
   return m > 0.75 ? 'steady' : m > 0.5 ? 'shaken' : `<span class="good">wavering</span>`;
 }
 
-/** WW2: what an attacker fires back with. */
-function weaponLine(e: EnemyDef): string {
+/** WW2: what an attacker fires back with: the gun (the same as ours), and its figures at the war's level `lvl` if it has one. */
+function weaponLine(e: EnemyDef, sim?: Sim, i = -1): string {
   const g = e.gun;
   if (!g) return 'unarmed';
-  const what = { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: `${g.salvo} rockets per salvo`, satchel: 'satchel charges', kamikaze: 'dives in with its bomb' }[g.fx];
-  return `${what} · ${g.pen} mm · range ${g.range}${g.halt ? ' · halts to fire' : ''}`;
+  const what = weaponOf(g.w)?.name ?? { rifle: 'rifles', smg: 'submachine guns', mg: 'machine gun', tank: 'tank gun', rocket: 'rockets & bombs', katyusha: 'rockets', satchel: 'satchel charges', kamikaze: 'dives in with its bomb' }[g.fx];
+  const n = sim && i >= 0 ? sim.eLvl[i] : 0;
+  const range = Math.round(g.range * GROW.range(n));
+  const salvo = g.salvo ? ` · ${g.salvo} per salvo` : '';
+  return `${what}${salvo} · ${num(g.dmg)} dmg · ${Math.round(g.pen * GROW.pen(n))} mm · ${perMin(g.rate * GROW.rate(n))}/min · range ${range} (${bandOf(range)})${g.halt ? ' · halts to fire' : ''}${n ? ` · <small>weapons of level ${n + 1}</small>` : ''}`;
 }
 
 /** Counters for specific threats, shown in the wave preview. */
@@ -613,7 +625,7 @@ export class Hud {
         const c = sim.chargeLevel(t);
         actions = `<div class="row"><button data-act="fire" class="primary" ${c < 1 || ro || t.wreck ? 'disabled' : ''}>${c < 1 ? `Charging ${Math.floor(c * 100)}%` : 'Fire! (R)'}</button></div>`;
       }
-      if (def.role === 'barracks' || def.role === 'motorpool') actions = this.trainPanel(sim, t, ro || (t.wreck ? 'disabled' : ''));
+      if (def.role === 'barracks' || def.role === 'motorpool' || (WW2 && def.role === 'workshop')) actions = this.trainPanel(sim, t, ro || (t.wreck ? 'disabled' : ''));
       let special = '';
       if (def.role === 'depot') special = `<div class="desc">All depots pay <b>$${sim.depotIncome}</b> at the next wave.</div>`;
       const max = sim.maxHp(t);
@@ -752,8 +764,9 @@ export class Hud {
         <tr><td>HP</td><td>${Math.ceil(sim.eHp[i])} / ${Math.ceil(sim.eMaxHp[i])}</td></tr>
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
         <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
-        ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def)}</td></tr>` : ''}
-        ${WW2 && def.gun && !def.gun.salvo && sim.enemyHitChance(i, def.gun, def.gun.range) < 1 ? `<tr><td>Accuracy</td><td>${Math.round(100 * sim.enemyHitChance(i, def.gun, 0))}% close · ${Math.round(100 * sim.enemyHitChance(i, def.gun, def.gun.range))}% at ${def.gun.range} px</td></tr>` : ''}
+        ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def, sim, i)}</td></tr>` : ''}
+        ${WW2 && def.gun && !def.gun.salvo && sim.enemyHitChance(i, def.gun, def.gun.range) < 1 ? `<tr><td>Accuracy</td><td>${Math.round(100 * sim.enemyHitChance(i, def.gun, 0))}% close · ${Math.round(100 * sim.enemyHitChance(i, def.gun, def.gun.range * GROW.range(sim.eLvl[i])))}% at full range</td></tr>` : ''}
+        ${WW2 && def.gun?.traverse && def.arm ? `<tr><td>Traverse</td><td>${Math.round((def.gun.traverse * GROW.traverse(sim.eLvl[i]) * 180) / Math.PI)}°/s</td></tr>` : ''}
         ${WW2 && def.inf && !def.fixed ? `<tr><td>Morale</td><td>${moraleWord(sim.eMorale[i])}${def.officer ? ' · leads the wave' : sim.officerAlive[sim.eWave[i] & 63] ? ' · officer alive' : ''}</td></tr>` : ''}
         ${def.fixed ? (sim.eBuild[i] > 0 ? `<tr><td>Status</td><td>being built (${Math.ceil(sim.eBuild[i])} s)</td></tr>` : '') : `<tr><td>Speed</td><td>${def.speed}</td></tr>`}
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>
@@ -789,20 +802,23 @@ export class Hud {
     const fighters = units.filter((u) => UNITS[sim.uKind[u]].gun && !sim.uAir[u]);
     const dugAll = fighters.length > 0 && fighters.every((u) => sim.uDig[u] > 0);
     const digging = fighters.some((u) => sim.uDig[u] > 0 && sim.uDig[u] < 1);
-    const engineers = units.some((u) => UNITS[sim.uKind[u]].repair);
+    const engineers = units.some((u) => UNITS[sim.uKind[u]].repair && !UNITS[sim.uKind[u]].crew);
     const orders = [
       fighters.length ? `<button data-act="dig" class="${dugAll ? 'on' : ''}" title="Foxholes for soldiers (half damage and suppression), hull-down for tanks (only the front armour shows). Dug-in units are hidden while they hold fire and can't move; any move order climbs out. Takes ${4}s." ${ro}>${dugAll ? (digging ? 'Digging…' : 'Dug in') : 'Dig in'} <span class="k">D</span></button>` : '',
       engineers ? `<button data-act="mines" title="Each selected engineer buries an anti-tank mine around the point you click (paid as one built there)." ${ro}>Lay mines <span class="k">M</span></button>` : '',
     ].join('');
-    const buttons = air || trucks ? '' : `<div class="row modes">${STANCES.map((st, k) => `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>${orders ? `<div class="row modes">${orders}</div>` : ''}`;
+    // (a repair crew has nothing to ambush with)
+    const crews = units.every((u) => UNITS[sim.uKind[u]].crew);
+    const buttons = air || trucks ? '' : `<div class="row modes">${STANCES.map((st, k) => crews && k === 3 ? '' : `<button data-stance="${k}" title="${st.desc}" class="${stance === k ? 'on' : ''}" ${ro}>${st.name}</button>`).join('')}</div>${orders ? `<div class="row modes">${orders}</div>` : ''}`;
     let body: string;
     if (one >= 0) {
       const g = d.gun;
       body = `<table>
-          <tr><td>Health</td><td>${Math.ceil(sim.uHp[one])} / ${d.hp}</td></tr>
+          <tr><td>Health</td><td>${Math.ceil(sim.uHp[one])} / ${Math.ceil(sim.unitMaxHp(one))}</td></tr>
           ${d.arm ? `<tr><td>Armour</td><td>${d.arm[0]} front · ${d.arm[1]} side · ${d.arm[2]} rear (mm)</td></tr>` : ''}
-          ${g ? `<tr><td>Weapon</td><td>${num(g.dmg)} dmg · ${g.pen} mm · range ${g.range}${g.still ? ' · stops to fire' : ''}</td></tr>` : ''}
-          ${d.repair ? `<tr><td>Repairs</td><td>${d.repair} HP/s</td></tr>` : ''}
+          ${g ? `<tr><td>Weapon</td><td>${weaponOf(g.w)?.name ?? ''} · ${num(g.dmg)} dmg · ${Math.round(g.pen * GROW.pen(sim.uLvl[one]))} mm · ${perMin(g.rate * GROW.rate(sim.uLvl[one]))}/min · range ${Math.round(g.range * GROW.range(sim.uLvl[one]))}${g.still ? ' · stops to fire' : ''}${sim.uLvl[one] ? ` · <small>level ${sim.uLvl[one] + 1}</small>` : ''}</td></tr>` : ''}
+          ${d.repair ? `<tr><td>Repairs</td><td>${d.repair} HP/s${d.crew ? ' · paid as a repair' : ''}</td></tr>` : ''}
+          ${d.crew ? `<tr><td>Task</td><td>${{ 'no money': '<span class="bad">waiting for money</span>', idle: 'nothing to repair', driving: `on the way to the ${TOWERS[sim.tower(sim.uTask[one])?.type ?? 0].short}`, repairing: 'repairing', rebuilding: 'rebuilding a wrecked position' }[sim.crewStatus(one)]}</td></tr>` : ''}
           ${d.heal ? `<tr><td>Heals</td><td>${d.heal} HP/s</td></tr>` : ''}
           ${sim.uAir[one] ? `<tr><td>Patrol</td><td>${Math.ceil(sim.uLife[one])}s left</td></tr>` : ''}
           <tr><td>Kills</td><td>${sim.uKills[one]}${vetLine(sim, one)}</td></tr>
@@ -814,7 +830,7 @@ export class Hud {
     } else body = `<div class="desc">${[...kinds].map(([k, n]) => `${n}× ${k}`).join(', ')}</div>`;
     return `<div class="title">${one >= 0 ? d.name : `${units.length} units`}<span class="lvl">${air ? 'aircraft' : 'unit'}</span></div>
       ${buttons}${body}
-      <div class="desc" style="margin-top:8px">${trucks ? 'Supply trucks drive their own rounds: headquarters → depot → back.' : units.every((u) => UNITS[sim.uKind[u]].scout) ? 'In Hunt, scouts roam the battlefield on their own. Click the ground to send them somewhere; Guard or Hold keeps them watching there.' : air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
+      <div class="desc" style="margin-top:8px">${trucks ? 'Supply trucks drive their own rounds: headquarters → depot → back.' : crews ? 'In Hunt, repair crews find their own work all over the camp. Click the ground to send them somewhere; Guard or Hold keeps them working round that spot.' : units.every((u) => UNITS[sim.uKind[u]].scout) ? 'In Hunt, scouts roam the battlefield on their own. Click the ground to send them somewhere; Guard or Hold keeps them watching there.' : air ? 'Fighters patrol where they were sent until they run low on fuel.' : 'Click the ground to send them there; they guard that spot. Shift-click adds a unit; shift-drag selects a group.'}</div>`;
   }
 
   /** Cost of upgrading every tower in the selection by one level. */
@@ -853,7 +869,7 @@ function crewRows(sim: Sim, t: Tower): string {
   const far = sim.hitChance(t, range, range, false);
   const next = rank < 3 ? ` <small>· ${CREW_KILLS[rank] - t.kills} kills to ${CREW_RANKS[rank + 1]}</small>` : '';
   return `${sight}<tr><td>Crew</td><td colspan="2">${rank ? `<b style="color:#ffd34a">${'★'.repeat(rank)}</b> ` : ''}${CREW_RANKS[rank]}${next}</td></tr>`
-    + (far < 1 ? `<tr><td>Accuracy</td><td colspan="2">${Math.round(near * 100)}% close · ${Math.round(far * 100)}% far</td></tr>` : '');
+    + (far < 1 ? `<tr><td>Hits now</td><td colspan="2">${Math.round(near * 100)}% close · ${Math.round(far * 100)}% far</td></tr>` : '');
 }
 
 /** WW2: what the crew's rank brings, and what the next one will. */

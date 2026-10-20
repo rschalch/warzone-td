@@ -37,6 +37,7 @@ function probe(ww2: Matchup, type: number, kind: number, frac: number, facing: n
   if (!t) throw new Error(`can't place ${def.kind}`);
   t.hp = 1e9;
   t.level = level;
+  t.angle = t.prevAngle = 0; // laid on the target (east): this measures reach, not traverse
   const range = sim.stats(t).range;
   // artillery fires at what an observer sees: give it one over the target
   if (def.role === 'arty') sim.place(TOWERS.findIndex((d) => d.role === 'radar'), Math.floor((t.x + range * frac) / TILE) - 1, row + 3, true);

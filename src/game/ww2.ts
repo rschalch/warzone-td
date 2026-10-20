@@ -12,6 +12,7 @@ import { ALLIED_DEFENCE, US_ARMY } from './ww2_us';
 import { JAPANESE_DEFENCE, JP_ARMY } from './ww2_jp';
 import { SLOTS, assault, type Arsenal, type Army, type Faction, type Slot, type UnitHelp } from './ww2_kit';
 import { battleById } from './battles';
+import { armsGun, type WeaponId } from './ww2_arms';
 
 export type { Faction } from './ww2_kit';
 
@@ -42,7 +43,7 @@ export function ww2Ruleset(side: Faction, foe: Faction, battle?: string): Rulese
     foe,
     towers: a.towers,
     enemies: [...army.enemies, ...garrison(foe)],
-    units: [...a.units, supplyTruck(side), scouts(side)],
+    units: [...a.units, supplyTruck(side), scouts(side), repairCrew(side)],
     combos: a.combos,
     categories: [
       { id: 'basic', name: 'Infantry' },
@@ -68,13 +69,15 @@ function garrison(foe: Faction): EnemyDef[] {
   const gun = (slot: Slot) => a.towers.find((t) => t.slot === slot)!;
   const base = (lv: number) => `${a.look.base}${lv}`;
   const adj = FACTIONS[foe].adj;
+  // their positions fire the very guns of their arsenal (the headquarters: its MGs, at a longer reach from the walls)
+  const arms = (slot: Slot) => gun(slot).weapon as WeaponId;
   return [
     { name: `${adj} Headquarters`, hp: 6000, speed: 0, reward: 0, armor: 0, air: false, radius: 36, lives: 0, tex: `${gun('hq').turret!}_base`, bio: 0,
-      arm: [100, 100, 100, 70], fixed: 'hq', spot: 220, gun: { dmg: 3, range: 150, rate: 6, pen: 8, supp: 0.05, fx: 'mg' } },
+      arm: [100, 100, 100, 70], fixed: 'hq', spot: 220, gun: armsGun(arms('mg'), 'mg', { range: 150 }) },
     { name: gun('mg').name, hp: 260, speed: 0, reward: 12, armor: 0, air: false, radius: 9, lives: 0, tex: gun('mg').turret!, bio: 0.5,
-      arm: [25, 25, 25, 12], fixed: 'mg', base: base(3), spot: 180, gun: { dmg: 3, range: 140, rate: 8, pen: 8, supp: 0.07, fx: 'mg' } },
+      arm: [25, 25, 25, 12], fixed: 'mg', base: base(3), spot: 180, gun: armsGun(arms('mg'), 'mg') },
     { name: gun('atgun').name, hp: 320, speed: 0, reward: 18, armor: 0, air: false, radius: 11, lives: 0, tex: gun('atgun').turret!, bio: 0.5,
-      arm: [40, 30, 30, 12], fixed: 'at', base: base(3), spot: 200, gun: { dmg: 60, range: 220, rate: 0.3, pen: 110, supp: 0.3, halt: 0.6, splash: 10, fx: 'tank' } },
+      arm: [40, 30, 30, 12], fixed: 'at', base: base(3), spot: 200, gun: armsGun(arms('atgun'), 'tank', { supp: 0.3, halt: 0.6, splash: 10 }) },
     { name: `${adj} Supply Dump`, hp: 900, speed: 0, reward: 40, armor: 0, air: false, radius: 13, lives: 0, tex: gun('depot').turret!, bio: 0.5,
       arm: [20, 20, 20, 8], fixed: 'depot', base: base(2), spot: 120 },
     { name: `${TRUCKS[foe][0]} supply truck`, hp: 160, speed: 50, reward: 10, armor: 0, air: false, radius: 9, lives: 0, tex: TRUCKS[foe][1], bio: 0.6,
@@ -98,7 +101,7 @@ function supplyTruck(side: Faction): UnitDef {
   const [name, tex] = TRUCKS[side];
   return {
     kind: `${side}_truck`, name: `${name} supply truck`, short: 'Truck', tex, from: 'supply', truck: true,
-    cost: 0, manpower: 0, train: 0, hp: 90, speed: 55, radius: 9,
+    cost: 0, manpower: 0, train: 0, hp: 180, speed: 55, radius: 9,
     desc: 'Drives ammunition from the headquarters to a depot that is running low, then goes back. Unarmoured: the enemy shoots at it, and a depot whose truck is lost waits for the next one.',
   };
 }
@@ -116,8 +119,30 @@ function scouts(side: Faction): UnitDef {
   const [name, tex] = SCOUTS[side];
   return {
     kind: `${side}_scout`, name, short: 'Scouts', tex, from: 'barracks', scout: true, camo: true, inf: true,
-    cost: 25, manpower: 1, train: 5, hp: 30, speed: 62, radius: 5,
+    cost: 25, manpower: 1, train: 5, hp: 60, speed: 62, radius: 5,
     desc: 'Unarmed scouts who see far, at night too, and slip past the enemy unseen unless one walks right into them. In Hunt they roam the battlefield by themselves, uncovering the ground and showing your guns, above all your artillery, where to fire; send them somewhere and set Guard or Hold to keep a watch there.',
+  };
+}
+
+/** Each side's repair crew: name and its lorry's model. */
+const CREWS: Record<Faction, [string, string]> = {
+  de: ['Instandsetzungstrupp', 'de_truck'],
+  su: ['Letuchka Repair Lorry', 'su_truck'],
+  us: ['Ordnance Repair Team', 'us_truck'],
+  jp: ['Kōsaku Repair Team', 'jp_truck'],
+};
+
+/**
+ * The repair crew, sent out by the workshop: a lorry of mechanics and engineers that drives round the
+ * whole camp by itself, rebuilding wrecked positions first and patching up damaged ones, and paying
+ * for the work out of the army's money as it goes (see Sim.crewTask).
+ */
+function repairCrew(side: Faction): UnitDef {
+  const [name, tex] = CREWS[side];
+  return {
+    kind: `${side}_crew`, name, short: 'Repair Crew', tex, from: 'workshop', crew: true,
+    cost: 60, manpower: 1, train: 8, hp: 240, speed: 60, radius: 9, repair: 120,
+    desc: 'Mechanics and engineers in a lorry. They drive round the whole camp by themselves, rebuild wrecked positions (the most valuable first) and patch up damaged ones, paying for the work from your money as they go — at the price of a repair — and waiting when the money runs out. They keep clear of the fighting until it moves on. Guard or Hold keeps them near one spot; Roam (Hunt) is the default.',
   };
 }
 

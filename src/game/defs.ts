@@ -86,6 +86,13 @@ export interface EnemyGun {
   salvo?: number;
   /** Fighters: shoots only at the defender's aircraft. */
   air?: boolean;
+  /** The catalogue weapon it is (ww2_arms.ts), for the help. */
+  w?: string;
+  /** Share of shots missed at the end of its range (green crew; see Sim.missChance), and against aircraft. */
+  miss?: number;
+  aa?: number;
+  /** Rad/s the gun (a vehicle: its turret and hull) swings round to a new target. */
+  traverse?: number;
   /** Sound and tracer: small arms, automatic fire, tank gun, aircraft rockets, rocket artillery. */
   fx: 'rifle' | 'smg' | 'mg' | 'tank' | 'rocket' | 'katyusha' | 'satchel' | 'kamikaze';
 }
@@ -155,6 +162,9 @@ export interface TowerLevel {
   salvo?: number; // rounds per volley (rocket artillery)
   hp?: number; // WW2: hit points of the emplacement (undefined: can't be shot at)
   fort?: number; // WW2: fortification in mm of armour equivalent (sandbags < timber < concrete)
+  miss?: number; // WW2: share of shots missed at the end of the range by a green crew (a third point blank)
+  aa?: number; // WW2: the same against aircraft, for guns made for it
+  traverse?: number; // WW2: rad/s the gun swings round (default TURN_RATE)
 }
 
 export type TowerCat = 'basic' | 'fire' | 'precision' | 'control' | 'support' | 'units' | 'maze' | 'super';
@@ -199,6 +209,8 @@ export interface TowerDef {
   block?: string;
   /** WW2: camouflage 0..1 — the enemy must come this much closer to spot it. */
   camo?: number;
+  /** WW2: the catalogue weapon it fires (ww2_arms.ts); the same gun as an attacker's or a unit's. */
+  weapon?: string;
 }
 
 type TowerInit = Omit<TowerDef, 'size' | 'aim' | 'targeted' | 'role' | 'kind'> & Partial<Pick<TowerDef, 'size' | 'aim' | 'targeted'>>;
@@ -406,15 +418,30 @@ const CLASSIC_RANKS = ['Recruit', 'Private', 'Corporal', 'Sergeant', 'Lieutenant
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/**
+ * How a weapon improves with each level (0-based): our emplacements by upgrades, the attackers' guns
+ * with the war (Sim.warLevel). One curve for both sides.
+ */
+export const GROW = {
+  power: (n: number) => 1 + 0.35 * n + 0.03 * n * n, // damage ×6.6 at level 10
+  range: (n: number) => 1 + 0.045 * n, // ×1.4
+  rate: (n: number) => 1 + 0.06 * n, // ×1.54
+  pen: (n: number) => 1 + 0.035 * n, // better ammunition: ×1.3
+  traverse: (n: number) => 1 + 0.08 * n, // better drills, power traverse: ×1.7
+  miss: (n: number) => 1 - 0.04 * n, // trained gunners, better sights: ×0.64
+  supp: (n: number) => 1 + 0.06 * n,
+} as const;
 
 /** Level n (0-based) of a tower, grown from its level-1 stats. */
 function grow(b: TowerLevel, n: number): TowerLevel {
-  const power = 1 + 0.35 * n + 0.03 * n * n; // ×6.6 at level 10
+  const power = GROW.power(n);
   const lv: TowerLevel = {
     cost: n === 0 ? b.cost : Math.round(b.cost * (0.5 + 0.28 * n)),
     damage: r1(b.damage * power),
-    range: Math.round(b.range * (1 + 0.045 * n)), // ×1.4
-    rate: r2(b.rate * (1 + 0.06 * n)), // ×1.54
+    range: Math.round(b.range * GROW.range(n)),
+    rate: r3(b.rate * GROW.rate(n)),
   };
   if (b.splash) lv.splash = Math.round(b.splash * (1 + 0.04 * n));
   if (b.chain) lv.chain = b.chain + Math.floor(n / 2);
@@ -432,12 +459,16 @@ function grow(b: TowerLevel, n: number): TowerLevel {
   if (b.cap) lv.cap = Math.round(b.cap * (1 + 0.3 * n));
   if (b.charge) lv.charge = Math.round(b.charge * (1 - 0.045 * n));
   if (b.drones) lv.drones = b.drones + Math.floor(n / 3);
-  if (b.pen) lv.pen = Math.round(b.pen * (1 + 0.035 * n)); // better ammunition: ×1.3 at level 10
-  if (b.supp) lv.supp = r2(b.supp * (1 + 0.06 * n));
+  if (b.pen) lv.pen = Math.round(b.pen * GROW.pen(n));
+  if (b.supp) lv.supp = r3(b.supp * GROW.supp(n));
   if (b.salvo) lv.salvo = b.salvo + Math.floor(n / 3);
-  if (b.hp) lv.hp = Math.round(b.hp * (1 + 0.15 * n));
-  // the base shows it: sandbags, then logs and earth from level 4, concrete from level 7
-  if (b.fort) lv.fort = b.fort + (n >= 3 ? 12 : 0) + (n >= 6 ? 25 : 0);
+  if (b.miss !== undefined) lv.miss = r3(b.miss * GROW.miss(n));
+  if (b.aa !== undefined) lv.aa = r3(b.aa * GROW.miss(n));
+  if (b.traverse) lv.traverse = r2(b.traverse * GROW.traverse(n));
+  // every level adds to the works (hit points and cover); the base shows it: sandbags, then logs and
+  // earth from level 4, concrete from level 7
+  if (b.hp) lv.hp = Math.round(b.hp * power); // as fast as the weapons that can hit it
+  if (b.fort) lv.fort = Math.round(b.fort * (1 + 0.04 * n)) + 2 * n + (n >= 3 ? 12 : 0) + (n >= 6 ? 25 : 0);
   return lv;
 }
 
@@ -555,7 +586,7 @@ export interface UnitDef {
   short: string;
   tex: string;
   /** Where it comes from: the tower role that trains it. */
-  from: 'barracks' | 'motorpool' | 'airfield' | 'supply';
+  from: 'barracks' | 'motorpool' | 'airfield' | 'supply' | 'workshop';
   /** WW2: an ammunition truck (from: 'supply'): sent by the headquarters to the depots, never trained or ordered. */
   truck?: boolean;
   cost: number;
@@ -571,12 +602,17 @@ export interface UnitDef {
   /** Hidden from the enemy while still and not firing (snipers, ambushers). */
   camo?: boolean;
   gun?: {
+    /** The catalogue weapon (ww2_arms.ts). */
+    w?: string;
     dmg: number;
     range: number;
     rate: number;
     pen: number;
     supp?: number;
     splash?: number;
+    miss?: number;
+    aa?: number;
+    traverse?: number;
     /** Must stand still to fire (machine-gun teams set up; tanks fire from the short halt). */
     still?: boolean;
     hitsAir?: boolean;
@@ -585,6 +621,8 @@ export interface UnitDef {
   /** WW2 scouts: unarmed, see far (even at night), hidden even on the move; they roam the map in Hunt. */
   scout?: boolean;
   repair?: number; // engineers: hp/s restored to emplacements
+  /** WW2 repair crew (from the workshop): drives round the whole camp by itself, rebuilding wrecked positions and patching damaged ones, paid from the army's money. */
+  crew?: boolean;
   heal?: number; // medics: hp/s restored to soldiers
   desc: string;
 }

@@ -160,7 +160,7 @@ try {
     const nest = f.place(window.game.towerIndex('mg42'), 20, 20, true);
     const tank = f.spawnEnemy(7, 1);
     f.eX[tank] = nest.x + 60; f.eY[tank] = nest.y; f.eSpeed[tank] = 0; // close enough to spot the camouflaged nest
-    for (let n = 0; n < 900 && !nest.wreck; n++) f.step();
+    for (let n = 0; n < 900 && nest.hp > f.maxHp(nest) * 0.7; n++) f.step();
     const shelled = nest.hp < f.maxHp(nest);
     // camouflage: a tank doesn't see a sniper 100 px away; a recon jeep does
     const h = Sim.create(cfg);
@@ -725,6 +725,7 @@ try {
       const t = s.place(towerIndex(kind), 30, 30, true);
       if (!t) { silent.push(`${kind}:unplaced`); continue; }
       roles.set(t.kind, kind);
+      t.angle = 0; // laid on the target already (this is about range, not traverse)
       const r = s.stats(t).range;
       const x = t.x + r * 0.95;
       if (t.kind === 'arty') s.place(towerIndex('observer'), Math.floor(x / 20) - 1, 34, true);
@@ -807,6 +808,106 @@ try {
   check(lv1 === lv0 + 1, `UI: a held panel button isn't rebuilt under the pointer (upgrade by its edge: ${lv0} → ${lv1})`);
   check(late.scoutHidden && late.moved > 100 && late.uncovered > 100, `WW2 scouts: stay hidden (${late.scoutHidden}), roam (${Math.round(late.moved)} px) and uncover ground (${late.uncovered} cells)`);
   check(late.rank === 3 && late.elite > late.green, `WW2 crews: kills make an Elite crew (${late.rank}), which hits more (${Math.round(late.green * 100)}% → ${Math.round(late.elite * 100)}%)`);
+
+  // October 2026 combat round: one catalogue of weapons for both sides, upgrades that improve everything,
+  // symmetric fire rules, traverse, and the repair crew
+  const catalogue = await page.evaluate(() => {
+    const { rulesetFor, ARMS } = window.game;
+    const bad = [];
+    const bands = [];
+    const time = 2.2;
+    for (const [side, foe] of [['de', 'su'], ['su', 'de'], ['de', 'us'], ['us', 'de'], ['us', 'jp'], ['jp', 'us']]) {
+      const r = rulesetFor({ side, foe });
+      const got = { short: 0, medium: 0, long: 0 };
+      const band = (range) => (range <= 100 ? 'short' : range <= 220 ? 'medium' : 'long');
+      for (const d of r.towers) {
+        if (!d.weapon) continue;
+        const w = ARMS[d.weapon];
+        if (!w) { bad.push(`${d.kind}: no weapon ${d.weapon}`); continue; }
+        const l0 = d.levels[0];
+        if (Math.abs(l0.rate - (w.rpm * time) / 60) > 0.002 || l0.pen !== w.pen || l0.miss !== w.miss) bad.push(`${d.kind}: not its weapon's figures`);
+        got[band(l0.range)]++;
+        // every upgrade: more damage, range, rate, traverse, cover and strength, fewer misses
+        for (let n = 1; n < d.levels.length; n++) {
+          const a = d.levels[n - 1], b = d.levels[n];
+          for (const k of ['damage', 'range', 'rate', 'traverse', 'fort', 'hp']) if (a[k] !== undefined && a[k] > 0 && !(b[k] > a[k])) bad.push(`${d.kind} L${n + 1} ${k}`);
+          if (a.miss && !(b.miss < a.miss)) bad.push(`${d.kind} L${n + 1} miss`);
+        }
+      }
+      // the attackers fire the same guns at the same rates, penetration and accuracy
+      const eGot = { short: 0, medium: 0, long: 0 };
+      for (const e of r.enemies) {
+        const g = e.gun;
+        if (!g || e.fixed) continue;
+        if (!g.w || !ARMS[g.w]) { bad.push(`${e.name}: no catalogue weapon`); continue; }
+        const w = ARMS[g.w];
+        if (Math.abs(g.rate - (w.rpm * time) / 60) > 0.002 || g.miss !== w.miss || g.dmg !== w.dmg) bad.push(`${e.name}: not its weapon's figures`);
+        eGot[band(g.range)]++;
+      }
+      for (const u of r.units) if (u.gun && (!u.gun.w || Math.abs(u.gun.rate - (ARMS[u.gun.w].rpm * time) / 60) > 0.002)) bad.push(`${u.kind}: not its weapon's figures`);
+      bands.push(`${side}:${got.short}/${got.medium}/${got.long}-${foe}:${eGot.short}/${eGot.medium}/${eGot.long}`);
+      if (!got.short || !got.medium || !got.long || !eGot.short || !eGot.medium || !eGot.long) bad.push(`${side} v ${foe}: a range band is missing`);
+    }
+    return { bad, bands };
+  });
+  check(catalogue.bad.length === 0, `WW2 arms: both sides fire catalogue weapons; every upgrade adds damage, range, rate, traverse, cover and accuracy${catalogue.bad.length ? ' — ' + catalogue.bad.slice(0, 6).join(', ') : ''}`);
+  check(catalogue.bad.every((b) => !b.includes('band')), `WW2 arms: short, medium and long range weapons on every side (${catalogue.bands.join(' ')})`);
+  const fair = await page.evaluate(() => {
+    const { Sim, session, towerIndex, unitIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    // traverse: a Tiger's turret swings round slower than an MG, faster once upgraded
+    const swing = (kind, level) => {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      const t = s.place(towerIndex(kind), 30, 30, true);
+      t.level = level;
+      t.angle = Math.PI; // facing away
+      const e = s.spawnEnemy(0, 1);
+      for (let n = 0; n < 1800; n++) {
+        s.eX[e] = s.ePx[e] = t.x + 80; s.eY[e] = s.ePy[e] = t.y; s.eSpeed[e] = 0; s.eHp[e] = s.eMaxHp[e];
+        s.step();
+        if (Math.abs(Math.atan2(Math.sin(t.angle), Math.cos(t.angle))) < 0.3) return n;
+      }
+      return 9999;
+    };
+    const mg = swing('mg42', 0), tiger = swing('tiger', 0), tiger10 = swing('tiger', 9);
+    // their penetration falls off with range as ours does: a T-34/85's round hurts a Tiger dug in close, bounces far off
+    const hurt = (dist) => {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      const t = s.place(towerIndex('tiger'), 30, 30, true);
+      const before = t.hp;
+      s.hitDefender(t.id, 100, 100, 0, false, t.x + dist, t.y, 215);
+      return before - t.hp;
+    };
+    const near = hurt(20), far = hurt(210);
+    // the repair crew: drives to a wrecked position by itself and rebuilds it, paying as it goes; without money it waits
+    const s = Sim.create(cfg);
+    s.hero = null;
+    const pak = s.place(towerIndex('pak40'), 34, 22, true);
+    pak.spent = 200;
+    s.wreckTower(pak);
+    const hq = s.towers.find((t) => t.base > 0);
+    const k = unitIndex('de_crew');
+    s.money = 0;
+    const u = s.spawnUnit(k, hq.x - 70, hq.y, -1);
+    for (let n = 0; n < 60 * 20; n++) s.step();
+    const waited = pak.wreck && s.crewStatus(u) === 'no money';
+    s.money = 500;
+    let rebuilt = 0;
+    for (let n = 0; n < 60 * 40 && !rebuilt; n++) {
+      s.step();
+      if (!pak.wreck && pak.hp >= s.maxHp(pak)) rebuilt = n;
+    }
+    // a workshop trains it
+    const w = s.place(towerIndex('workshop'), 40, 40, true);
+    s.money = 500;
+    const trains = s.exec({ t: 'train', id: w.id, unit: k });
+    return { mg, tiger, tiger10, near, far, waited, rebuilt, paid: 500 - s.money, trains };
+  });
+  check(fair.mg < fair.tiger && fair.tiger10 < fair.tiger, `WW2 traverse: an MG swings round in ${fair.mg} ticks, a Tiger in ${fair.tiger}, an upgraded Tiger in ${fair.tiger10}`);
+  check(fair.near > fair.far, `WW2 fire both ways: an attacker's round hurts more close (${Math.round(fair.near)}) than far (${Math.round(fair.far)})`);
+  check(fair.waited && fair.rebuilt > 0 && fair.paid > 0 && fair.trains, `WW2 repair crew: waits without money (${fair.waited}), rebuilds a wrecked PaK by itself (${fair.rebuilt} ticks, $${Math.round(fair.paid)} paid), trained at the workshop (${fair.trains})`);
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {

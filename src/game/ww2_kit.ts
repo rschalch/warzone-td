@@ -2,6 +2,7 @@
 // its own equipment, the roles of an attacking army, and the wave builder that turns any army's
 // roster into the 30 waves of an offensive. The factions themselves are in ww2_<faction>.ts.
 
+import { armsLv, type WeaponId } from './ww2_arms';
 import { RT, type Combo, type EnemyDef, type SpawnGroup, type TowerDef, type TowerLevel, type UnitDef } from './defs';
 
 /** The sides of the war. */
@@ -133,7 +134,14 @@ export function assault(n: number, army: Army): SpawnGroup[] {
  */
 export function derive(base: TowerDef, over: Partial<Omit<TowerDef, 'levels'>> & { lv?: Partial<TowerLevel> }): TowerDef {
   const { lv, ...rest } = over;
-  return RT({ ...base, ...rest, levels: [{ ...base.levels[0], ...lv }] });
+  let l0: TowerLevel = base.levels[0];
+  if (over.weapon && over.weapon !== base.weapon) {
+    // a gun of its own: nothing of the template's gun carries over (cost, hit points and cover do)
+    const { cost, hp, fort, burn, income, interest, cap, buff, charge } = l0;
+    l0 = { cost, hp, fort, burn, income, interest, cap, buff, charge, ...armsLv(over.weapon as WeaponId) };
+    for (const k of Object.keys(l0) as (keyof TowerLevel)[]) if (l0[k] === undefined) delete l0[k];
+  }
+  return RT({ ...base, ...rest, levels: [{ ...l0, ...lv }] });
 }
 
 /** The tower of a slot in an arsenal. */

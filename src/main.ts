@@ -9,6 +9,8 @@ import { sound } from './audio/sound';
 import type { LoggedCommand } from './game/commands';
 import { DIFFICULTIES, type GameConfig } from './game/config';
 import { COLS, ENEMIES, MAP_H, MAP_W, ROWS, TILE, TOWERS, UNITS, WW2 } from './game/defs';
+import { rulesetFor } from './game/rules';
+import { ARMS } from './game/ww2_arms';
 import { MAPS, buildMap, useMapSize, type MapDef } from './game/maps';
 import { parseMapCode, randomMap } from './game/mapgen';
 import { PARTNER } from './game/partner';
@@ -311,7 +313,7 @@ function startMines(): void {
   if (!s || session!.mode === 'replay') return;
   const eng = unitSel.filter((id) => {
     const u = s.unitSlot(id);
-    return u >= 0 && UNITS[s.uKind[u]].repair;
+    return u >= 0 && UNITS[s.uKind[u]].repair && !UNITS[s.uKind[u]].crew;
   });
   if (!eng.length) return flash('Select engineers to lay mines');
   placing = -1;
@@ -1280,6 +1282,9 @@ async function boot(): Promise<void> {
     enemyDef: (kind: number) => ENEMIES[kind],
     MAPS,
     unitIndex: (kind: string) => UNITS.findIndex((u) => u.kind === kind),
+    /** A WW2 ruleset without installing it, and the weapon catalogue, for the arms checks. */
+    rulesetFor,
+    ARMS,
     quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal', ww2 = false) =>
       startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234, ww2: ww2 ? { side: 'de', foe: 'su' } : undefined }),
   };

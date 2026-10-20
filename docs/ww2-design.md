@@ -239,6 +239,29 @@ Okinawa (1945, Japan: Shuri Line).
 - The minimap shades their ground and outlines it: the front line. Their HQ's guns cover the positions next to it,
   so the ones near their other entries are the easier prizes.
 
+### 8.9 One arsenal of weapons for both sides (October 2026)
+
+- `src/game/ww2_arms.ts` lists every gun once (`ARMS`): damage, range, practical rate of fire (historical, × 2.2
+  for the compressed battle), penetration, accuracy and traverse (historical °/s × 4), with a note on where the
+  figures come from. Emplacements, our units and the attackers all fire these: an enemy Tiger's KwK 36 is the
+  dug-in Tiger's, their PaK 40 position is ours, their MG nest fires the arsenal's MG.
+- Every weapon has a range band — short (≤ 100 px: SMGs, flamethrowers, bazookas, pillbox embrasures), medium
+  (rifles, MGs, light flak, mortars, most tank guns) or long (AT guns, heavy flak, the big tank guns, snipers,
+  howitzers, rockets) — and every side fields all three.
+- Levels: one curve (`GROW` in defs.ts) for both sides. Our emplacements climb it by upgrades — every level adds
+  damage, range, rate of fire, penetration, accuracy, traverse, hit points and cover — and the attackers' guns climb
+  it with the war, a level every three waves (`Sim.warLevel`), in everything but damage per hit: their growing
+  numbers and toughness are their side of that (with both, no defence held past wave 12-20). Units we train come
+  with the war's level too.
+- The same hit rules both ways: penetration falls off with range for every shooter; one rule for fortified targets
+  (ours and their base's positions) and one for armour (their tanks and ours, through-and-through hits included);
+  smoke spoils the aim of anyone firing into or out of it; suppression slows every crew; small arms hold fire at what
+  they can't hurt; tanks button up when hit; tanks lay their gun at its traverse before firing; infantry of either
+  side close-assault a tank that comes too close without its infantry.
+- **Repair crew**: a lorry of mechanics trained at the workshop. It drives round the whole camp by itself, rebuilds
+  wrecked positions (the most valuable, nearest first) and patches damaged ones, paying the price of a repair out of
+  the army's money as it works; when the money runs out it waits. It stays clear of a position while the fight is on.
+
 ## 7. Phases
 
 Status: phases 0–6 done. Four sides, each playable as defender and as attacker, in six matchups:

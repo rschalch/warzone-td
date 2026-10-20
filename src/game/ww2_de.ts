@@ -7,6 +7,7 @@
 
 import { RT, growAll, type EnemyDef, type TowerDef, type UnitDef } from './defs';
 import type { Arsenal, Army, UnitHelp } from './ww2_kit';
+import { armsGun, armsLv, armsUnit } from './ww2_arms';
 
 // ---------------------------------------------------------------- emplacements (in slot order)
 
@@ -16,30 +17,35 @@ export const GERMAN: TowerDef[] = growAll([
     kind: 'mg42', slot: 'mg', role: 'gun', cat: 'basic', name: 'MG-42 Nest', short: 'MG-42', desc: '1,200 rounds a minute: shreds and pins infantry. Bounces off armour.',
     hitsGround: true, hitsAir: true, airMult: 0.6, color: 0xc9b26a, turret: 'w_mg42', sfx: 'mg42',
     camo: 0.3,
-    levels: [{ cost: 15, damage: 3.2, range: 100, rate: 10, pen: 8, supp: 0.07, hp: 170, fort: 15 }],
+    weapon: 'mg42',
+    levels: [{ cost: 15, ...armsLv('mg42'), hp: 510, fort: 15 }],
   }),
   RT({
     kind: 'flak38', slot: 'lightaa', role: 'gun', cat: 'basic', name: '2 cm Flak 38', short: 'Flak 38', desc: 'Light autocannon: deadly to aircraft, light vehicles and infantry.',
     hitsGround: true, hitsAir: true, airMult: 2.2, color: 0x9aa070, turret: 'w_flak38', sfx: 'flak38',
-    levels: [{ cost: 35, damage: 9, range: 165, rate: 3.5, pen: 30, supp: 0.04, hp: 150, fort: 10 }],
+    weapon: 'flak38',
+    levels: [{ cost: 35, ...armsLv('flak38'), hp: 450, fort: 10 }],
   }),
   RT({
     kind: 'schreck', slot: 'at', role: 'at', cat: 'basic', name: 'Panzerschreck Team', short: 'Schreck', desc: 'Rocket launcher team. Very short range, goes through any tank.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a7a50, turret: 'w_schreck', sfx: 'schreck',
     camo: 0.7,
-    levels: [{ cost: 30, damage: 85, range: 70, rate: 0.3, pen: 170, hp: 100, fort: 12 }],
+    weapon: 'schreck',
+    levels: [{ cost: 30, ...armsLv('schreck'), hp: 300, fort: 12 }],
   }),
   RT({
     kind: 'sniper', slot: 'sniper', role: 'sniper', cat: 'basic', name: 'Scharfschütze', short: 'Sniper', desc: 'Kills a soldier per shot from far away. Useless against armour.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x6a7a4a, turret: 'w_sniper', sfx: 'sniper',
     camo: 0.85,
-    levels: [{ cost: 45, damage: 60, range: 280, rate: 0.4, pen: 10, hp: 80, fort: 12 }],
+    weapon: 'sniper',
+    levels: [{ cost: 45, ...armsLv('sniper'), hp: 240, fort: 12 }],
   }),
   RT({
     kind: 'flamer', slot: 'flamer', role: 'flame', cat: 'basic', name: 'Flammenwerfer', short: 'Flamer', desc: 'Burns infantry and soft vehicles at point-blank range. Tanks are sealed.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xff7a1a, turret: 'w_flamer', sfx: 'flame',
     camo: 0.5,
-    levels: [{ cost: 40, damage: 22, range: 60, rate: 0, burn: 9, pen: 12, hp: 110, fort: 12 }],
+    weapon: 'flamer',
+    levels: [{ cost: 40, ...armsLv('flamer'), burn: 9, hp: 330, fort: 12 }],
   }),
 
   // ---- anti-tank guns
@@ -47,24 +53,29 @@ export const GERMAN: TowerDef[] = growAll([
     kind: 'pak40', slot: 'atgun', role: 'at', cat: 'precision', name: '7.5 cm PaK 40', short: 'PaK 40', desc: 'Anti-tank gun: slow, decisive shots. Kills T-34s from the side.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x7a8a5a, turret: 'w_pak40', sfx: 'pak40',
     camo: 0.6,
-    levels: [{ cost: 55, damage: 75, range: 235, rate: 0.45, pen: 115, hp: 210, fort: 22 }],
+    weapon: 'pak40',
+    levels: [{ cost: 55, ...armsLv('pak40'), hp: 630, fort: 22 }],
   }),
   RT({
     kind: 'flak88', slot: 'heavyaa', role: 'at', cat: 'precision', name: '8.8 cm Flak 36', short: 'Flak 88', desc: 'The "Eighty-Eight": long range, kills tanks and bombers alike.',
     hitsGround: true, hitsAir: true, airMult: 1, color: 0xa8a890, turret: 'w_flak88', sfx: 'flak88',
-    levels: [{ cost: 120, damage: 120, range: 290, rate: 0.3, pen: 135, splash: 30, hp: 270, fort: 15 }],
+    weapon: 'flak88',
+    levels: [{ cost: 120, ...armsLv('flak88'), hp: 810, fort: 15 }],
   }),
   RT({
     kind: 'tiger', slot: 'tank', role: 'at', cat: 'precision', name: 'Tiger I (dug in)', short: 'Tiger', desc: 'A hull-down Tiger: the 8.8 cm KwK 36 outranges every Soviet tank.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x9a8c60, turret: 'w_tiger', sfx: 'tiger',
     camo: 0.4,
-    levels: [{ cost: 200, damage: 130, range: 255, rate: 0.28, pen: 140, hp: 730, fort: 100 }],
+    weapon: 'kwk36',
+    levels: [{ cost: 200, ...armsLv('kwk36'), hp: 2190, fort: 100 }],
   }),
   RT({
     kind: 'bunker', slot: 'bunker', role: 'bunker', cat: 'precision', name: 'MG Bunker', short: 'Bunker', desc: 'Concrete pillbox with two MGs firing at two targets at once.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x8a8a7a, turret: 'w_bunker', sfx: 'mg42',
     camo: 0.3,
-    levels: [{ cost: 45, damage: 3.5, range: 75, rate: 8, pen: 8, supp: 0.05, hp: 590, fort: 80 }],
+    weapon: 'mg42',
+    // (the embrasures narrow the MGs' field of fire)
+    levels: [{ cost: 45, ...armsLv('mg42'), range: 80, hp: 1770, fort: 80 }],
   }),
 
   // ---- artillery
@@ -72,55 +83,58 @@ export const GERMAN: TowerDef[] = growAll([
     kind: 'mortar', slot: 'mortar', role: 'cannon', cat: 'fire', name: '8 cm Mortar', short: 'Mortar', desc: 'High-explosive bombs on infantry groups. Pins them down.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xa08a5a, turret: 'w_mortar', sfx: 'mortar',
     camo: 0.5,
-    levels: [{ cost: 40, damage: 26, range: 180, rate: 0.5, splash: 38, pen: 12, supp: 0.25, hp: 130, fort: 12 }],
+    weapon: 'grw34',
+    levels: [{ cost: 40, ...armsLv('grw34'), hp: 390, fort: 12 }],
   }),
   RT({
     kind: 'lefh18', slot: 'howitzer', role: 'arty', cat: 'fire', name: '10.5 cm leFH 18', short: 'Howitzer', desc: 'Huge range and blast. It fires at anything your positions, soldiers or observers can see.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0x7a6a4a, turret: 'w_lefh18', sfx: 'arty',
-    levels: [{ cost: 110, damage: 150, range: 480, rate: 0.18, splash: 58, pen: 28, supp: 0.5, hp: 210, fort: 12 }],
+    weapon: 'lefh18',
+    levels: [{ cost: 110, ...armsLv('lefh18'), hp: 630, fort: 12 }],
   }),
   RT({
     kind: 'nebel', slot: 'rockets', role: 'cannon', cat: 'fire', name: 'Nebelwerfer 41', short: 'Nebelwerfer', desc: 'Six screaming rockets per salvo, scattered over the target area.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xb05a3a, turret: 'w_nebel', sfx: 'nebel',
-    levels: [{ cost: 130, damage: 65, range: 300, rate: 0.1, splash: 38, pen: 18, supp: 0.4, salvo: 6, hp: 140, fort: 8 }],
+    weapon: 'nebel41',
+    levels: [{ cost: 130, ...armsLv('nebel41'), hp: 420, fort: 8 }],
   }),
 
   // ---- support
   RT({
     kind: 'depot', slot: 'depot', role: 'depot', cat: 'support', name: 'Supply Depot', short: 'Depot', desc: 'Pays out at every wave (income plus interest) and adds manpower for training units.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0xd0b050, turret: 'w_depot', aim: 'static', targeted: false,
-    levels: [{ cost: 80, damage: 0, range: 180, rate: 0, income: 12, interest: 0.02, cap: 40, hp: 310, fort: 10 }],
+    levels: [{ cost: 80, damage: 0, range: 180, rate: 0, income: 12, interest: 0.02, cap: 40, hp: 930, fort: 10 }],
   }),
   RT({
     kind: 'observer', slot: 'observer', role: 'radar', cat: 'support', name: 'Observation Post', short: 'Observer', desc: 'Sees far (even at night), reveals snipers, speeds up artillery and extends the range of guns nearby.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0x50c0a0, turret: 'w_observer', aim: 'spin', targeted: false,
-    levels: [{ cost: 55, damage: 0, range: 170, rate: 0, buff: 0.1, hp: 110, fort: 12 }],
+    levels: [{ cost: 55, damage: 0, range: 170, rate: 0, buff: 0.1, hp: 330, fort: 12 }],
   }),
   RT({
     kind: 'hq', slot: 'hq', role: 'command', cat: 'support', name: 'Field HQ', short: 'HQ', desc: 'Officers and radios: emplacements in range fire faster.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0xc04a3a, turret: 'w_hq', aim: 'static', targeted: false,
-    levels: [{ cost: 90, damage: 0, range: 100, rate: 0, buff: 0.15, hp: 340, fort: 30 }],
+    levels: [{ cost: 90, damage: 0, range: 100, rate: 0, buff: 0.15, hp: 1020, fort: 30 }],
   }),
   RT({
     kind: 'workshop', slot: 'workshop', role: 'workshop', cat: 'support', name: 'Repair Workshop', short: 'Workshop', desc: 'Pioneers patch up damaged emplacements in range, even under fire.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0x6a9ad0, turret: 'w_workshop', aim: 'static', targeted: false,
-    levels: [{ cost: 70, damage: 0, range: 110, rate: 0, buff: 0.03, hp: 220, fort: 12 }],
+    levels: [{ cost: 70, damage: 0, range: 110, rate: 0, buff: 0.03, hp: 660, fort: 12 }],
   }),
 
   RT({
     kind: 'barracks', slot: 'barracks', role: 'barracks', cat: 'units', name: 'Barracks', short: 'Barracks', desc: 'Trains infantry squads, pioneers and medics to fight outside the emplacements.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0x8a9a6a, turret: 'w_barracks', aim: 'static', targeted: false, single: true,
-    levels: [{ cost: 80, damage: 0, range: 0, rate: 0, hp: 300, fort: 15 }],
+    levels: [{ cost: 80, damage: 0, range: 0, rate: 0, hp: 900, fort: 15 }],
   }),
   RT({
     kind: 'motorpool', slot: 'motorpool', role: 'motorpool', cat: 'units', name: 'Motor Pool', short: 'Motor Pool', desc: 'Builds Panzer IVs, Panthers and Tigers that chase the enemy across the field.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0x9a8c60, turret: 'w_motorpool', aim: 'static', targeted: false, single: true,
-    levels: [{ cost: 150, damage: 0, range: 0, rate: 0, hp: 400, fort: 20 }],
+    levels: [{ cost: 150, damage: 0, range: 0, rate: 0, hp: 1200, fort: 20 }],
   }),
   RT({
     kind: 'airfield', slot: 'airfield', role: 'airfield', cat: 'units', name: 'Fighter Airfield', short: 'Airfield', desc: 'Send (R) a pair of Fw 190s to patrol a point: they shoot down aircraft and strafe soft targets.',
     hitsGround: false, hitsAir: false, airMult: 0, color: 0x9aa0a0, turret: 'w_airfield', aim: 'static', targeted: false, manual: true, sfx: '',
-    levels: [{ cost: 180, damage: 0, range: 0, rate: 0, charge: 45, hp: 300, fort: 10 }],
+    levels: [{ cost: 180, damage: 0, range: 0, rate: 0, charge: 45, hp: 900, fort: 10 }],
   }),
 
   // ---- obstacles
@@ -154,38 +168,38 @@ export const GERMAN: TowerDef[] = growAll([
   RT({
     kind: 'stuka', slot: 'strike', role: 'stuka', cat: 'super', name: 'Stuka Airfield', short: 'Stuka', desc: 'Call in (R) three Ju 87s: dive-bombing that breaks tank columns.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xe0c040, turret: 'w_stuka', aim: 'static', targeted: false, manual: true, sfx: 'stuka',
-    levels: [{ cost: 220, damage: 380, range: 0, rate: 0, splash: 48, charge: 40, pen: 70, hp: 420, fort: 10 }],
+    levels: [{ cost: 220, damage: 380, range: 0, rate: 0, splash: 48, charge: 40, pen: 70, hp: 1260, fort: 10 }],
   }),
   RT({
     kind: 'v2', slot: 'super', role: 'nuke', cat: 'super', name: 'V-2 Launch Site', short: 'V-2', desc: 'Vergeltungswaffe 2: a ballistic missile (R) on any point. It falls faster than sound — no warning.',
     hitsGround: true, hitsAir: false, airMult: 0, color: 0xe8e6dc, turret: 'w_v2', aim: 'static', targeted: false, manual: true, sfx: 'v2',
-    levels: [{ cost: 420, damage: 1100, range: 0, rate: 0, splash: 120, charge: 110, pen: 120, hp: 360, fort: 30 }],
+    levels: [{ cost: 420, damage: 1100, range: 0, rate: 0, splash: 120, charge: 110, pen: 120, hp: 1080, fort: 30 }],
   }),
 ]);
 
 // ---------------------------------------------------------------- units
 
 export const GERMAN_UNITS: UnitDef[] = [
-  { kind: 'grenadier', name: 'Grenadier Squad', short: 'Grenadiers', tex: 'de_rifle', from: 'barracks', cost: 35, manpower: 1, train: 6, hp: 70, speed: 42, radius: 6, inf: true,
-    gun: { dmg: 5, range: 110, rate: 1.4, pen: 8, supp: 0.03, sfx: 'mosin' }, desc: 'Riflemen: cheap, steady fire, and a body between the enemy and your guns.' },
-  { kind: 'mgteam', name: 'MG-42 Team', short: 'MG Team', tex: 'de_mg', from: 'barracks', cost: 50, manpower: 1, train: 8, hp: 55, speed: 38, radius: 6, inf: true,
-    gun: { dmg: 3, range: 125, rate: 9, pen: 8, supp: 0.07, still: true, sfx: 'mg42' }, desc: 'A light machine gun that sets up wherever you need it. Must stop to fire.' },
-  { kind: 'atteam', name: 'Panzerschreck Team', short: 'AT Team', tex: 'de_schreck', from: 'barracks', cost: 60, manpower: 1, train: 9, hp: 50, speed: 40, radius: 6, inf: true, camo: true,
-    gun: { dmg: 85, range: 75, rate: 0.3, pen: 170, sfx: 'schreck' }, desc: 'Tank hunters. Put them in Ambush where tanks pass close: hidden until they fire.' },
-  { kind: 'sniperu', name: 'Sniper', short: 'Sniper', tex: 'de_sniper', from: 'barracks', cost: 55, manpower: 1, train: 9, hp: 35, speed: 40, radius: 6, inf: true, camo: true,
-    gun: { dmg: 60, range: 270, rate: 0.4, pen: 10, sfx: 'sniper' }, desc: 'Camouflaged marksman: the enemy only sees it when it fires.' },
-  { kind: 'pioneer', name: 'Pioneers', short: 'Pioneers', tex: 'de_pioneer', from: 'barracks', cost: 45, manpower: 1, train: 8, hp: 60, speed: 44, radius: 6, inf: true, repair: 14,
-    gun: { dmg: 4, range: 90, rate: 1, pen: 8, sfx: 'mosin' }, desc: 'Combat engineers: repair damaged emplacements and raise rubble back up, free of charge.' },
-  { kind: 'medic', name: 'Sanitäter', short: 'Medic', tex: 'de_medic', from: 'barracks', cost: 40, manpower: 1, train: 7, hp: 45, speed: 46, radius: 6, inf: true, heal: 6,
+  { kind: 'grenadier', name: 'Grenadier Squad', short: 'Grenadiers', tex: 'de_rifle', from: 'barracks', cost: 35, manpower: 1, train: 6, hp: 140, speed: 42, radius: 6, inf: true,
+    gun: armsUnit('kar98k', 'mosin'), desc: 'Riflemen: cheap, steady fire, and a body between the enemy and your guns.' },
+  { kind: 'mgteam', name: 'MG-42 Team', short: 'MG Team', tex: 'de_mg', from: 'barracks', cost: 50, manpower: 1, train: 8, hp: 110, speed: 38, radius: 6, inf: true,
+    gun: armsUnit('mg42', 'mg42', { still: true }), desc: 'A light machine gun that sets up wherever you need it. Must stop to fire.' },
+  { kind: 'atteam', name: 'Panzerschreck Team', short: 'AT Team', tex: 'de_schreck', from: 'barracks', cost: 60, manpower: 1, train: 9, hp: 100, speed: 40, radius: 6, inf: true, camo: true,
+    gun: armsUnit('schreck', 'schreck'), desc: 'Tank hunters. Put them in Ambush where tanks pass close: hidden until they fire.' },
+  { kind: 'sniperu', name: 'Sniper', short: 'Sniper', tex: 'de_sniper', from: 'barracks', cost: 55, manpower: 1, train: 9, hp: 70, speed: 40, radius: 6, inf: true, camo: true,
+    gun: armsUnit('sniper', 'sniper'), desc: 'Camouflaged marksman: the enemy only sees it when it fires.' },
+  { kind: 'pioneer', name: 'Pioneers', short: 'Pioneers', tex: 'de_pioneer', from: 'barracks', cost: 45, manpower: 1, train: 8, hp: 120, speed: 44, radius: 6, inf: true, repair: 40,
+    gun: armsUnit('kar98k', 'mosin'), desc: 'Combat engineers: repair damaged emplacements and raise rubble back up, free of charge.' },
+  { kind: 'medic', name: 'Sanitäter', short: 'Medic', tex: 'de_medic', from: 'barracks', cost: 40, manpower: 1, train: 7, hp: 90, speed: 46, radius: 6, inf: true, heal: 12,
     desc: 'Patches up soldiers and the commander nearby.' },
-  { kind: 'pz4', name: 'Panzer IV Ausf. H', short: 'Panzer IV', tex: 'de_pz4', from: 'motorpool', cost: 200, manpower: 2, train: 15, hp: 330, speed: 46, radius: 12, arm: [80, 30, 20, 15],
-    gun: { dmg: 75, range: 190, rate: 0.32, pen: 105, splash: 12, still: true, sfx: 'pak40' }, desc: 'The workhorse: the long 75 mm kills T-34s; its sides are thin.' },
-  { kind: 'panther', name: 'Panther Ausf. G', short: 'Panther', tex: 'de_panther', from: 'motorpool', cost: 320, manpower: 2, train: 20, hp: 420, speed: 50, radius: 14, arm: [110, 45, 40, 16],
-    gun: { dmg: 90, range: 220, rate: 0.3, pen: 150, splash: 12, still: true, sfx: 'pak40' }, desc: 'Sloped 80 mm front, a high-velocity gun that goes through almost anything. Keep its front to the enemy.' },
-  { kind: 'tigeru', name: 'Tiger I', short: 'Tiger', tex: 'de_tiger', from: 'motorpool', cost: 420, manpower: 3, train: 25, hp: 560, speed: 32, radius: 14, arm: [100, 80, 80, 25],
-    gun: { dmg: 125, range: 210, rate: 0.24, pen: 140, splash: 16, still: true, sfx: 'tiger' }, desc: 'Thick armour all round and the 8.8 cm gun: slow, and worth three lives of any column.' },
-  { kind: 'fw190', name: 'Fw 190 A', short: 'Fw 190', tex: 'de_fw190', from: 'airfield', cost: 0, manpower: 0, train: 0, hp: 140, speed: 190, radius: 12, air: true,
-    gun: { dmg: 10, range: 110, rate: 5, pen: 20, hitsAir: true, sfx: 'flak38' }, desc: 'Fighters on patrol: they hunt aircraft first, then strafe soft targets.' },
+  { kind: 'pz4', name: 'Panzer IV Ausf. H', short: 'Panzer IV', tex: 'de_pz4', from: 'motorpool', cost: 200, manpower: 2, train: 15, hp: 660, speed: 46, radius: 12, arm: [80, 30, 20, 15],
+    gun: armsUnit('kwk40', 'pak40', { still: true, splash: 12 }), desc: 'The workhorse: the long 75 mm kills T-34s; its sides are thin.' },
+  { kind: 'panther', name: 'Panther Ausf. G', short: 'Panther', tex: 'de_panther', from: 'motorpool', cost: 320, manpower: 2, train: 20, hp: 840, speed: 50, radius: 14, arm: [110, 45, 40, 16],
+    gun: armsUnit('kwk42', 'pak40', { still: true, splash: 12 }), desc: 'Sloped 80 mm front, a high-velocity gun that goes through almost anything. Keep its front to the enemy.' },
+  { kind: 'tigeru', name: 'Tiger I', short: 'Tiger', tex: 'de_tiger', from: 'motorpool', cost: 420, manpower: 3, train: 25, hp: 1120, speed: 32, radius: 14, arm: [100, 80, 80, 25],
+    gun: armsUnit('kwk36', 'tiger', { still: true, splash: 16 }), desc: 'Thick armour all round and the 8.8 cm gun: slow, and worth three lives of any column.' },
+  { kind: 'fw190', name: 'Fw 190 A', short: 'Fw 190', tex: 'de_fw190', from: 'airfield', cost: 0, manpower: 0, train: 0, hp: 280, speed: 190, radius: 12, air: true,
+    gun: armsUnit('fighter', 'flak38', { hitsAir: true }), desc: 'Fighters on patrol: they hunt aircraft first, then strafe soft targets.' },
 ];
 
 const HELP: Record<string, string> = {
@@ -241,35 +255,35 @@ export const GERMANY: Arsenal = {
 
 const WEHRMACHT: EnemyDef[] = [
   { name: 'Grenadier Squad', hp: 34, speed: 42, reward: 2, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_rifle', bio: 2, inf: true,
-    gun: { dmg: 3, range: 110, rate: 0.75, pen: 7, supp: 0.03, fx: 'rifle' } },
+    gun: armsGun('kar98k', 'rifle') },
   { name: 'Sturmgrenadiere', hp: 44, speed: 52, reward: 3, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_assault', bio: 2, inf: true,
-    gun: { dmg: 4.2, range: 70, rate: 1.2, pen: 6, supp: 0.05, fx: 'smg' } },
+    gun: armsGun('mp40', 'smg') },
   { name: 'Scharfschütze', hp: 26, speed: 46, reward: 4, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_sniper', bio: 2, inf: true, stealth: true, spot: 150,
-    gun: { dmg: 14, range: 230, rate: 0.25, pen: 10, supp: 0.15, fx: 'rifle' } },
+    gun: armsGun('sniper', 'rifle') },
   { name: 'Sanitäter', hp: 40, speed: 44, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_medic', bio: 2, inf: true, heal: 0.08 },
   { name: 'Kübelwagen', hp: 50, speed: 95, reward: 3, armor: 0, air: false, radius: 8, lives: 1, tex: 'de_kubel', bio: 1, spot: 220 },
   { name: 'SdKfz 251 Half-track', hp: 95, speed: 68, reward: 5, armor: 0, air: false, radius: 10, lives: 1, tex: 'de_251', bio: 0.6, arm: [14, 8, 8, 6], spot: 180,
-    gun: { dmg: 3, range: 110, rate: 2.2, pen: 8, supp: 0.05, fx: 'mg' } },
+    gun: armsGun('mg34', 'mg') },
   { name: 'Panzer III', smoke: true, hp: 140, speed: 48, reward: 6, armor: 0, air: false, radius: 11, lives: 1, tex: 'de_pz3', bio: 0.4, arm: [50, 30, 30, 12],
-    gun: { dmg: 22, range: 165, rate: 0.3, pen: 60, supp: 0.2, halt: 0.5, fx: 'tank' } },
+    gun: armsGun('kwk39', 'tank', { supp: 0.2, halt: 0.5 }) },
   { name: 'Panzer IV', smoke: true, hp: 200, speed: 42, reward: 8, armor: 0, air: false, radius: 12, lives: 2, tex: 'de_pz4', bio: 0.35, arm: [80, 30, 20, 15],
-    gun: { dmg: 36, range: 185, rate: 0.24, pen: 105, supp: 0.3, halt: 0.6, splash: 14, fx: 'tank' } },
+    gun: armsGun('kwk40', 'tank', { supp: 0.3, halt: 0.6, splash: 14 }) },
   { name: 'Panther', smoke: true, hp: 260, speed: 46, reward: 11, armor: 0, air: false, radius: 14, lives: 2, tex: 'de_panther', bio: 0.35, arm: [110, 45, 40, 16],
-    gun: { dmg: 46, range: 210, rate: 0.22, pen: 150, supp: 0.3, halt: 0.6, splash: 14, fx: 'tank' } },
+    gun: armsGun('kwk42', 'tank', { supp: 0.3, halt: 0.6, splash: 14 }) },
   { name: 'Tiger I', smoke: true, hp: 360, speed: 28, reward: 15, armor: 0, air: false, radius: 14, lives: 3, tex: 'de_tiger', bio: 0.3, arm: [100, 80, 80, 25],
-    gun: { dmg: 52, range: 200, rate: 0.2, pen: 140, supp: 0.35, halt: 0.7, splash: 18, fx: 'tank' } },
+    gun: armsGun('kwk36', 'tank', { supp: 0.35, halt: 0.7, splash: 18 }) },
   { name: 'King Tiger', smoke: true, hp: 2100, speed: 22, reward: 85, armor: 0, air: false, radius: 18, lives: 4, tex: 'de_kingtiger', bio: 0.25, arm: [180, 80, 80, 40], boss: true,
-    gun: { dmg: 140, range: 230, rate: 0.1, pen: 190, supp: 0.6, halt: 0.9, splash: 30, fx: 'tank' } },
+    gun: armsGun('kwk43', 'tank', { supp: 0.6, halt: 0.9, splash: 30 }) },
   { name: 'Ju 87 Stuka', hp: 90, speed: 74, reward: 6, armor: 0, air: true, radius: 13, lives: 1, tex: 'de_ju87', bio: 0, arm: [10, 10, 8, 8],
-    gun: { dmg: 44, range: 60, rate: 0.3, pen: 70, supp: 0.35, splash: 26, fx: 'rocket' } },
+    gun: armsGun('divebomb', 'rocket') },
   { name: 'Bf 109', hp: 65, speed: 115, reward: 4, armor: 0, air: true, radius: 12, lives: 1, tex: 'de_bf109', bio: 0,
-    gun: { dmg: 7, range: 120, rate: 3, pen: 15, supp: 0, fx: 'mg', air: true } },
+    gun: armsGun('fighter', 'mg', { air: true }) },
   { name: 'Panzerwerfer 42', hp: 110, speed: 52, reward: 9, armor: 0, air: false, radius: 11, lives: 1, tex: 'de_pzwerfer', bio: 0.8, arm: [10, 8, 8, 6],
-    gun: { dmg: 24, range: 330, rate: 1 / 14, pen: 30, supp: 0.5, halt: 1.2, splash: 30, salvo: 10, fx: 'katyusha' } },
+    gun: armsGun('nebel41', 'katyusha', { halt: 1.2, salvo: 10 }) },
   { name: 'Pioniere', hp: 45, speed: 46, reward: 5, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_pioneer', bio: 2, inf: true,
-    gun: { dmg: 260, range: 22, rate: 0.25, pen: 150, supp: 0.6, fx: 'satchel' } },
+    gun: armsGun('satchel', 'satchel') },
   { name: 'Leutnant', hp: 40, speed: 44, reward: 8, armor: 0, air: false, radius: 6, lives: 1, tex: 'de_officer', bio: 2, inf: true, officer: true, spot: 160,
-    gun: { dmg: 3, range: 80, rate: 0.6, pen: 6, supp: 0.02, fx: 'smg' } },
+    gun: armsGun('pistol', 'smg') },
 ];
 
 const WEHRMACHT_HELP: UnitHelp[] = [

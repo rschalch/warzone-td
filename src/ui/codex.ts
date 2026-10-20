@@ -1,6 +1,7 @@
 // Longer explanations for the side panel: what each tower, unit, item and ability actually does,
 // and how to use or counter it.
 
+import { TIME, weaponOf } from '../game/ww2_arms';
 import { ENEMIES, WW2, WW2_FOE, WW2_SIDE, type TowerDef, type TowerKind } from '../game/defs';
 import { ARMIES, ARSENALS, GARRISON_HELP, type Faction } from '../game/ww2';
 
@@ -92,7 +93,15 @@ export const FOREST_HELP = 'Dense woods: ground units can\'t get through and mus
 const CAMO_HELP = ' <i>Camouflaged:</i> the enemy only finds it close up (recon jeeps and armoured cars from further off), or for a few seconds after it fires. Its first shot from hiding hits harder; in <b>Ambush</b> mode it waits for a flank or point-blank shot.';
 
 export const towerHelp = (def: TowerDef): string =>
-  (WW2 ? (ARSENALS[WW2_SIDE as Faction]?.help[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
+  (WW2 ? (ARSENALS[WW2_SIDE as Faction]?.help[def.kind] ?? def.desc) + (def.camo ? CAMO_HELP : '') + weaponNote(def) : TOWER_HELP[def.kind as TowerKind] ?? def.desc);
+
+/** WW2: where a gun's figures come from, and that the attackers fire the same gun the same way. */
+function weaponNote(def: TowerDef): string {
+  const w = weaponOf(def.weapon);
+  if (!w) return '';
+  const rate = w.rpm ? ` Historically ${w.note}; here ${Math.round(w.rpm * TIME)} a minute (the battle runs ${TIME}× faster).` : ` ${w.note[0].toUpperCase()}${w.note.slice(1)}.`;
+  return `<br><br><small><b>${w.name}.</b>${rate} The enemy fires the same gun with the same figures; every upgrade adds damage, range, rate, accuracy, traverse and cover.</small>`;
+}
 export const enemyHelp = (kind: number): UnitHelp =>
   (WW2 ? ww2Help(kind) : ENEMY_HELP[kind]) ?? { text: ENEMIES[kind]?.name ?? '', counter: '' };
 const ww2Help = (kind: number): UnitHelp | undefined => {
