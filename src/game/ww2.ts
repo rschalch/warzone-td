@@ -142,7 +142,7 @@ function repairCrew(side: Faction): UnitDef {
   return {
     kind: `${side}_crew`, name, short: 'Repair Crew', tex, from: 'workshop', crew: true,
     cost: 60, manpower: 1, train: 8, hp: 240, speed: 60, radius: 9, repair: 120,
-    desc: 'Mechanics and engineers in a lorry. They drive round the whole camp by themselves, rebuild wrecked positions (the most valuable first) and patch up damaged ones, paying for the work from your money as they go — at the price of a repair — and waiting when the money runs out. They keep clear of the fighting until it moves on. Guard or Hold keeps them near one spot; Roam (Hunt) is the default.',
+    desc: 'Mechanics and engineers in a lorry. They drive round the whole camp by themselves, rebuild wrecked positions (the most valuable first) and patch up damaged ones, paying for the work from your money as they go — at the price of a repair — and waiting when the money runs out. They keep clear of the fighting until it moves on, and with nothing to repair they tow knocked-out tanks off your ground. Guard or Hold keeps them near one spot; Roam (Hunt) is the default.',
   };
 }
 

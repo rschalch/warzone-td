@@ -20,7 +20,7 @@ import {
   AIR_Z, EV_DOWN, EV_ESHOT, EV_UPGRADE, EV_USHOT, EV_WAVE, EV_WRECK, heroAbilities, MAX_UNITS, type Sim, type Tower,
 } from './game/sim';
 import { BATTLES } from './game/battles';
-import { atlasHas, buildAtlas, buildBackground, drawTerrain, refineBackground, setsFor, towerIcon, type Atlas } from './render/atlas';
+import { atlasHas, atlasHeight, buildAtlas, buildBackground, drawTerrain, refineBackground, setsFor, towerIcon, type Atlas } from './render/atlas';
 import { makeProjection, type CameraMode, type Projection } from './render/projection';
 import { GameRenderer } from './render/renderer';
 import { blankMap, openEditor } from './ui/editor';
@@ -1285,6 +1285,9 @@ async function boot(): Promise<void> {
     /** A WW2 ruleset without installing it, and the weapon catalogue, for the arms checks. */
     rulesetFor,
     ARMS,
+    get atlasHeight() {
+      return atlasHeight;
+    },
     quick: (map = 0, difficulty: GameConfig['difficulty'] = 'normal', ww2 = false) =>
       startGame({ map: MAPS[map], difficulty, modifiers: [], perks: {}, seed: 1234, ww2: ww2 ? { side: 'de', foe: 'su' } : undefined }),
   };

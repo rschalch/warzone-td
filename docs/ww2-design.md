@@ -260,7 +260,14 @@ Okinawa (1945, Japan: Shuri Line).
   side close-assault a tank that comes too close without its infantry.
 - **Repair crew**: a lorry of mechanics trained at the workshop. It drives round the whole camp by itself, rebuilds
   wrecked positions (the most valuable, nearest first) and patches damaged ones, paying the price of a repair out of
-  the army's money as it works; when the money runs out it waits. It stays clear of a position while the fight is on.
+  the army's money as it works; when the money runs out it waits. It stays clear of a position while the fight is on,
+  and with nothing to repair it tows knocked-out tanks off our ground. Engineers' repairs are paid the same way.
+- Units come with the war's level: trained later, they have more hit points and hit harder (and cost more).
+- Turrets: every tank — theirs and ours — turns its turret on its own. It tracks its target on the move and fires
+  without halting when the target is close (less accurately); otherwise it stops for an aimed shot and swings its
+  front round meanwhile. Armour still faces where the hull points.
+- An anti-tank gun's range circle shows, in rings, out to where it goes through the front, side and rear of a tank
+  (the one under the pointer, else the nearest seen).
 
 ## 7. Phases
 

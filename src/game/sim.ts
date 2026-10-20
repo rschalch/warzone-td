@@ -318,6 +318,8 @@ const HUNT_RANGE = 420;
 /** s to dig a foxhole or a hull-down scrape, and to bury a mine. */
 const DIG_TIME = 4;
 const LAY_TIME = 2.5;
+/** WW2: a unit's training cost rises this share of its base price with each level of the war. */
+const UNIT_LEVEL_COST = 0.5;
 /** Kills for each veterancy rank (1-3). */
 export const VET_KILLS = [3, 8, 15];
 /**
@@ -419,6 +421,8 @@ const CLEAR_WORK = 6;
 const CREW_DAMAGED = 0.85;
 const CREW_START = 0.1;
 const CREW_CLEAR = 110;
+/** How much faster a repair crew's lorry tows a hulk away than engineers clear one by hand. */
+const CREW_TOW = 3;
 /** px beyond a position's edge from which engineers and crews can work on it (a corner cell of the ring round it, too). */
 const WORK_REACH = TILE * 1.6;
 /** An engineer's task clearing the hulk in cell c is -(HULK_TASK + c). */
@@ -491,6 +495,7 @@ export function fortHit(a: number, r: number): number {
 export const WAR_WAVES = 3;
 /** The growth curve (defs.ts GROW) as tables by level, for the hot loops. */
 const LV = (f: (n: number) => number) => Float32Array.from({ length: MAX_LEVEL }, (_, n) => f(n));
+const G_POW = LV(GROW.power);
 const G_RANGE = LV(GROW.range);
 const G_RATE = LV(GROW.rate);
 const G_PEN = LV(GROW.pen);
@@ -503,6 +508,11 @@ const ON_TARGET = 0.3;
 const HIDDEN_HIT = 1.25;
 /** WW2: hits that make a tank crew button up (anyone's): suppression per hit on top of the weapon's share. */
 const BUTTON_UP = 0.03;
+/** WW2 turrets: a tank's hull turns this fast (rad/s) when it swings its front round at a halt. */
+const HULL_TURN = 0.8;
+/** Tanks fire on the move at targets within this share of their range, hitting this much as often. */
+const MOVE_FIRE = 0.5;
+const MOVE_HIT = 0.6;
 
 export class Sim {
   readonly map: GameMap;
@@ -701,6 +711,13 @@ export class Sim {
   private readonly eWork = new Float32Array(MAX_ENEMIES);
   /** WW2 return fire: the defender aimed at (0 none, -1 the commander, else a tower id), reload, s left of the halt to aim. */
   readonly eTgt = new Int32Array(MAX_ENEMIES);
+  /** WW2: a tank's turret, which turns on its own (world angle), and where it was last tick. */
+  readonly eTur = new Float32Array(MAX_ENEMIES);
+  readonly ePtur = new Float32Array(MAX_ENEMIES);
+  /** Enemy kinds with a turret (tanks with a tank gun): by kind. */
+  readonly eTurret = Uint8Array.from(ENEMIES, (e) => (e.arm && !e.air && !e.fixed && e.gun?.fx === 'tank' ? 1 : 0));
+  /** enemyShot(): fired on the move (worse aim). */
+  private shotMoving = false;
   /** WW2: the level of its weapon (the year of the war it comes from: see warLevel). */
   readonly eLvl = new Uint8Array(MAX_ENEMIES);
   private readonly eGunCd = new Float32Array(MAX_ENEMIES);
@@ -775,6 +792,9 @@ export class Sim {
   readonly uAlive = new Uint8Array(MAX_UNITS);
   readonly uUid = new Int32Array(MAX_UNITS);
   readonly uKind = new Uint8Array(MAX_UNITS);
+  /** WW2: our tanks' turrets (world angle), and where they were last tick. */
+  readonly uTur = new Float32Array(MAX_UNITS);
+  readonly uPtur = new Float32Array(MAX_UNITS);
   /** WW2: the level of its weapon (the war level it was trained at). */
   readonly uLvl = new Uint8Array(MAX_UNITS);
   readonly uAir = new Uint8Array(MAX_UNITS);
@@ -1069,7 +1089,7 @@ export class Sim {
     const def = ENEMIES[this.gKind[g]];
     this.eX[i] = this.ePx[i] = this.gX[g];
     this.eY[i] = this.ePy[i] = this.gY[g];
-    this.eAng[i] = this.ePang[i] = this.gAng[g];
+    this.eAng[i] = this.ePang[i] = this.eTur[i] = this.ePtur[i] = this.gAng[g];
     this.eSpeed[i] = 0;
     this.eCell[i] = Math.floor(this.gY[g] / TILE) * COLS + Math.floor(this.gX[g] / TILE);
     // the headquarters doesn't grow with the waves; rebuilt guns are of the current year
@@ -2553,7 +2573,7 @@ export class Sim {
     const [ix, iy] = this.map.routes[0].inDir;
     this.eX[i] = this.ePx[i] = Math.min(MAP_W - 4, Math.max(4, this.gX[0] - ix * TILE * 7 + this.rng.range(-20, 20)));
     this.eY[i] = this.ePy[i] = Math.min(MAP_H - 4, Math.max(4, this.gY[0] - iy * TILE * 7 + this.rng.range(-20, 20)));
-    this.eAng[i] = this.ePang[i] = Math.atan2(iy, ix);
+    this.eAng[i] = this.ePang[i] = this.eTur[i] = this.ePtur[i] = Math.atan2(iy, ix);
     this.eRoute[i] = 0;
   }
 
@@ -2780,27 +2800,39 @@ export class Sim {
     if (this.eWall[i] > 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.eWall[i]; // breaking through
     else if ((this.ticks + i) % 12 === 0 && this.eAimT[i] <= 0) this.eTgt[i] = this.pickDefender(i, def, g);
     const id = this.eTgt[i];
-    if (!id) return false;
-    const t = this.defenderAt(id);
+    const turret = this.eTurret[this.eKind[i]] === 1;
+    const trav = (g.traverse ?? 1.4) * G_TRAV[lvl] * DT;
+    const t = id ? this.defenderAt(id) : null;
     const reach = g.range * G_RANGE[lvl] + (t ? t.size * TILE * 0.5 : 0) + 8;
     if (!t || (t.x - this.eX[i]) ** 2 + (t.y - this.eY[i]) ** 2 > reach * reach) {
       this.eTgt[i] = 0;
       this.eAimT[i] = 0;
+      // nothing to shoot: the turret comes back over the front
+      if (turret) this.eTur[i] += Math.max(-trav, Math.min(trav, angleDiff(this.eTur[i], this.eAng[i])));
       return false;
     }
+    const want = Math.atan2(t.y - this.eY[i], t.x - this.eX[i]);
+    // a tank's turret follows the target on the move; other vehicles and their base's guns turn whole
+    if (turret) this.eTur[i] += Math.max(-trav, Math.min(trav, angleDiff(this.eTur[i], want)));
     const turns = !!def.arm && !this.eAir[i];
     if (this.eAimT[i] > 0) {
-      // halted: the gun swings round (a tank turns its front, its thickest armour, towards the target)
-      const want = Math.atan2(t.y - this.eY[i], t.x - this.eX[i]);
-      const trav = (g.traverse ?? 1.4) * G_TRAV[lvl] * DT;
-      if (turns) this.eAng[i] += Math.max(-trav, Math.min(trav, angleDiff(this.eAng[i], want)));
+      // halted: the gun is laid; the hull swings its front (its thickest armour) towards the target, slower
+      if (turret) this.eAng[i] += Math.max(-HULL_TURN * DT, Math.min(HULL_TURN * DT, angleDiff(this.eAng[i], want)));
+      else if (turns) this.eAng[i] += Math.max(-trav, Math.min(trav, angleDiff(this.eAng[i], want)));
       if ((this.eAimT[i] -= DT) <= 0) {
-        if (!turns || Math.abs(angleDiff(this.eAng[i], want)) < ON_TARGET) this.enemyShot(i, def, g, t);
+        if (!turns || Math.abs(angleDiff(turret ? this.eTur[i] : this.eAng[i], want)) < ON_TARGET) this.enemyShot(i, def, g, t);
         else this.eAimT[i] = DT / 2; // still laying the gun
       }
       return true;
     }
     if (this.eGunCd[i] > 0) return false;
+    // close in, a tank fires on the move with its turret on target (less accurately), hull angled or not
+    if (turret && Math.abs(angleDiff(this.eTur[i], want)) < ON_TARGET && (t.x - this.eX[i]) ** 2 + (t.y - this.eY[i]) ** 2 < (g.range * G_RANGE[lvl] * MOVE_FIRE) ** 2) {
+      this.shotMoving = true;
+      this.enemyShot(i, def, g, t);
+      this.shotMoving = false;
+      return false;
+    }
     if (g.halt && !this.eAir[i]) {
       this.eAimT[i] = g.halt;
       return true;
@@ -2852,7 +2884,7 @@ export class Sim {
       const d = Math.hypot(t.x - x, t.y - y);
       // smoke spoils the aim both ways: firing out of it, or at a target in it
       const smoke = d > 50 && (this.eSmoked[i] === 1 || this.inSmoke(x, y) || this.inSmoke(t.x, t.y)) ? SMOKE_HIT : 1;
-      hit = this.rng.next() < this.enemyHitChance(i, g, d) * smoke;
+      hit = this.rng.next() < this.enemyHitChance(i, g, d) * smoke * (this.shotMoving ? MOVE_HIT : 1);
       if (hit) dmg /= 1 - base * MISS_MID;
       else {
         const a = this.rng.next() * TWO_PI;
@@ -3745,14 +3777,14 @@ export class Sim {
     if (!d || d.from !== t.kind || t.wreck) return 'invalid';
     if (t.trainKind >= 0) return 'busy';
     if (this.manpowerUsed + d.manpower > this.manpowerCap) return 'manpower';
-    if (this.money < d.cost) return 'money';
+    if (this.money < this.unitCost(kind)) return 'money';
     return '';
   }
 
   private train(t: Tower, kind: number): boolean {
     if (this.trainBlock(t, kind)) return false;
     const d = UNITS[kind];
-    this.money -= d.cost;
+    this.money -= this.unitCost(kind);
     t.trainKind = kind;
     t.trainT = d.train;
     return true;
@@ -3778,7 +3810,7 @@ export class Sim {
     this.uAir[u] = d.air ? 1 : 0;
     this.uX[u] = this.uPx[u] = this.uPostX[u] = x;
     this.uY[u] = this.uPy[u] = this.uPostY[u] = y;
-    this.uAng[u] = this.uPang[u] = -Math.PI / 2;
+    this.uAng[u] = this.uPang[u] = this.uTur[u] = this.uPtur[u] = -Math.PI / 2;
     this.uHp[u] = this.unitMaxHp(u);
     this.uCd[u] = 0;
     this.uTgt[u] = -1;
@@ -3938,6 +3970,7 @@ export class Sim {
       this.uPx[u] = this.uX[u];
       this.uPy[u] = this.uY[u];
       this.uPang[u] = this.uAng[u];
+      this.uPtur[u] = this.uTur[u];
       if (this.uSeenT[u] > 0) this.uSeenT[u] -= DT;
       if (this.uKnownT[u] > 0) this.uKnownT[u] -= DT;
       if (this.uSupp[u] > 0) this.uSupp[u] = Math.max(0, this.uSupp[u] - (this.uShakeT[u] > 0 ? 0.2 : 0.45) * DT);
@@ -4017,6 +4050,7 @@ export class Sim {
       // repair crews find their own work all over the camp, and pay for it
       if (!this.uOrder[u] && think) this.crewTask(u);
       if (this.uTask[u] >= 0) this.doCrew(u, d.repair ?? 0);
+      else if (this.uTask[u] <= -HULK_TASK) this.doClear(u, CREW_TOW);
     } else if (this.uLay[u] >= 0) this.layMine(u, moving);
     else if ((d.repair || d.heal) && !this.uOrder[u] && think) this.supportTask(u, d.repair ? 'repair' : 'heal');
     if (d.crew) {
@@ -4115,20 +4149,26 @@ export class Sim {
     }
 
     // ---- fire
+    // a tank's turret turns on its own at the gun's traverse: onto the target, or back over the front
+    const trav = d.arm && g ? (g.traverse ?? 1.6) * G_TRAV[this.uLvl[u]] * DT : 0;
+    if (d.arm && (!g || t < 0)) this.uTur[u] += Math.max(-trav, Math.min(trav, angleDiff(this.uTur[u], this.uAng[u])));
     if (!g || t < 0) return;
     const tx = this.eX[t];
     const ty = this.eY[t];
     const d2 = (tx - x) ** 2 + (ty - y) ** 2;
+    const want = Math.atan2(ty - y, tx - x);
+    if (d.arm) this.uTur[u] += Math.max(-trav, Math.min(trav, angleDiff(this.uTur[u], want)));
     // (at night as far as they can see, unless a flare or someone of ours has it in sight)
     if (d2 > range * range || (d2 > (range * this.dimMult) ** 2 && !this.seen(t) && !this.litGrid[this.eGCell[t]])) return;
-    if (g.still && moving) return;
-    const want = Math.atan2(ty - y, tx - x);
+    // tanks fire on the move only close in (and less accurately); teams that set up must stop
+    const onMove = moving && !!d.arm && d2 < (range * MOVE_FIRE) ** 2;
+    if (g.still && moving && !onMove) return;
     if (!moving) {
-      // tanks turn their front (and gun) to the target at the gun's traverse; soldiers just face it
-      const turn = d.arm ? (g.traverse ?? 1.6) * G_TRAV[this.uLvl[u]] : 10;
-      this.uAng[u] += Math.max(-turn * DT, Math.min(turn * DT, angleDiff(this.uAng[u], want)));
-      if (d.arm && Math.abs(angleDiff(this.uAng[u], want)) > ON_TARGET) return;
+      // stopped, a tank swings its front (its thickest armour) towards the target; soldiers just face it
+      if (d.arm) this.uAng[u] += Math.max(-HULL_TURN * DT, Math.min(HULL_TURN * DT, angleDiff(this.uAng[u], want)));
+      else this.uAng[u] += Math.max(-10 * DT, Math.min(10 * DT, angleDiff(this.uAng[u], want)));
     }
+    if (d.arm && Math.abs(angleDiff(this.uTur[u], want)) > ON_TARGET) return;
     if (this.uCd[u] > 0) return;
     let bonus = 1;
     if (this.unitHidden(u)) {
@@ -4138,7 +4178,9 @@ export class Sim {
       if (stance === ST_AMBUSH && !flank && d2 > (range * 0.6) ** 2) return;
       bonus = 1.5;
     }
+    this.shotMoving = onMove;
     this.unitFire(u, t, bonus);
+    this.shotMoving = false;
   }
 
   /** A scout picks somewhere else to look: any open ground it can reach, short of the enemy's guns. */
@@ -4179,16 +4221,17 @@ export class Sim {
     const dist = Math.hypot(tx - x, ty - y);
     const base = (air ? g.aa ?? MISS_AIR : g.miss ?? MISS.unit);
     const smoke = dist > 50 && (this.eSmoked[t] === 1 || this.inSmoke(x, y)) ? SMOKE_HIT : 1;
-    const hit = this.rng.next() < this.missChance(base * G_MISS[lvl], dist / this.proxyRange, vet * 4 / 3, this.uSupp[u]) * smoke;
-    if (hit && airMult > 0 && this.damage(t, g.dmg * bonus * airMult * (1 + 0.15 * vet) / (1 - base * MISS_MID), false, src, false, g.pen * G_PEN[lvl], false)) {
+    const hit = this.rng.next() < this.missChance(base * G_MISS[lvl], dist / this.proxyRange, vet * 4 / 3, this.uSupp[u]) * smoke * (this.shotMoving ? MOVE_HIT : 1);
+    if (hit && airMult > 0 && this.damage(t, g.dmg * G_POW[lvl] * bonus * airMult * (1 + 0.15 * vet) / (1 - base * MISS_MID), false, src, false, g.pen * G_PEN[lvl], false)) {
       if (++this.uKills[u] === VET_KILLS[vet]) this.ev(EV_LEVEL, x, y, -1); // promoted
     }
     // cosmetic
     const z = this.uAir[u] ? AIR_Z : d.inf ? 6 : 10;
     const tz = this.eAir[t] ? AIR_Z + 6 : 6;
     const big = g.dmg >= 50;
-    const ca = Math.cos(this.uAng[u]);
-    const sa = Math.sin(this.uAng[u]);
+    const gunAng = d.arm ? this.uTur[u] : this.uAng[u];
+    const ca = Math.cos(gunAng);
+    const sa = Math.sin(gunAng);
     const r = d.radius;
     this.fx(FX_GLOW, 1, x + ca * r, y + sa * r, 0, 0, 0.07, big ? 16 : 6, big ? 6 : 2, 0.9, 0xffe7a0, 0, z);
     const wide = hit ? 0 : 14;
@@ -4199,7 +4242,15 @@ export class Sim {
 
   /** Unit u's hit points at full strength: trained later in the war, it comes better equipped (see warLevel). */
   unitMaxHp(u: number): number {
-    return UNITS[this.uKind[u]].hp;
+    return UNITS[this.uKind[u]].hp * G_POW[this.uLvl[u]];
+  }
+
+  /**
+   * WW2: what training unit `kind` costs now: units trained later in the war come with its level (more
+   * hit points and damage along the upgrade curve, better guns) and cost more.
+   */
+  unitCost(kind: number): number {
+    return Math.round(UNITS[kind].cost * (1 + UNIT_LEVEL_COST * this.warLevel));
   }
 
   /** Veterancy rank 0-3 from kills: hits harder, reloads faster, takes less damage. */
@@ -4335,12 +4386,12 @@ export class Sim {
   }
 
   /** Engineers clearing a hulk they stand next to. */
-  private doClear(u: number): void {
+  private doClear(u: number, speed = 1): void {
     const c = -this.uTask[u] - HULK_TASK;
     const x = ((c % COLS) + 0.5) * TILE;
     const y = (((c / COLS) | 0) + 0.5) * TILE;
     if ((x - this.uX[u]) ** 2 + (y - this.uY[u]) ** 2 > (TILE * 1.6) ** 2) return;
-    if (!this.clearHulk(c, DT)) this.uTask[u] = -1;
+    if (!this.clearHulk(c, DT * speed)) this.uTask[u] = -1;
     else if ((this.ticks + u) % 12 === 0) this.fx(FX_SPARK, 1, x + this.vr.range(-6, 6), y + this.vr.range(-6, 6), this.vr.range(-40, 40), -40, 0.3, 3, 1, 1, 0xffd070, 4, 8);
   }
 
@@ -4352,6 +4403,7 @@ export class Sim {
   private crewTask(u: number): void {
     const cur = this.uTask[u] >= 0 ? this.towerById.get(this.uTask[u]) : undefined;
     if (cur && cur.hp < this.maxHp(cur) && this.uWork[u] === 0) return; // still at it
+    // (clearing a hulk: repairs come first)
     const stance = this.uStance[u];
     const reach = stance === ST_HOLD ? 60 : stance === ST_GUARD ? GUARD_LEASH + 60 : Infinity;
     const ox = stance === ST_HUNT ? this.uX[u] : this.uPostX[u];
@@ -4377,9 +4429,37 @@ export class Sim {
       }
     }
     this.uWork[u] = !pick && broke ? 1 : 0;
+    if (!pick) {
+      // nothing to repair: clear the wrecks of their tanks off our ground (still at it, or the next one)
+      const c = -this.uTask[u] - HULK_TASK;
+      if (this.uTask[u] <= -HULK_TASK && this.hulkGrid[c] === 1) return;
+      this.uTask[u] = -1;
+      if (this.crewHulk(u, ox, oy, reach)) return;
+    }
     this.uTask[u] = pick ? pick.id : -1;
     if (pick) this.unitPathTo(u, pick.col - 1, pick.row - 1, pick.col + pick.size, pick.row + pick.size, pick.col, pick.row, pick.col + pick.size - 1, pick.row + pick.size - 1);
     else if (stance !== ST_HUNT && (this.uX[u] - this.uPostX[u]) ** 2 + (this.uY[u] - this.uPostY[u]) ** 2 > 14 * 14 && this.uPathI[u] >= this.uPathLen[u]) this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
+  }
+
+  /** A repair crew picks the nearest hulk in reach on our side of the front, clear of the fighting, to tow away. */
+  private crewHulk(u: number, ox: number, oy: number, reach: number): boolean {
+    let best = -1;
+    let bestD = reach * reach;
+    for (let h = 0; h < this.hkCount; h++) {
+      const c = this.hkCell[h];
+      const x = ((c % COLS) + 0.5) * TILE;
+      const y = (((c / COLS) | 0) + 0.5) * TILE;
+      const d2 = (x - ox) ** 2 + (y - oy) ** 2;
+      if (d2 >= bestD || this.enemyGround(x, y) || this.attackerNear(x, y, CREW_CLEAR)) continue;
+      bestD = d2;
+      best = c;
+    }
+    if (best < 0) return false;
+    const col = best % COLS;
+    const row = (best / COLS) | 0;
+    if (!this.unitPathTo(u, col - 1, row - 1, col + 1, row + 1, col, row, col, row)) return false;
+    this.uTask[u] = -HULK_TASK - best;
+    return true;
   }
 
   /** What a repair crew's work on tower t costs per hit point: a repair's price (REPAIR_SHARE of what went into it). */
@@ -4390,19 +4470,27 @@ export class Sim {
 
   /** Is an attacker close to tower t (the crew waits until the fight there is over)? */
   private underFire(t: Tower): boolean {
-    const r = CREW_CLEAR + t.size * TILE * 0.5;
-    const n = this.hash.query(t.x, t.y, r, this.qbuf);
+    return this.attackerNear(t.x, t.y, CREW_CLEAR + t.size * TILE * 0.5);
+  }
+
+  /** Is an attacker on the ground (not their base's positions) within r of (x, y)? */
+  private attackerNear(x: number, y: number, r: number): boolean {
+    const n = this.hash.query(x, y, r, this.qbuf);
     for (let k = 0; k < n; k++) {
       const i = this.qbuf[k];
-      if (this.eAlive[i] && !this.eAir[i] && !ENEMIES[this.eKind[i]].fixed && (this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2 <= r * r) return true;
+      if (this.eAlive[i] && !this.eAir[i] && !ENEMIES[this.eKind[i]].fixed && (this.eX[i] - x) ** 2 + (this.eY[i] - y) ** 2 <= r * r) return true;
     }
     return false;
   }
 
-  /** WW2: what repair crew u is doing, for the panel: 'repairing', 'rebuilding', 'driving', 'no money' or 'idle'. */
+  /** WW2: what repair crew u is doing, for the panel: 'repairing', 'rebuilding', 'towing' (a hulk), 'driving', 'no money' or 'idle'. */
   crewStatus(u: number): string {
     const t = this.uTask[u] >= 0 ? this.towerById.get(this.uTask[u]) : undefined;
     if (this.uWork[u] === 1) return 'no money';
+    if (this.uTask[u] <= -HULK_TASK) {
+      const c = -this.uTask[u] - HULK_TASK;
+      return (((c % COLS) + 0.5) * TILE - this.uX[u]) ** 2 + ((((c / COLS) | 0) + 0.5) * TILE - this.uY[u]) ** 2 > (TILE * 1.6) ** 2 ? 'driving' : 'towing';
+    }
     if (!t) return 'idle';
     const reach = t.size * TILE * 0.5 + WORK_REACH;
     if ((t.x - this.uX[u]) ** 2 + (t.y - this.uY[u]) ** 2 > reach * reach) return 'driving';
@@ -4459,7 +4547,12 @@ export class Sim {
     const reach = t.size * TILE * 0.5 + WORK_REACH;
     if ((t.x - this.uX[u]) ** 2 + (t.y - this.uY[u]) ** 2 > reach * reach) return;
     const max = this.maxHp(t);
-    t.hp = Math.min(max, t.hp + rate * DT);
+    // paid as they work, at the price of a repair (like the repair crews); no money, no work
+    const add = Math.min(max - t.hp, rate * DT);
+    const price = add * this.crewPrice(t);
+    if (this.money < price) return;
+    this.money -= price;
+    t.hp += add;
     if ((this.ticks + u) % 12 === 0) this.fx(FX_SPARK, 1, t.x + this.vr.range(-8, 8), t.y + this.vr.range(-8, 8), this.vr.range(-40, 40), -40, 0.3, 3, 1, 1, 0xffd070, 4, 8);
     if (t.wreck && t.hp >= max * 0.35 && !this.raiseRubble(t)) return; // someone is standing in the rubble
     if (t.hp >= max) this.uTask[u] = -1;
@@ -4710,7 +4803,7 @@ export class Sim {
     }
     this.eX[i] = this.ePx[i] = x;
     this.eY[i] = this.ePy[i] = y;
-    this.eAng[i] = this.ePang[i] = Math.atan2(iy, ix);
+    this.eAng[i] = this.ePang[i] = this.eTur[i] = this.ePtur[i] = Math.atan2(iy, ix);
     this.eRemain[i] = 1e6;
     this.live[this.liveCount++] = i;
     if (def.supply) this.convoyAlive++;
@@ -4823,6 +4916,7 @@ export class Sim {
       const x = (this.ePx[i] = this.eX[i]);
       const y = (this.ePy[i] = this.eY[i]);
       this.ePang[i] = this.eAng[i];
+      this.ePtur[i] = this.eTur[i];
       if (this.eFlash[i] > 0) this.eFlash[i] -= DT * 6;
 
       // auras under the unit
@@ -5248,6 +5342,47 @@ export class Sim {
     // concrete is worn down by anything heavy enough to chip it (see fortHit)
     if (def.fixed) return (top || range <= 0 ? pen : pen * penFalloff(Math.hypot(sx - this.eX[i], sy - this.eY[i]) / range)) >= (top ? arm[3] : arm[0]) * 0.3;
     return this.penRatio(i, pen, top, sx, sy, range) >= HURT_RATIO;
+  }
+
+  /**
+   * WW2, for the range circle and the panel: how far out tower t's rounds go through the front, side
+   * and rear armour of a tank (px; 0: not even point blank, its range: all the way). The tank is `pref`
+   * if that is an armoured attacker (hovered or selected), else the nearest one we see, else the
+   * toughest tank of their army (bosses aside). Null for guns without anti-tank penetration.
+   */
+  penRings(t: Tower, pref = -1): { kind: number; d: [number, number, number] } | null {
+    const lv = TOWERS[t.type].levels[t.level];
+    if (!WW2 || !lv.pen || lv.pen < AT_PEN || (lv.splash && t.kind !== 'at') || t.wreck) return null;
+    const tank = (k: number) => !!ENEMIES[k].arm && !ENEMIES[k].air && !ENEMIES[k].fixed && ENEMIES[k].gun?.fx === 'tank';
+    let kind = pref >= 0 && this.eAlive[pref] && tank(this.eKind[pref]) ? this.eKind[pref] : -1;
+    if (kind < 0) {
+      let best = Infinity;
+      for (let n = 0; n < this.liveCount; n++) {
+        const i = this.live[n];
+        if (!this.eAlive[i] || !tank(this.eKind[i]) || !this.seen(i)) continue;
+        const d2 = (this.eX[i] - t.x) ** 2 + (this.eY[i] - t.y) ** 2;
+        if (d2 < best) {
+          best = d2;
+          kind = this.eKind[i];
+        }
+      }
+    }
+    if (kind < 0) {
+      let front = -1;
+      ENEMIES.forEach((e, k) => {
+        if (tank(k) && !e.boss && e.arm![0] > front) {
+          front = e.arm![0];
+          kind = k;
+        }
+      });
+    }
+    if (kind < 0) return null;
+    const range = lv.range * t.rangeMult;
+    const pen = lv.pen * (this.elite(t, 'at') ? ELITE_PEN : 1);
+    const arm = ENEMIES[kind].arm!;
+    // penetration falls off over the range (penFalloff: 1.1 point blank, 0.85 at the edge)
+    const reach = (a: number) => Math.max(0, Math.min(1, (1.1 - a / pen) / 0.25)) * range * (pen * 1.1 >= a ? 1 : 0);
+    return { kind, d: [reach(arm[0]), reach(arm[1]), reach(arm[2])] };
   }
 
   /**

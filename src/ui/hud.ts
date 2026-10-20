@@ -188,6 +188,19 @@ function penRows(lv: TowerLevel): string {
   return `<div class="desc pen"><b>Gets through</b> ${cells.join(' · ')}</div>`;
 }
 
+/** WW2: the rings on the range circle in words: out to where the gun goes through a tank's front, side and rear. */
+function penRingRow(sim: Sim, t: Tower, enemy: number): string {
+  const p = sim.penRings(t, enemy);
+  if (!p) return '';
+  const range = sim.stats(t).range;
+  const words = ['front', 'side', 'rear'].map((side, k) => {
+    const d = p.d[k];
+    const col = ['#6adf6a', '#ffd34a', '#ff8a3a'][k];
+    return `<span style="color:${col}">${side} ${d <= 0 ? 'never' : d >= range - 1 ? 'anywhere in range' : `within ${Math.round(d)} px`}</span>`;
+  });
+  return `<div class="desc pen"><b>Rings: through the ${ENEMIES[p.kind].name}'s</b> ${words.join(' · ')} <small>(hover a tank to measure against it)</small></div>`;
+}
+
 /** DOM HUD. Every write is diffed so per-frame updates cost almost nothing. */
 export class Hud {
   private readonly money = $('money');
@@ -530,7 +543,7 @@ export class Hud {
     const what = this.hover ?? ui.aiming;
     let key: string;
     if (what) key = `i${what.kind}:${what.index}:${what === ui.aiming}:${sim.money >= (what.kind === 'tower' ? sim.cost(what.index) : 0)}:${sim.items.join()}:${sim.hero?.cd.map(Math.ceil).join()}`;
-    else if (ui.units.length) key = `u${ui.units.map((u) => `${u}:${Math.ceil(sim.uHp[u])}:${sim.uStance[u]}:${sim.uKills[u]}:${sim.unitHidden(u)}`).join(',')}`;
+    else if (ui.units.length) key = `u${ui.units.map((u) => `${u}:${Math.ceil(sim.uHp[u])}:${sim.uStance[u]}:${sim.uKills[u]}:${sim.unitHidden(u)}:${UNITS[sim.uKind[u]].crew ? sim.crewStatus(u) : ""}`).join(',')}`;
     else if (ui.enemy >= 0 && sim.eAlive[ui.enemy] && sim.seen(ui.enemy)) key = `e${ui.enemy}:${Math.ceil(sim.eHp[ui.enemy])}:${Math.ceil(sim.eShield[ui.enemy])}:${this.enemyStatus(sim, ui.enemy)}:${moraleWord(sim.eMorale[ui.enemy])}`;
     else if (ui.multi.length) key = `m${ui.multi.map((m) => m.id + ':' + m.level).join(',')}:${sim.money >= this.multiCost(sim, ui.multi)}`;
     else if (ui.heroSelected && sim.hero) key = `h${sim.hero.level}:${Math.floor(sim.hero.xp)}:${sim.hero.cd.map(Math.ceil).join(',')}:${Math.ceil(sim.hero.hp)}:${Math.ceil(sim.hero.downT)}`;
@@ -539,7 +552,7 @@ export class Hud {
       const extra = t.kind === 'depot' ? sim.depotIncome : TOWERS[t.type].manual ? Math.floor(sim.chargeLevel(t) * 100) : 0;
       const fix = sim.repairCost(t);
       const tr = t.trainKind >= 0 ? `${t.trainKind}:${Math.ceil(t.trainT)}` : UNITS.map((_, k) => sim.trainBlock(t, k)).join();
-      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}:${sim.fireStatus(t)}:${Math.round(t.ammo * 20)}:${WW2 && sim.usesAmmo(t) && sim.supplied(t)}:${Math.round(t.fix * 10)}`;
+      key = `c${sim.towerHidden(t)}${t.knownT > 0}:tr${tr}:w${sim.warLevel}:pr${sim.penRings(t, ui.enemy)?.kind}:${sim.manpowerUsed}/${sim.manpowerCap}:t${t.id}:${t.level}:${t.mode}:${t.kills}:${Math.floor(t.damage / 50)}:${up > 0 && sim.money >= up}:${t.open}:${sim.towerVersion}:${extra}:${Math.round(this.dps(t))}:${Math.ceil(t.hp)}:${fix}:${sim.money >= fix}:${t.supp > 0.3}:${Math.ceil(t.buildT)}:${t.wreck}:${sim.fireStatus(t)}:${Math.round(t.ammo * 20)}:${WW2 && sim.usesAmmo(t) && sim.supplied(t)}:${Math.round(t.fix * 10)}`;
     } else if (ui.placing >= 0) key = `p${ui.placing}:${sim.cost(ui.placing)}`;
     else if (ui.ground === T_WATER || ui.ground === T_MOUNT || ui.ground === T_TREE) key = `g${ui.ground}`;
     else key = 'none';
@@ -667,6 +680,7 @@ export class Hud {
         <table>${condition}${supplyRow}${camoRow}${rows}${hits ? `<tr><td>Good against</td><td colspan="2">${hits}</td></tr>` : ''}${record}${WW2 && !t.wreck ? crewRows(sim, t) : ''}</table>
         ${WW2 && !t.wreck ? crewNote(sim, t) : ''}
         ${penRows(lv)}
+        ${penRingRow(sim, t, ui.enemy)}
         ${combos}
         <div class="help">${towerHelp(def)}</div>`;
     } else if (ui.placing >= 0) {
@@ -784,10 +798,12 @@ export class Hud {
       const block = sim.trainBlock(t, k);
       // two lines each, the same for every unit: the name, then the price and the men it takes (or why not)
       const men = `${d.manpower} ${d.manpower > 1 ? 'men' : 'man'}`;
-      return `<button data-train="${k}" title="${d.name}: ${d.desc} ($${d.cost}, ${men})" ${block || ro ? 'disabled' : ''}><b>${d.short}</b><small>${why[block] ? `<span class="bad">${why[block]}</span>` : `$${d.cost} · ${men}`}</small></button>`;
+      const cost = sim.unitCost(k);
+      return `<button data-train="${k}" title="${d.name}: ${d.desc} ($${cost}, ${men})" ${block || ro ? 'disabled' : ''}><b>${d.short}</b><small>${why[block] ? `<span class="bad">${why[block]}</span>` : `$${cost} · ${men}`}</small></button>`;
     }).join('');
     const now = t.trainKind >= 0 ? `<div class="desc">Training <b>${UNITS[t.trainKind].name}</b>: ready in ${Math.ceil(t.trainT)}s</div>` : '';
-    return `<div class="row train">${rows}</div>${now}<div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.</div>`;
+    const war = sim.warLevel ? ` Units trained now come with the war's level ${sim.warLevel + 1} (×${GROW.power(sim.warLevel).toFixed(1)} hit points and damage, better guns).` : '';
+    return `<div class="row train">${rows}</div>${now}<div class="desc">Manpower ${sim.manpowerUsed} / ${sim.manpowerCap} — each HQ adds 4, each depot 2.${war}</div>`;
   }
 
   /** WW2: the selected units: health, stance, record. */
@@ -816,9 +832,9 @@ export class Hud {
       body = `<table>
           <tr><td>Health</td><td>${Math.ceil(sim.uHp[one])} / ${Math.ceil(sim.unitMaxHp(one))}</td></tr>
           ${d.arm ? `<tr><td>Armour</td><td>${d.arm[0]} front · ${d.arm[1]} side · ${d.arm[2]} rear (mm)</td></tr>` : ''}
-          ${g ? `<tr><td>Weapon</td><td>${weaponOf(g.w)?.name ?? ''} · ${num(g.dmg)} dmg · ${Math.round(g.pen * GROW.pen(sim.uLvl[one]))} mm · ${perMin(g.rate * GROW.rate(sim.uLvl[one]))}/min · range ${Math.round(g.range * GROW.range(sim.uLvl[one]))}${g.still ? ' · stops to fire' : ''}${sim.uLvl[one] ? ` · <small>level ${sim.uLvl[one] + 1}</small>` : ''}</td></tr>` : ''}
+          ${g ? `<tr><td>Weapon</td><td>${weaponOf(g.w)?.name ?? ''} · ${num(g.dmg * GROW.power(sim.uLvl[one]))} dmg · ${Math.round(g.pen * GROW.pen(sim.uLvl[one]))} mm · ${perMin(g.rate * GROW.rate(sim.uLvl[one]))}/min · range ${Math.round(g.range * GROW.range(sim.uLvl[one]))}${g.still ? ' · stops to fire' : ''}${sim.uLvl[one] ? ` · <small>level ${sim.uLvl[one] + 1}</small>` : ''}</td></tr>` : ''}
           ${d.repair ? `<tr><td>Repairs</td><td>${d.repair} HP/s${d.crew ? ' · paid as a repair' : ''}</td></tr>` : ''}
-          ${d.crew ? `<tr><td>Task</td><td>${{ 'no money': '<span class="bad">waiting for money</span>', idle: 'nothing to repair', driving: `on the way to the ${TOWERS[sim.tower(sim.uTask[one])?.type ?? 0].short}`, repairing: 'repairing', rebuilding: 'rebuilding a wrecked position' }[sim.crewStatus(one)]}</td></tr>` : ''}
+          ${d.crew ? `<tr><td>Task</td><td>${{ 'no money': '<span class="bad">waiting for money</span>', idle: 'nothing to repair', driving: sim.uTask[one] < 0 ? 'on the way to a wreck' : `on the way to the ${TOWERS[sim.tower(sim.uTask[one])?.type ?? 0].short}`, repairing: 'repairing', rebuilding: 'rebuilding a wrecked position', towing: 'towing a knocked-out tank away' }[sim.crewStatus(one)]}</td></tr>` : ''}
           ${d.heal ? `<tr><td>Heals</td><td>${d.heal} HP/s</td></tr>` : ''}
           ${sim.uAir[one] ? `<tr><td>Patrol</td><td>${Math.ceil(sim.uLife[one])}s left</td></tr>` : ''}
           <tr><td>Kills</td><td>${sim.uKills[one]}${vetLine(sim, one)}</td></tr>

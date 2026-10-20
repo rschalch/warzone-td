@@ -6,6 +6,9 @@ import { DIRS, models, type ModelSet } from './models';
 import { buildLandscape, type Landscape } from './landscape';
 import { renderGround } from './terrainGL';
 
+/** Logical height of the last atlas packed (it must stay under 4096: see CLAUDE.md). */
+export let atlasHeight = 0;
+
 export { DIRS, MODEL_TOP, TOWER_DECK } from './models';
 
 import { RES, bakeCost, bakeModel, type BakedFrame } from './bake';
@@ -503,6 +506,7 @@ export async function buildAtlas(sets: ModelSet[] = setsFor()): Promise<Atlas> {
   }
   const height = y + rowH + pad;
   if (height * RES > 8192) throw new Error('atlas overflow');
+  atlasHeight = height;
 
   const canvas = document.createElement('canvas');
   canvas.width = size * RES;

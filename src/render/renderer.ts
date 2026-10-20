@@ -59,6 +59,14 @@ class ParticleLayer {
   }
 }
 
+/** A tank's hull and turret, baked apart: iso frames by heading, and the top-down frames. */
+interface Split {
+  hull: Texture[];
+  tur: Texture[];
+  hullTop: Texture;
+  turTop: Texture;
+}
+
 /** Painter's-algorithm ordering via counting sort on iso depth (x + y): O(n), no comparisons. */
 class DepthSorter {
   private static readonly MIN = -128;
@@ -256,6 +264,9 @@ export class GameRenderer {
   private readonly airSorter = new DepthSorter();
   // iso: one frame per heading; top: a single frame rotated at runtime
   private readonly enemyFrames: Texture[][];
+  /** WW2 tanks by kind: hull and turret textures (null: drawn whole). */
+  private readonly enemySplit: (Split | null)[];
+  private readonly unitSplit: (Split | null)[];
   private readonly enemyTopTex: Texture[];
   private readonly enemyTop: number[];
   /** WW2: emplacement bases under the positions of the enemy's base. */
@@ -336,6 +347,13 @@ export class GameRenderer {
     this.unitFrames = UNITS.map((u) => frames(u.tex));
     this.unitTopTex = UNITS.map((u) => atlas[`${u.tex}_t`]);
     this.unitTop = UNITS.map((u) => MODEL_TOP[u.tex] ?? 10);
+    // WW2 tanks: hull and turret drawn apart, the turret at its own angle (models.ts TURRETED)
+    const split = (tex: string, turret: boolean): Split | null => {
+      if (!turret || !models[`${tex}_hull`] || !atlas[`${tex}_hull_t`]) return null;
+      return { hull: frames(`${tex}_hull`), tur: frames(`${tex}_tur`), hullTop: atlas[`${tex}_hull_t`], turTop: atlas[`${tex}_tur_t`] };
+    };
+    this.enemySplit = ENEMIES.map((e, k) => split(e.tex, sim.eTurret[k] === 1));
+    this.unitSplit = UNITS.map((u) => split(u.tex, !!u.arm && !u.air));
     // indexed by projectile kind
     this.projTex = [atlas.bullet, atlas.shell, atlas.missile, atlas.shell, atlas.blob, atlas.canister, atlas.shell, atlas.shell, atlas.blob, atlas[LOOK.nuke] ?? atlas.nukeshell, atlas.bullet];
     this.projTint = [0xffffff, 0xffffff, 0xffffff, 0xff8a40, 0xb6f23e, 0xffffff, 0x5a5650, 0xd0c8b0, 0xbff4ff, 0xffffff, 0xffd060];
@@ -939,9 +957,23 @@ export class GameRenderer {
         sy -= AIR_Z + Math.sin(time * 3 + i) * 2;
         this.air.push(tex, sx, sy, 0, 1, 1, tint, 1);
         if (ENEMIES[type].rotor) this.air.push(this.rotorTex[(time * 30 + i) & 3], sx, sy - this.enemyTop[type] + 1, 0, 1, 1, 0xffffff, 0.9);
+      } else if (this.enemySplit[type]) {
+        const sp = this.enemySplit[type]!;
+        const tur = lerpAngle(s.ePtur[i], s.eTur[i], alpha);
+        this.world.push(sp.hull[dirIndex(ang)], sx, sy, 0, 1, 1, tint, ea);
+        this.world.push(sp.tur[dirIndex(tur)], sx, sy, 0, 1, 1, tint, ea);
       } else {
         this.world.push(tex, sx, sy, 0, 1, 1, tint, ea);
       }
+    } else if (!air && this.enemySplit[type]) {
+      const sp = this.enemySplit[type]!;
+      const tur = lerpAngle(s.ePtur[i], s.eTur[i], alpha);
+      if (!hidden) {
+        this.shadows.push(sp.hullTop, x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
+        this.shadows.push(sp.turTop, x + 2.5, y + 3.5, tur, 1, 1, 0x000000, 0.3);
+      }
+      this.world.push(sp.hullTop, sx, sy, ang, 1, 1, tint, ea);
+      this.world.push(sp.turTop, sx, sy, tur, 1, 1, tint, ea);
     } else {
       const tex = this.enemyTopTex[type];
       if (air) {
@@ -1003,8 +1035,21 @@ export class GameRenderer {
     }
     const ring = (d.radius * 2.4) / 128;
     this.groundFx.push(this.fxTex[FX_RING], x, y, sel ? time * 1.5 : 0, ring, ring, 0x7ad8ff, sel ? 0.9 : 0.35, 0.5);
-    if (this.iso) this.world.push(this.unitFrames[s.uKind[u]][dirIndex(ang)], sx, sy, 0, 1, 1, 0xffffff, a);
-    else {
+    const sp = this.unitSplit[s.uKind[u]];
+    const tur = sp ? lerpAngle(s.uPtur[u], s.uTur[u], alpha) : 0;
+    if (this.iso) {
+      if (sp) {
+        this.world.push(sp.hull[dirIndex(ang)], sx, sy, 0, 1, 1, 0xffffff, a);
+        this.world.push(sp.tur[dirIndex(tur)], sx, sy, 0, 1, 1, 0xffffff, a);
+      } else this.world.push(this.unitFrames[s.uKind[u]][dirIndex(ang)], sx, sy, 0, 1, 1, 0xffffff, a);
+    } else if (sp) {
+      if (a === 1) {
+        this.shadows.push(sp.hullTop, x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
+        this.shadows.push(sp.turTop, x + 2.5, y + 3.5, tur, 1, 1, 0x000000, 0.3);
+      }
+      this.world.push(sp.hullTop, sx, sy, ang, 1, 1, 0xffffff, a);
+      this.world.push(sp.turTop, sx, sy, tur, 1, 1, 0xffffff, a);
+    } else {
       if (a === 1) this.shadows.push(this.unitTopTex[s.uKind[u]], x + 1.5, y + 2, ang, 1, 1, 0x000000, 0.35);
       this.world.push(this.unitTopTex[s.uKind[u]], sx, sy, ang, 1, 1, 0xffffff, a);
     }
@@ -1260,6 +1305,15 @@ export class GameRenderer {
       const r = s.stats(sel).range;
       if (r > 0) g.circle(sel.x, sel.y, r).fill({ color: 0xffffff, alpha: 0.07 }).stroke({ width: 2, color: 0xffffff, alpha: 0.55 });
       if (r > 0 && !sel.wreck) this.drawBlind(g, s, sel.x, sel.y, r, TOWERS[sel.type]);
+      // WW2: out to where its rounds go through a tank's front (green), side (yellow) and rear (orange)
+      const pen = WW2 ? s.penRings(sel, ov.enemy) : null;
+      if (pen) {
+        const cols = [0x6adf6a, 0xffd34a, 0xff8a3a];
+        for (let k = 2; k >= 0; k--) {
+          const d = pen.d[k];
+          if (d > 2 && d < r - 1) g.circle(sel.x, sel.y, d).stroke({ width: 2, color: cols[k], alpha: 0.75 });
+        }
+      }
       // an ambush holds fire outside the inner ring (unless it gets a flank shot)
       if (sel.mode === MODE_AMBUSH && WW2) g.circle(sel.x, sel.y, r * 0.6).stroke({ width: 1.5, color: 0xffc04a, alpha: 0.7 });
       if (sel.kind === 'arty') {

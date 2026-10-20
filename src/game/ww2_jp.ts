@@ -62,7 +62,7 @@ const JP_UNITS: UnitDef[] = [
   { kind: 'jp_snipu', name: 'Sniper', short: 'Sniper', tex: 'jp_sniper', from: 'barracks', cost: 50, manpower: 1, train: 9, hp: 70, speed: 40, radius: 6, inf: true, camo: true,
     gun: armsUnit('sniper', 'sniper'), desc: 'A camouflaged marksman: the enemy only sees it when it fires.' },
   { kind: 'jp_engineers', name: 'Engineers', short: 'Engineers', tex: 'jp_engineer', from: 'barracks', cost: 42, manpower: 1, train: 8, hp: 120, speed: 44, radius: 6, inf: true, repair: 40,
-    gun: armsUnit('arisaka', 'mosin'), desc: 'Repair emplacements and raise rubble back up, free of charge.' },
+    gun: armsUnit('arisaka', 'mosin'), desc: 'Repair emplacements and raise rubble back up, paid at the price of a repair as they work.' },
   { kind: 'jp_medicu', name: 'Medic', short: 'Medic', tex: 'jp_medic', from: 'barracks', cost: 36, manpower: 1, train: 7, hp: 90, speed: 46, radius: 6, inf: true, heal: 12,
     desc: 'Patches up soldiers and the commander nearby.' },
   { kind: 'jp_hagou', name: 'Type 95 Ha-Go', short: 'Ha-Go', tex: 'jp_hago', from: 'motorpool', cost: 110, manpower: 2, train: 10, hp: 360, speed: 58, radius: 10, arm: [12, 12, 10, 6],

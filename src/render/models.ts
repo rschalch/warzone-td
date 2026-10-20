@@ -1216,6 +1216,25 @@ model('hero', 12, DIRS, [
   }),
 ]);
 
+// ================================================================ WW2 tanks with turrets that turn on their own
+//
+// Every tank model is built the same way: tracks, the hull, then the turret and its gun on top. Each one
+// is also baked as `<name>_hull` (the first two parts) and `<name>_tur` (the rest), so the renderer can
+// draw the turret at its own angle; the whole model stays for icons, hulks and last-seen marks.
+
+export const TURRETED = [
+  'su_t70', 'su_t34', 'su_t3485', 'su_kv1', 'su_is2',
+  'de_pz3', 'de_pz4', 'de_panther', 'de_tiger', 'de_kingtiger',
+  'us_m8', 'us_stuart', 'us_sherman', 'us_easy8', 'us_jumbo', 'us_pershing',
+  'jp_hago', 'jp_chiha', 'jp_chihe', 'jp_chinu', 'jp_oi',
+];
+for (const n of TURRETED) {
+  const m = models[n];
+  if (!m) continue;
+  models[`${n}_hull`] = { ...m, parts: m.parts.slice(0, 2) };
+  models[`${n}_tur`] = { ...m, parts: m.parts.slice(2), grounded: false };
+}
+
 /** Highest z of each model (health bars, muzzle and coil heights). */
 export const MODEL_TOP: Record<string, number> = {};
 for (const name in models) MODEL_TOP[name] = Math.max(...models[name].parts.map((p) => p.z1));

@@ -40,12 +40,14 @@ Union**, the **Western Allies** or **Japan** — and fight another side's army, 
   Crews hold fire at armour they can't get through from where they stand, and the panel tells you why.
 - **The enemy fires back** at your emplacements and units: tanks halt to aim, emplacements have HP and
   fortification (sandbags, timber, concrete) and become rubble you can rebuild; workshops and engineers repair,
-  and a **repair crew** from the workshop drives round the camp by itself rebuilding wrecked positions, paid from
-  your money.
+  and a **repair crew** from the workshop drives round the camp by itself rebuilding wrecked positions (and towing
+  away wrecks), paid from your money — engineers' repairs cost money too.
+- **Turrets**: every tank turns its turret on its own, tracks its target on the move and fires on the move close in.
+  An anti-tank gun's range circle shows where it goes through a tank's front, side and rear.
 - **One arsenal for both sides**: every gun — yours or the enemy's — has the same range, historical rate of fire,
   penetration, accuracy and turret traverse; short-, medium- and long-range weapons on every side. Each upgrade
   adds damage, range, rate, accuracy, traverse, hit points and cover; the attackers' weapons improve as the war
-  goes on.
+  goes on, and so do the units you train later in it.
 - **Units**: barracks, motor pool and airfield train squads, MG and anti-tank teams, snipers, engineers, medics,
   tanks and fighter patrols, with Hold / Guard / Hunt / Ambush stances. Units dig in (foxholes, hull-down tanks),
   earn veterancy ranks from their kills, and engineers lay anti-tank mines. Dragon's teeth stop vehicles; infantry

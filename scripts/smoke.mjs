@@ -909,6 +909,73 @@ try {
   check(fair.near > fair.far, `WW2 fire both ways: an attacker's round hurts more close (${Math.round(fair.near)}) than far (${Math.round(fair.far)})`);
   check(fair.waited && fair.rebuilt > 0 && fair.paid > 0 && fair.trains, `WW2 repair crew: waits without money (${fair.waited}), rebuilds a wrecked PaK by itself (${fair.rebuilt} ticks, $${Math.round(fair.paid)} paid), trained at the workshop (${fair.trains})`);
 
+  // the follow-ups: engineers pay, units come with the war's level, crews tow hulks, penetration rings, turrets
+  const more = await page.evaluate(() => {
+    const { Sim, session, towerIndex, unitIndex } = window.game;
+    const cfg = { ...session.config, seed: 5, difficulty: 'normal', ww2: { side: 'de', foe: 'su' }, map: { ...session.config.map, rocks: 0, rivers: 0, mountains: 0, forests: 0 } };
+    // engineers repair only while there is money, and pay for it
+    const engineerPays = (money) => {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      const pak = s.place(towerIndex('pak40'), 30, 30, true);
+      pak.spent = 100;
+      pak.hp = s.maxHp(pak) * 0.5;
+      s.money = money;
+      const u = s.spawnUnit(unitIndex('pioneer'), pak.x - 30, pak.y, -1);
+      for (let n = 0; n < 60 * 15; n++) s.step();
+      return { gained: pak.hp - s.maxHp(pak) * 0.5, paid: money - s.money };
+    };
+    const rich = engineerPays(500), broke = engineerPays(0);
+    // units trained later in the war: more hit points and damage, a higher price
+    const s = Sim.create(cfg);
+    const k = unitIndex('grenadier');
+    const early = { cost: s.unitCost(k) };
+    const u0 = s.spawnUnit(k, 400, 400, -1);
+    early.hp = s.unitMaxHp(u0);
+    s.wave = 20;
+    const u1 = s.spawnUnit(k, 420, 400, -1);
+    const late = { cost: s.unitCost(k), hp: s.unitMaxHp(u1) };
+    // a repair crew with nothing to repair tows a hulk away
+    const h = Sim.create(cfg);
+    h.hero = null;
+    const hq = h.towers.find((t) => t.base > 0);
+    const tank = h.spawnEnemy(7, 1);
+    h.eX[tank] = hq.x - 200; h.eY[tank] = hq.y; h.eSpeed[tank] = 0;
+    h.eCell[tank] = Math.floor(hq.y / 20) * window.game.COLS + Math.floor((hq.x - 200) / 20);
+    h.damage(tank, 1e9, true, null, false, 999, true);
+    const hulks = h.hkCount;
+    h.spawnUnit(unitIndex('de_crew'), hq.x - 80, hq.y + 40, -1);
+    for (let n = 0; n < 60 * 30 && h.hkCount === hulks; n++) h.step();
+    const towed = hulks > 0 && h.hkCount < hulks;
+    // penetration rings: a PaK 40 goes through a KV-1's side further out than its front
+    const r = Sim.create(cfg);
+    const pak = r.place(towerIndex('pak40'), 30, 30, true);
+    const kv = r.spawnEnemy(9, 1);
+    const rings = r.penRings(pak, kv);
+    // turrets: a tank's turret swings onto its target while the hull keeps its heading, and it fires on the move close in
+    const q = Sim.create(cfg);
+    q.hero = null;
+    const nest = q.place(towerIndex('mg42'), 30, 30, true);
+    nest.hp = 1e9;
+    const e = q.spawnEnemy(8, 1);
+    q.eX[e] = nest.x; q.eY[e] = nest.y - 70; q.eAng[e] = q.ePang[e] = 0; q.eTur[e] = 0; q.eSpeed[e] = 0;
+    let movingShots = 0;
+    for (let n = 0; n < 240; n++) {
+      q.eX[e] = q.ePx[e] = nest.x; q.eY[e] = q.ePy[e] = nest.y - 70; q.eSpeed[e] = 0; q.eTgt[e] = nest.id; q.eAimT[e] = 0;
+      q.step();
+      for (let k2 = 0; k2 < q.events.length; k2 += 5) if (q.events[k2] === 15 && Math.abs(q.events[k2 + 1] - q.eX[e]) < 1) movingShots++;
+      q.events.length = 0;
+    }
+    const turretOn = Math.abs(Math.atan2(Math.sin(q.eTur[e] - Math.PI / 2), Math.cos(q.eTur[e] - Math.PI / 2))) < 0.3;
+    return { rich, broke, early, late, towed, rings, turretOn, hullHeld: Math.abs(q.eAng[e]) < 0.3, movingShots, atlas: window.game.atlasHeight };
+  });
+  check(more.rich.gained > 0 && more.rich.paid > 0 && more.broke.gained <= 0, `WW2 engineers repair at a price ($${Math.round(more.rich.paid)} for ${Math.round(more.rich.gained)} HP) and not without money (${Math.round(more.broke.gained)})`);
+  check(more.late.hp > more.early.hp && more.late.cost > more.early.cost, `WW2 units trained later in the war are stronger (${Math.round(more.early.hp)} → ${Math.round(more.late.hp)} HP) and dearer ($${more.early.cost} → $${more.late.cost})`);
+  check(more.towed, `WW2 repair crew tows a hulk away when there is nothing to repair (${more.towed})`);
+  check(more.rings && more.rings.d[0] > 0 && more.rings.d[1] > more.rings.d[0] && more.rings.d[2] >= more.rings.d[1], `WW2 penetration rings: a PaK 40 through a KV-1's front within ${Math.round(more.rings?.d[0])} px, side ${Math.round(more.rings?.d[1])}, rear ${Math.round(more.rings?.d[2])}`);
+  check(more.turretOn && more.hullHeld && more.movingShots > 0, `WW2 turrets: a T-34's turret swings onto a target (${more.turretOn}) while the hull keeps its heading (${more.hullHeld}), and fires close in without halting (${more.movingShots} shots)`);
+  check(more.atlas > 0 && more.atlas < 4096, `atlas fits (${more.atlas} px of 4096)`);
+
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
 } catch (e) {
   check(false, `exception: ${e.message}`);

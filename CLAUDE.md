@@ -188,7 +188,21 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
 - Repair crew (`UnitDef.crew`, `repairCrew()` in ww2.ts, trained at the workshop): drives round the camp by itself
   (`crewTask()`: wrecks first, by value and distance; not where an attacker is within `CREW_CLEAR`), works at
   `repair` hp/s and pays the repair price per hit point as it goes (`crewPrice()`), waits when the money runs out
-  (`crewStatus()`). Hunt (its default) roams everywhere, Guard and Hold keep it near its post.
+  (`crewStatus()`). With nothing to repair it tows hulks off our ground (`crewHulk()`, `CREW_TOW` × an engineer's
+  pace). Hunt (its default) roams everywhere, Guard and Hold keep it near its post. Engineers' repairs are paid the
+  same way (`doRepair()`: no money, no work).
+- Units trained later in the war come with its level: hit points and damage × `GROW.power(uLvl)` (`unitMaxHp()`,
+  `unitFire()`), and cost `UNIT_LEVEL_COST` more per level (`unitCost()`; the HUD shows it).
+- Turrets: tanks (attackers with a tank gun: `eTurret`; our units with armour) turn their turret on its own
+  (`eTur`/`uTur`, interpolated with `ePtur`/`uPtur`) at the gun's traverse, onto the target on the move and back over
+  the front with none; at a halt the hull swings its front round at `HULL_TURN`. They fire once the turret is on
+  target; within `MOVE_FIRE` of their range they fire on the move at `MOVE_HIT` × the hit chance (`shotMoving`).
+  Armour facing still goes by the hull. `models.ts` bakes every model in `TURRETED` also as `<name>_hull` (its first
+  two parts: tracks, hull) and `<name>_tur` (the rest); the renderer draws the two (`Renderer.enemySplit`/`unitSplit`).
+  Hulks and last-seen marks use the whole model. Atlas ~2,630 px tall for de vs su (`window.game.atlasHeight`).
+- Penetration rings: `Sim.penRings(t, enemy)` — out to where an AT gun goes through the front / side / rear of the
+  hovered tank (else the nearest seen, else the army's toughest non-boss tank); drawn on the selected gun's range
+  circle (green / yellow / orange) and spelt out in the panel (`penRingRow()` in hud.ts).
 - Units: `UNITS` (live binding, `UnitDef` in defs.ts, German ones in ww2.ts), SoA slots `u*` in `Sim` (stable
   slots, `uUid` in commands). Barracks / motor pool train them (`train`, manpower from HQs and depots), the
   airfield launches Fw 190 patrols (manual). Units path with their own BFS (`unitPathTo`, never touch the flow
@@ -349,6 +363,8 @@ After one weapon catalogue for both sides (attackers at their guns' real rates, 
 ×2): Easy wins Open Field 3 of 3, Crossfire 3 of 3, Boulder Pass ~34; Normal Open Field ~24, Crossfire ~37, Boulder
 Pass ~20; battles 11 of 12 on Easy (Seelow Heights lost at 24/30). Growing the attackers' damage with the war level too
 made every map fall by wave 12-20 even at emplacement hp ×5: don't.
+With turrets, moving fire, paid engineers and units of the war's level: Easy wins Open Field and Crossfire 3 of 3,
+Boulder Pass ~28; Normal Open Field ~26, Crossfire ~36, Boulder Pass ~23; battles 12 of 12 on Easy.
 
 ## Known limitations
 
