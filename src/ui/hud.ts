@@ -755,6 +755,7 @@ export class Hud {
         ${sim.eMaxShield[i] > 0 ? `<tr><td>Shield</td><td>${Math.ceil(sim.eShield[i])} / ${Math.ceil(sim.eMaxShield[i])}</td></tr>` : ''}
         <tr><td>Armour</td><td>${WW2 ? (def.arm ? `${def.arm[0]} front · ${def.arm[1]} side · ${def.arm[2]} rear · ${def.arm[3]} top (mm)` : 'none') : def.armor}</td></tr>
         ${WW2 ? `<tr><td>Weapon</td><td>${weaponLine(def)}</td></tr>` : ''}
+        ${WW2 && def.gun && !def.gun.salvo && sim.enemyHitChance(i, def.gun, def.gun.range) < 1 ? `<tr><td>Accuracy</td><td>${Math.round(100 * sim.enemyHitChance(i, def.gun, 0))}% close · ${Math.round(100 * sim.enemyHitChance(i, def.gun, def.gun.range))}% at ${def.gun.range} px</td></tr>` : ''}
         ${WW2 && def.inf && !def.fixed ? `<tr><td>Morale</td><td>${moraleWord(sim.eMorale[i])}${def.officer ? ' · leads the wave' : sim.officerAlive[sim.eWave[i] & 63] ? ' · officer alive' : ''}</td></tr>` : ''}
         ${def.fixed ? (sim.eBuild[i] > 0 ? `<tr><td>Status</td><td>being built (${Math.ceil(sim.eBuild[i])} s)</td></tr>` : '') : `<tr><td>Speed</td><td>${def.speed}</td></tr>`}
         <tr><td>Bounty</td><td>$${sim.eReward[i]}</td></tr>

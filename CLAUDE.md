@@ -154,7 +154,7 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   top] by the shooter's bearing to the hull heading (`penRatio()`); blasts and bombs hit the top. Bounce = ~0
   damage; overmatch may crit. `canHurt()` (same `penRatio()`, from the shooter's position) keeps crews from
   targeting armour they can't penetrate from there; `fireStatus()` tells the panel why a gun holds fire.
-  `npm run probe` checks every weapon fires out to the range it shows (`WW2=1 ALL=1` for all matchups). Infantry get suppression (`eSupp`).
+  `npm run probe` checks every weapon fires out to the range it shows (`WW2=1 ALL=1` for all matchups, `LEVELS=0,9`). Infantry get suppression (`eSupp`).
 - Models: model sets are `scenery` (rocks, trees: every atlas), `classic` (modern), `ww2` (shared) and one per
   faction (`models_ww2.ts` has the kit — soldier, crew, tracks, plane — and the emplacement factories that take a
   faction `Style`, plus the German and Red Army models; `models_su/de/us/jp.ts` the rest). A game's atlas packs only
@@ -281,7 +281,14 @@ running; menus use `rulesetFor(cfg.ww2)` to read a ruleset without installing it
   the panel. Direct fire and shells roll `hitChance()` (`MISS` by role, falls with level and rank, rises with
   distance, suppression and night); a miss flies wide (`missShot()`); hits do `hitComp()` × damage so a green
   level-1 crew at 60% range matches its listed damage. Units roll the same way (`MISS.unit`, better with
-  veterancy); Hardened units see 25% further, Elite soldiers are hidden while still.
+  veterancy); Hardened units see 25% further, Elite soldiers are hidden while still. Attackers roll too
+  (`E_MISS` by `EnemyGun.fx`, `enemyHitChance()`: distance, their suppression, night; salvos, satchels, flames and
+  rams can't miss): a miss lands wide (splash still hurts what is there, near misses suppress), hits are compensated.
+- Artillery (`arty` role) fires at any attacker something of ours sees (`seen()`); only shelling their base positions
+  needs a spotter (within 140 px, an observer's `radarGrid` or a recon mark). Towed AT guns outrange the tanks they
+  face (the `atgun` slot ~220-240 px, `heavyaa` 270-290, dug-in `tank` 210-255).
+- `DIAG=1 npm run bot` lists why guns with an attacker in range didn't fire (sampled; idle 2 s / 2 reloads).
+  Legitimate causes: night (flares), armour too thick (MG vs tank), no line of sight, smoke, no spotter for their base.
 
 ## Balance notes
 

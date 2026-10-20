@@ -218,6 +218,38 @@ function offensive(sim: Sim, built: Map<number, number>): void {
   }
 }
 
+/** DIAG=1: why guns with an attacker in range aren't firing (sampled every 20 ticks, idle for 2 s or more). */
+const DIAG = !!process.env.DIAG;
+const diag = new Map<string, number>();
+const diagIdle = new Map<string, number>();
+function diagnose(sim: Sim, tick: number, prevCd: Map<number, number>, lastFire: Map<number, number>): void {
+  for (const t of sim.towers) if (t.cd > (prevCd.get(t.id) ?? 0) + 1e-6) lastFire.set(t.id, tick);
+  if (tick % 20) return;
+  for (const t of sim.towers) {
+    const def = TOWERS[t.type];
+    if (!def.targeted || def.manual || t.wreck || t.buildT > 0 || t.base) continue;
+    const range = def.levels[t.level].range * t.rangeMult;
+    let n = 0;
+    for (let k = 0; k < sim.liveCount; k++) {
+      const i = sim.live[k];
+      if (!sim.eAlive[i] || (sim.eAir[i] ? !def.hitsAir : !def.hitsGround)) continue;
+      if ((sim.eX[i] - t.x) ** 2 + (sim.eY[i] - t.y) ** 2 <= range * range) n++;
+    }
+    if (!n) continue;
+    const key = `${def.kind}`;
+    diagIdle.set(key + ' samples', (diagIdle.get(key + ' samples') ?? 0) + 1);
+    const rate = sim.stats(t).rate || 1;
+    if (tick - (lastFire.get(t.id) ?? -1e9) < Math.max(120, 150 / rate)) continue;
+    const why = sim.fireStatus(t).split(/[:(0-9]/)[0] || (t.ammo < 0.05 ? 'out of ammunition' : t.supp > 0.5 ? 'suppressed' : `NO REASON mode${t.mode} hidden${sim.towerHidden(t)}`);
+    diag.set(`${key.padEnd(10)} ${why}`, (diag.get(`${key.padEnd(10)} ${why}`) ?? 0) + 1);
+  }
+}
+process.on('exit', () => {
+  if (!DIAG) return;
+  console.log('samples with something in range:', JSON.stringify([...diagIdle]));
+  for (const [k, n] of [...diag].sort((a, b) => b[1] - a[1]).slice(0, 60)) console.log(String(n).padStart(6), k);
+});
+
 function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle): { wave: number; win: boolean; lives: number; towers: number } {
   const ww2 = battle ? { side: battle.side, foe: battle.foe, battle: battle.id } : WW2 ? { side: SIDE, foe: FOE } : undefined;
   const allowed = battle?.banned ? rulesetFor(ww2).towers.map((t, i) => (battle.banned!.includes(t.slot as never) ? -1 : i)).filter((i) => i >= 0) : undefined;
@@ -233,6 +265,8 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
   const leaks = new Map<number, number>();
   sim.exec({ t: 'wave' });
   let lastWave = 0;
+  const prevCd = new Map<number, number>();
+  const lastFire = new Map<number, number>();
   for (let tick = 0; tick < 60 * 60 * 40 && !sim.gameOver && !sim.victory; tick++) {
     if (process.env.VERBOSE && sim.wave !== lastWave) {
       lastWave = sim.wave;
@@ -257,7 +291,9 @@ function play(map: MapDef, difficulty: Difficulty, seed: number, battle?: Battle
       const i = sim.live[0];
       sim.exec({ t: 'item', item: 0, x: sim.eX[i], y: sim.eY[i] });
     }
+    if (DIAG) for (const t of sim.towers) prevCd.set(t.id, t.cd);
     sim.step();
+    if (DIAG) diagnose(sim, tick, prevCd, lastFire);
     for (let k = 0; k < sim.events.length; k += 5) {
       if (sim.events[k] === 3) leaks.set(sim.events[k + 3], (leaks.get(sim.events[k + 3]) ?? 0) + 1);
     }

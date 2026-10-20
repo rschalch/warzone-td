@@ -334,6 +334,14 @@ export const CREW_KILLS = [8, 25, 60];
  */
 const MISS: Record<string, number> = { gun: 0.35, bunker: 0.35, at: 0.4, sniper: 0.2, cannon: 0.45, arty: 0.5, air: 0.5, unit: 0.35 };
 const MISS_MID = 1 / 3 + (2 / 3) * 0.6;
+/**
+ * The attackers' misses the same way, by weapon (EnemyGun.fx): rising with distance, their suppression and
+ * the dark; hits are compensated alike. Salvo rockets scatter anyway; satchels, flames and rams don't miss.
+ */
+const E_MISS: Record<string, number> = {
+  rifle: 0.35, mosin: 0.35, smg: 0.4, ppsh: 0.4, mg: 0.35, maxim: 0.35, dt: 0.35, sniper: 0.2,
+  tank: 0.4, tiger: 0.35, ptrd: 0.4, bazooka: 0.45, schreck: 0.45, rocket: 0.5, mortar: 0.5, arty: 0.5, stuka: 0.5,
+};
 /** Elite crews: their knack, by role. */
 const ELITE_SUPP = 1.5; // machine guns: grazing fire pins harder
 const ELITE_PEN = 1.15; // anti-tank: they aim for the weak spots
@@ -2616,6 +2624,14 @@ export class Sim {
     return false;
   }
 
+  /** WW2: the chance attacker i's gun hits what it aims at, `d` px away (1: it can't miss). */
+  enemyHitChance(i: number, g: EnemyGun, d: number): number {
+    const base = E_MISS[g.fx];
+    if (base === undefined) return 1;
+    const miss = base * (1 / 3 + (2 / 3) * Math.min(1, d / Math.max(1, g.range))) + 0.25 * this.eSupp[i] + 0.1 * this.night;
+    return Math.max(0.1, Math.min(0.98, 1 - miss));
+  }
+
   private enemyShot(i: number, def: EnemyDef, g: EnemyGun, t: Tower): void {
     this.eGunCd[i] = (1 / g.rate) * this.rng.range(0.85, 1.15);
     this.eSeenT[i] = FLASH_SEEN; // the muzzle flash gives it away
@@ -2625,9 +2641,22 @@ export class Sim {
     const z = air ? AIR_Z : def.inf ? 6 : 10;
     // aim somewhere on the emplacement, not always its centre
     const spread = t.size * TILE * 0.3;
-    const tx = t.x + this.rng.range(-spread, spread);
-    const ty = t.y + this.rng.range(-spread, spread);
-    const dmg = g.dmg * (0.6 + 0.4 * this.hpMult);
+    let tx = t.x + this.rng.range(-spread, spread);
+    let ty = t.y + this.rng.range(-spread, spread);
+    let dmg = g.dmg * (0.6 + 0.4 * this.hpMult);
+    // salvos scatter on their own; everything else rolls to hit, and a miss goes wide
+    let hit = true;
+    const base = g.salvo ? undefined : E_MISS[g.fx];
+    if (base !== undefined) {
+      hit = this.rng.next() < this.enemyHitChance(i, g, Math.hypot(t.x - x, t.y - y));
+      if (hit) dmg /= 1 - base * MISS_MID;
+      else {
+        const a = this.rng.next() * TWO_PI;
+        const off = t.size * TILE * 0.5 + this.rng.range(12, 34);
+        tx = t.x + Math.cos(a) * off;
+        ty = t.y + Math.sin(a) * off;
+      }
+    }
     if (g.salvo) {
       // a ripple of rockets off the rails, landing scattered around the target a few seconds later
       for (let k = 0; k < g.salvo && this.rkCount < MAX_ROCKETS; k++) {
@@ -2657,15 +2686,16 @@ export class Sim {
       }
     }
     const top = air;
-    this.hitDefender(t.id, dmg, g.pen, g.supp, top, x, y);
+    if (hit) this.hitDefender(t.id, dmg, g.pen, g.supp, top, x, y);
+    else if (t.id > 0) t.supp = Math.min(1, t.supp + g.supp * 0.3); // a near miss still keeps heads down
     if (g.splash) {
       for (let u = 0; u < MAX_UNITS; u++) {
-        if (!this.uAlive[u] || this.uAir[u] || -u - UNIT_ID0 === t.id) continue;
+        if (!this.uAlive[u] || this.uAir[u] || (hit && -u - UNIT_ID0 === t.id)) continue;
         if ((this.uX[u] - tx) ** 2 + (this.uY[u] - ty) ** 2 <= g.splash * g.splash) this.hitUnit(u, dmg * 0.5, g.pen * 0.6, g.supp * 0.5, true, x, y);
       }
       // HE: whatever stands next to the impact gets a share
       for (const o of this.towers) {
-        if (o === t || o.wreck || o.hp <= 0) continue;
+        if ((hit && o === t) || o.wreck || o.hp <= 0) continue;
         const r = g.splash + o.size * TILE * 0.5;
         if ((o.x - tx) ** 2 + (o.y - ty) ** 2 <= r * r) this.hitDefender(o.id, dmg * 0.5, g.pen * 0.6, g.supp * 0.5, true);
       }
@@ -4863,7 +4893,7 @@ export class Sim {
       if (d2 > dim2 && !this.eAir[i] && !this.litGrid[this.eGCell[i]]) dark++;
       else if (sight === 1 && !this.towerSees(t, i, range)) blind++;
       else if (sight === 3 && !this.seen(i)) fog++;
-      else if (spot && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
+      else if (spot && d2 > spot * spot && (!WW2 || this.eGar[i] >= 0) && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) unseen++;
       else if (this.eSmoked[i] && d2 > 50 * 50) smoke++;
       else if (pen > 0 && !this.canHurt(i, pen, top, t.x, t.y, range)) {
         if (d2 < armD) {
@@ -4878,7 +4908,9 @@ export class Sim {
     if (dark && dark === inRange) return `Too dark to see that far: ${dark} in range beyond ${Math.round(Math.sqrt(dim2))} px. A mortar firing flares would light them up.`;
     if (blind && blind === inRange) return `No line of sight: ${blind} in range behind trees, hills or ruins.`;
     if (fog && fog === inRange) return `Can't see them: ${fog} in range that nothing of ours has in sight (behind cover, or in the fog).`;
-    if (unseen) return `Needs a spotter: ${unseen} in range that nobody sees. It fires at what an observation post sees, or within ${spot} px of itself.`;
+    if (unseen) return WW2
+      ? `Needs a spotter: their base positions in range are shelled only with an observation post in sight of them (or a recon flight).`
+      : `Needs a spotter: ${unseen} in range that nobody sees. It fires at what an observation post sees, or within ${spot} px of itself.`;
     if (armoured >= 0) {
       const e = ENEMIES[this.eKind[armoured]];
       const side = top ? 3 : this.facing(armoured, t.x, t.y);
@@ -4910,7 +4942,8 @@ export class Sim {
       if (d2 > r2) continue;
       // stealth: radar reveals it everywhere; otherwise only point-blank
       if (this.eStealth[i] && !this.eSeen[i] && d2 > STEALTH_DETECT * STEALTH_DETECT) continue;
-      if (spot > 0 && d2 > spot * spot && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
+      // artillery: beyond its own eyes it needs a spotter (WW2: only to shell their base; attackers in sight are fair game)
+      if (spot > 0 && d2 > spot * spot && (!WW2 || this.eGar[i] >= 0) && !this.radarGrid[this.eGCell[i]] && this.eMarkT[i] <= 0) continue;
       if (this.eSmoked[i] && d2 > 50 * 50) continue; // can't see into the smoke
       if (pen > 0 && !this.canHurt(i, pen, top, x, y, gunRange)) continue;
       if (this.dimR2 && d2 > this.dimR2 && !this.litGrid[this.eGCell[i]] && !this.eAir[i]) continue;
