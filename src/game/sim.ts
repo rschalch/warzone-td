@@ -4328,9 +4328,13 @@ export class Sim {
     if (mine < 0 || !this.place(mine, c, r)) this.ev(EV_DENY, cx, cy, 0);
   }
 
-  /** Engineers and medics look for work near their post (Hold: only within reach). */
+  /**
+   * Engineers and medics look for work all over the map, the nearest first (Hold: only within reach).
+   * Hulks they clear only round their post.
+   */
   private supportTask(u: number, what: 'repair' | 'heal'): void {
-    const reach = this.uStance[u] === ST_HOLD ? 40 : this.uStance[u] === ST_HUNT ? HUNT_RANGE : GUARD_LEASH + 60;
+    const local = this.uStance[u] === ST_HOLD ? 40 : this.uStance[u] === ST_HUNT ? HUNT_RANGE : GUARD_LEASH + 60;
+    const reach = this.uStance[u] === ST_HOLD ? local : Infinity;
     const ox = this.uStance[u] === ST_HUNT ? this.uX[u] : this.uPostX[u];
     const oy = this.uStance[u] === ST_HUNT ? this.uY[u] : this.uPostY[u];
     let best = -1;
@@ -4353,7 +4357,7 @@ export class Sim {
       this.uTask[u] = pick ? pick.id : -1;
       if (pick) this.unitPathTo(u, pick.col - 1, pick.row - 1, pick.col + pick.size, pick.row + pick.size, pick.col, pick.row, pick.col + pick.size - 1, pick.row + pick.size - 1);
       else if (this.uTask[u] <= -HULK_TASK && this.hulkGrid[-this.uTask[u] - HULK_TASK] === 1) return; // still clearing
-      else if (this.pickHulk(u, ox, oy, bestD)) return;
+      else if (this.pickHulk(u, ox, oy, local * local)) return;
       else if (this.uStance[u] !== ST_HUNT && (this.uX[u] - this.uPostX[u]) ** 2 + (this.uY[u] - this.uPostY[u]) ** 2 > 14 * 14 && this.uPathI[u] >= this.uPathLen[u]) this.unitGoto(u, this.uPostX[u], this.uPostY[u]);
       return;
     }
