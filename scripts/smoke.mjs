@@ -926,6 +926,27 @@ try {
       return { gained: pak.hp - s.maxHp(pak) * 0.5, paid: money - s.money };
     };
     const rich = engineerPays(500), broke = engineerPays(0);
+    // freshly trained pioneers and medics go to work across the map with no orders
+    const fresh = (unit) => {
+      const s = Sim.create(cfg);
+      s.hero = null;
+      s.money = 2000;
+      const b = s.place(towerIndex('barracks'), 6, 6, true);
+      const pak = s.place(towerIndex('pak40'), 34, 30, true);
+      pak.spent = 100;
+      pak.hp = s.maxHp(pak) * 0.5;
+      const hurt = s.spawnUnit(unitIndex('grenadier'), pak.x + 30, pak.y, -1);
+      s.uHp[hurt] = s.unitMaxHp(hurt) * 0.3;
+      s.exec({ t: 'train', id: b.id, unit: unitIndex(unit) });
+      let u = -1;
+      for (let n = 0; n < 60 * 40; n++) {
+        s.step();
+        if (u < 0) for (let v = 0; v < s.uAlive.length; v++) if (s.uAlive[v] && s.uKind[v] === unitIndex(unit)) u = v;
+        if (u >= 0 && Math.hypot(s.uX[u] - pak.x, s.uY[u] - pak.y) < 60) return Math.round(Math.hypot(b.x - pak.x, b.y - pak.y));
+      }
+      return 0;
+    };
+    const freshPioneer = fresh('pioneer'), freshMedic = fresh('medic');
     // units trained later in the war: more hit points and damage, a higher price
     const s = Sim.create(cfg);
     const k = unitIndex('grenadier');
@@ -967,8 +988,9 @@ try {
       q.events.length = 0;
     }
     const turretOn = Math.abs(Math.atan2(Math.sin(q.eTur[e] - Math.PI / 2), Math.cos(q.eTur[e] - Math.PI / 2))) < 0.3;
-    return { rich, broke, early, late, towed, rings, turretOn, hullHeld: Math.abs(q.eAng[e]) < 0.3, movingShots, atlas: window.game.atlasHeight };
+    return { rich, broke, freshPioneer, freshMedic, early, late, towed, rings, turretOn, hullHeld: Math.abs(q.eAng[e]) < 0.3, movingShots, atlas: window.game.atlasHeight };
   });
+  check(more.freshPioneer > 0 && more.freshMedic > 0, `WW2 freshly trained pioneers and medics find work across the map by themselves (${more.freshPioneer} px, ${more.freshMedic} px from the barracks)`);
   check(more.rich.gained > 0 && more.rich.paid > 0 && more.broke.gained <= 0, `WW2 engineers repair at a price ($${Math.round(more.rich.paid)} for ${Math.round(more.rich.gained)} HP) and not without money (${Math.round(more.broke.gained)})`);
   check(more.late.hp > more.early.hp && more.late.cost > more.early.cost, `WW2 units trained later in the war are stronger (${Math.round(more.early.hp)} → ${Math.round(more.late.hp)} HP) and dearer ($${more.early.cost} → $${more.late.cost})`);
   check(more.towed, `WW2 repair crew tows a hulk away when there is nothing to repair (${more.towed})`);
