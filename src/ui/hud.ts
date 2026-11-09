@@ -54,6 +54,8 @@ export interface UiState {
   heroSelected: boolean;
   speed: number;
   mode: 'local' | 'replay' | 'coop';
+  /** This player's index (1: the co-op guest): each takes back only their own builds. */
+  player: number;
   banner: string;
   /** Item, ability or superweapon waiting for its target click. */
   aiming: Inspect | null;
@@ -437,7 +439,7 @@ export class Hud {
     this.set(this.next, label);
     const replay = ui.mode === 'replay';
     this.next.disabled = !sim.canCallWave || replay;
-    this.undoBtn.disabled = !sim.canUndo || replay;
+    this.undoBtn.disabled = !sim.canUndo(ui.player) || replay;
     if (this.held !== this.bannerEl) this.set(this.bannerEl, ui.banner, true);
     this.bannerEl.classList.toggle('show', !!ui.banner);
 

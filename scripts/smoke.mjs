@@ -5,7 +5,8 @@
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
-const server = await createServer({ server: { port: 5288, strictPort: true }, logLevel: 'error' });
+// (the failure-path checks log errors in the page on purpose: keep them out of this output)
+const server = await createServer({ server: { port: 5288, strictPort: true, forwardConsole: false }, logLevel: 'error' });
 await server.listen();
 const url = 'http://localhost:5288/';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -42,16 +43,16 @@ try {
   check((await page.locator('#info .title').innerText()).includes('Lv 1/10'), 'clicking the tower selects it');
 
   // sound controls in the top bar: next track, mute (the button and K), music volume shared with the settings
+  // (the HUD shows these on its next frame: wait for the change, not for a fixed time)
+  const shown = (fn, arg) => page.waitForFunction(fn, arg, { timeout: 3000 }).then(() => true).catch(() => false);
   const track0 = await page.locator('#trackname').innerText();
   await page.click('#nexttrack');
-  await page.waitForTimeout(100);
+  await shown((t) => document.getElementById('trackname').innerText !== t, track0);
   const track1 = await page.locator('#trackname').innerText();
   await page.click('#mute');
-  await page.waitForTimeout(50);
-  const mutedBtn = await page.locator('#mute').evaluate((b) => b.classList.contains('off'));
+  const mutedBtn = await shown(() => document.getElementById('mute').classList.contains('off'));
   await page.keyboard.press('k');
-  await page.waitForTimeout(50);
-  const unmuted = !(await page.locator('#mute').evaluate((b) => b.classList.contains('off')));
+  const unmuted = await shown(() => !document.getElementById('mute').classList.contains('off'));
   await page.locator('#musicvol').fill('0.3');
   const vol = await page.evaluate(() => JSON.parse(localStorage.getItem('wztd.settings') ?? '{}').music);
   check(track0 !== track1 && mutedBtn && unmuted && vol === 0.3, `top bar sound: next track (${track0} → ${track1}), mute and K, music volume saved (${vol})`);
@@ -999,6 +1000,189 @@ try {
   check(more.atlas > 0 && more.atlas < 4096, `atlas fits (${more.atlas} px of 4096)`);
 
   check(errors.length === 0, `no page errors${errors.length ? ':\n  ' + errors.join('\n  ') : ''}`);
+
+  // failure paths (these log errors on purpose, so they run on their own page)
+  const bad = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const pack = (value) => bad.evaluate(async (v) => {
+    const stream = new Blob([new TextEncoder().encode(JSON.stringify(v))]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+    let bin = '';
+    for (const x of buf) bin += String.fromCharCode(x);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }, value);
+  await bad.goto(url);
+  await bad.waitForSelector('[data-go="maps"]', { timeout: 30000 });
+  // commands that fail leave no trace; carrying on after the win, co-op orders and undo
+  const fixes = await bad.evaluate(() => {
+    const { Session, NetLink, MAPS, COLS } = window.game;
+    const cfg = { map: MAPS[0], difficulty: 'easy', modifiers: [], perks: {}, seed: 4711 };
+    // Mine Drop where no mine fits (no buildable cell within reach): nothing is logged, and the replay still matches
+    const a = new Session(cfg);
+    a.issue({ t: 'place', type: 0, col: 40, row: 30 });
+    a.issue({ t: 'wave' });
+    for (let k = 0; k < 120; k++) a.advance(1 / 60);
+    const grid = a.sim.map.grid;
+    let spot = -1;
+    for (let i = 0; i < grid.length && spot < 0; i++) {
+      const c = i % COLS, r = (i / COLS) | 0;
+      let free = 0;
+      for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+        const j = (r + dy) * COLS + c + dx;
+        if (c + dx >= 0 && c + dx < COLS && j >= 0 && j < grid.length && grid[j] === 0) free++;
+      }
+      if (!free) spot = i;
+    }
+    const logged = a.log.length;
+    a.issue({ t: 'item', item: 1, x: ((spot % COLS) + 0.5) * 20, y: (((spot / COLS) | 0) + 0.5) * 20 });
+    const mineLogged = a.log.length - logged;
+    for (let k = 0; k < 1500; k++) a.advance(1 / 60);
+    const b = new Session(cfg, { replay: a.log });
+    while (b.sim.ticks < a.sim.ticks) b.advance(1 / 60);
+    const mine = { spot, logged: mineLogged, same: b.sim.stateHash() === a.sim.stateHash() };
+
+    // a short war (one wave), won, carried on as an endless game: the replay carries on too
+    const short = (s) => ((s.sim.totalWaves = 1), s);
+    const e = short(new Session(cfg));
+    e.issue({ t: 'wave' });
+    let guard = 0;
+    while (!e.finished && guard++ < 20000) e.advance(1 / 60);
+    const won = e.sim.victory;
+    e.issue({ t: 'endless' });
+    e.issue({ t: 'place', type: 0, col: 44, row: 30 });
+    for (let k = 0; k < 900; k++) e.advance(1 / 60);
+    const r = short(new Session(cfg, { replay: e.log }));
+    guard = 0;
+    while (r.sim.ticks < e.sim.ticks && guard++ < 40000) r.advance(1 / 60);
+    const endless = { won, on: e.sim.endless && !e.finished && e.sim.ticks > 0, replay: r.sim.endless && r.sim.ticks === e.sim.ticks && r.sim.stateHash() === e.sim.stateHash() };
+
+    // co-op over two real NetLinks joined by a fake channel
+    const pair = () => {
+      const mk = () => ({ open: true, h: {}, other: null, on(ev, fn) { this.h[ev] = fn; }, send(d) { this.other.h.data?.(structuredClone(d)); }, close() {} });
+      const x = mk(), y = mk();
+      x.other = y;
+      y.other = x;
+      return [new NetLink({ destroy() {} }, x, 0), new NetLink({ destroy() {} }, y, 1)];
+    };
+    const [hl, gl] = pair();
+    gl.onMessage = null; // the guest has the start message and is still loading the game
+    const host = short(new Session(cfg, { link: hl }));
+    host.issue({ t: 'place', type: 0, col: 40, row: 30 }); // …while the host already builds
+    for (let k = 0; k < 30; k++) host.advance(1 / 60);
+    const guest = short(new Session(cfg, { link: gl }));
+    const both = (n) => {
+      for (let k = 0; k < n; k++) {
+        host.advance(1 / 60);
+        guest.advance(1 / 60);
+      }
+    };
+    both(60);
+    const early = host.sim.towers.length === 1 && guest.sim.towers.length === 1;
+    // each takes back only their own build
+    both(320);
+    let free = 44;
+    while (free < 80 && !guest.sim.canPlace(0, free, 30)) free++;
+    guest.issue({ t: 'place', type: 0, col: free, row: 30 });
+    both(20);
+    const two = host.sim.towers.length === 2 && !host.sim.canUndo(0) && host.sim.canUndo(1) && guest.sim.canUndo(1);
+    host.issue({ t: 'undo' }); // the host's own build is more than 5 s old: nothing happens (it used to sell the guest's)
+    both(20);
+    const kept = host.sim.towers.length === 2;
+    guest.issue({ t: 'undo' });
+    both(20);
+    const undo = two && kept && host.sim.towers.length === 1 && guest.sim.towers.length === 1 && host.sim.towers[0].col === 40;
+    // the win, and one of them carries on: both do
+    host.issue({ t: 'wave' });
+    guard = 0;
+    while (!(host.finished && guest.finished) && guard++ < 20000) both(1);
+    const coopWon = host.sim.victory && guest.sim.victory;
+    guest.issue({ t: 'endless' });
+    both(400);
+    const coop = { early, undo, won: coopWon, endless: host.sim.endless && guest.sim.endless && host.sim.ticks === guest.sim.ticks && host.sim.stateHash() === guest.sim.stateHash(), desync: host.desync || guest.desync };
+    return { mine, endless, coop };
+  });
+  check(fixes.mine.spot >= 0 && fixes.mine.logged === 0 && fixes.mine.same, `a Mine Drop where no mine fits leaves no trace (${fixes.mine.logged} logged) and the replay still matches (${fixes.mine.same})`);
+  check(fixes.endless.won && fixes.endless.on && fixes.endless.replay, `carrying on after the win is a command (${fixes.endless.on}) that replays follow (${fixes.endless.replay})`);
+  check(fixes.coop.early && !fixes.coop.desync, `co-op: an order given while the partner still loads arrives (${fixes.coop.early}), no desync (${!fixes.coop.desync})`);
+  check(fixes.coop.undo, `co-op: undo takes back only your own build (${fixes.coop.undo})`);
+  check(fixes.coop.won && fixes.coop.endless, `co-op: one player carries on after the win and both games do (${fixes.coop.endless})`);
+  // a replay link with nonsense inside, opened cold: the menu, with a line saying why
+  const junk = await pack({ v: 1, config: { map: { name: 'x' } }, log: [], result: { wave: 1, score: 1, win: false } });
+  await bad.goto('about:blank');
+  await bad.goto(`${url}#replay=${junk}`);
+  const notice = await bad.waitForSelector('#notice', { timeout: 30000 }).then((el) => el.innerText()).catch(() => '');
+  check(notice.includes('replay') && !!(await bad.$('[data-go="maps"]')), `a damaged replay link opens the menu and says why (${notice.slice(0, 40)}…)`);
+  // a replay that names a tower this build doesn't have: it plays on
+  const cfg0 = await bad.evaluate(() => ({ map: window.game.MAPS[0], difficulty: 'normal', modifiers: [], perks: {}, seed: 5 }));
+  const foreign = await pack({ v: 1, config: cfg0, log: [{ tick: 30, cmd: { t: 'place', type: 999, col: 40, row: 30 } }, { tick: 40, cmd: { t: 'wave' } }], result: { wave: 3, score: 1, win: false } });
+  await bad.goto('about:blank');
+  await bad.goto(`${url}#replay=${foreign}`);
+  await bad.waitForFunction(() => window.game?.sim?.ticks > 120, null, { timeout: 30000 }).catch(() => {});
+  const played = await bad.evaluate(() => ({ ticks: window.game.sim?.ticks ?? 0, wave: window.game.sim?.wave ?? 0 }));
+  check(played.ticks > 120 && played.wave === 1, `a replay with a tower this build doesn't have plays on (tick ${played.ticks}, wave ${played.wave})`);
+  // an error in a frame: the game stops and says so, and the menu is a click away
+  await bad.evaluate(() => {
+    window.game.sim.step = () => {
+      throw new Error('boom');
+    };
+  });
+  const broke = await bad.waitForSelector('#overlay #leave', { timeout: 10000 }).then(() => bad.locator('#overlay').innerText()).catch(() => '');
+  await bad.click('#leave').catch(() => {});
+  await bad.waitForSelector('[data-go="maps"]', { timeout: 10000 }).catch(() => {});
+  check(broke.includes('SOMETHING BROKE') && broke.includes('boom') && !!(await bad.$('[data-go="maps"]')), 'an error in a frame stops the game with a message, and Menu leads out');
+  // a save from a build whose arrays had another size: Continue says so and the save is gone
+  await bad.evaluate(async () => {
+    const g = window.game;
+    g.quick(0, 'normal');
+    g.session.issue({ t: 'wave' });
+    for (let k = 0; k < 200; k++) g.sim.step();
+    const snap = g.sim.snapshot();
+    snap.eX = new Float32Array(snap.eX.length + 64);
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('wztd', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    await new Promise((res) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ config: g.session.config, snapshot: snap, log: [], wave: 1, at: 1 }, 'save');
+      tx.oncomplete = res;
+    });
+    // a save of another version is refused as well
+    let refused = false;
+    try {
+      g.Sim.restore({ ...g.sim.snapshot(), saveVersion: 0 });
+    } catch {
+      refused = true;
+    }
+    window.refused = refused;
+  });
+  const refused = await bad.evaluate(() => window.refused);
+  // (leave without the page saving the running game over the damaged save)
+  await bad.goto('about:blank');
+  await bad.evaluate(() => new Promise((res) => setTimeout(res, 200)));
+  await bad.goto(url);
+  const offered = await bad.waitForSelector('[data-go="continue"]', { timeout: 30000 }).then(() => true).catch(() => false);
+  if (offered) await bad.click('[data-go="continue"]');
+  const oldSave = await bad.waitForSelector('#notice', { timeout: 10000 }).then((el) => el.innerText()).catch(() => '');
+  check(offered && oldSave.includes('another version') && !(await bad.$('[data-go="continue"]')) && refused, `a save from another build is refused with a message and removed (${oldSave.slice(0, 40)}…; other version refused ${refused})`);
+  // the tactical bar never runs under the sidebar
+  for (const [w, h] of [[844, 390], [800, 600], [1024, 768]]) {
+    await bad.setViewportSize({ width: w, height: h });
+    await bad.evaluate(() => window.game.quick(0, 'easy'));
+    await bad.waitForTimeout(300);
+    const bar = await bad.evaluate(() => {
+      const stage = document.getElementById('stage').getBoundingClientRect();
+      const el = document.getElementById('tactical');
+      const r = el.getBoundingClientRect();
+      const last = el.querySelector('button:last-of-type');
+      last.scrollIntoView({ inline: 'end', block: 'nearest' });
+      const lr = last.getBoundingClientRect();
+      return { inside: r.right <= stage.right + 1, reach: lr.right <= stage.right + 1 && lr.width > 20, scrolls: el.scrollWidth > el.clientWidth };
+    });
+    check(bar.inside && bar.reach, `${w}×${h}: the tactical bar stays on the map (${bar.inside}) and its last button can be reached (${bar.reach}${bar.scrolls ? ', by scrolling' : ''})`);
+  }
+  await bad.close();
 } catch (e) {
   check(false, `exception: ${e.message}`);
 } finally {

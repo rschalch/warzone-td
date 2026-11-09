@@ -64,13 +64,15 @@ function paintPreview(c: HTMLCanvasElement, def: MapDef): void {
 
 // ---------------------------------------------------------------- main menu
 
-export async function showMain(): Promise<void> {
+/** The main menu; `notice` is a line on top of it (why a game could not be started). */
+export async function showMain(notice?: string): Promise<void> {
   const p = getProfile();
   const saved = await host.hasSave();
   const active = host.currentActive();
   show(`
     <div class="card menu">
       <h1>WARZONE <span>TD</span></h1>
+      ${notice ? `<p class="bad" id="notice">${esc(notice)}</p>` : ''}
       <p>Hold the line for ${TOTAL_WAVES} waves. There is no road: your towers are the walls. Build a maze that makes ground units walk past as many guns as possible — but you can never fully block them.</p>
       <div class="menu-grid">
         ${active ? '<button data-go="resume" class="primary big">Resume game</button>' : ''}

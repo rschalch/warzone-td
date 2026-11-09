@@ -33,10 +33,15 @@ npm run bot        # a heuristic bot plays whole games (env: MAPS=0,1 DIFF=easy,
    - **Never mutate simulation state from the UI.** Every player action is a `Command`
      (`src/game/commands.ts`) applied by `Sim.exec()` between ticks, issued through `session.issue()`.
      A new player action = a new `Command` variant + a `case` in `Sim.exec`.
+   - **A command that fails changes nothing** (`exec` returns false): only successful commands are logged, so a
+     replay never sees it. That includes `sim.rng`: a failed Mine Drop that had drawn random numbers put every
+     replay off. `exec` also refuses what this game doesn't have (an unknown tower type from another version's replay).
    - Visual/UI-only data the sim produces (events, `waveDamage`) must never be read back by gameplay code.
    - New sim state is saved automatically if it is a typed array or a number/boolean/string field on `Sim`.
      Fields holding **object references** (e.g. a `Tower`) must be mapped to ids in `Sim.snapshot()` and
      back in `Sim.restore()`. `npm run smoke` checks replay + restore equivalence by state hash.
+   - Bump `SAVE_VERSION` (sim.ts) when a saved field changes its meaning. `Sim.restore()` throws a `SaveError` for
+     another version or for arrays of another size; `startGame` then drops the save and the menu says why.
 2. **Map size is a live module binding.** `COLS`, `ROWS`, `MAP_W`, `MAP_H` in `src/game/defs.ts` change per
    map (`setMapSize`). Always construct the sim with `Sim.create(config)` (it builds the map before any
    grid-sized arrays exist). Code that builds another map temporarily (menu previews) must restore the size.
@@ -96,7 +101,15 @@ and keep its level-1 value per dollar roughly within 0.5–1.1 of the Gun.
 **Add an enemy:** `ENEMIES` + an `EN_*` constant in `defs.ts`, a model (`tex` name) in `models.ts`, an entry in
 `ENEMY_HELP` (`codex.ts`, same index), a wave rule in `buildWave()`, and optionally a `THREAT_TIPS` line in `hud.ts`.
 
-**Add a player action:** `Command` variant → `Sim.exec` case → UI calls `issue({...})` in `main.ts`.
+**Add a player action:** `Command` variant → `Sim.exec` case → UI calls `issue({...})` in `main.ts`. Carrying on after
+the win is one (`endless`; in co-op the session sends it at once, both games stand at the tick of the win). In co-op
+the session stamps `place` and `undo` with the player (`p`), so each takes back only their own build (`Sim.canUndo(p)`).
+
+**When things go wrong:** `frame()` catches errors (Pixi's ticker would stop for good): the game stops with a
+"Something broke" card and is not saved in that state. A game that can't be built (a damaged replay link, an old save)
+goes back to the menu with a line saying why (`showMain(notice)`). `NetLink` hands a new listener the messages that
+arrived while nobody listened (the guest may still be baking models when the host's first orders come). `npm run smoke`
+checks all of these on a page of its own.
 
 **AI partner:** `Partner.think(sim)` must stay read-only and cheap. Placement checks (`placeStatus`) run a path
 search per route (~1.5 ms each on the biggest map), so a placement is spread over several thinks (`Plan`); keep

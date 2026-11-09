@@ -7,18 +7,31 @@ import type { Link, NetMsg } from './session';
 const PREFIX = 'wztd-room-';
 
 export class NetLink implements Link {
-  onMessage: ((msg: NetMsg) => void) | null = null;
   onClose: (() => void) | null = null;
   private queue: NetMsg[] = [];
+  private listener: ((msg: NetMsg) => void) | null = null;
 
   constructor(private readonly peer: PeerT, private readonly conn: DataConnection, readonly player: number) {
     conn.on('data', (d) => {
       const msg = d as NetMsg;
-      if (this.onMessage) this.onMessage(msg);
+      if (this.listener) this.listener(msg);
       else this.queue.push(msg);
     });
     conn.on('close', () => this.onClose?.());
     conn.on('error', () => this.onClose?.());
+  }
+
+  get onMessage(): ((msg: NetMsg) => void) | null {
+    return this.listener;
+  }
+
+  /**
+   * A new listener first gets what arrived while nobody listened, in order: the host's first orders
+   * can come while the guest is still loading the game, and a lost one puts the two out of sync.
+   */
+  set onMessage(fn: ((msg: NetMsg) => void) | null) {
+    this.listener = fn;
+    while (fn && this.listener === fn && this.queue.length) fn(this.queue.shift()!);
   }
 
   /** Messages that arrived before anyone listened (e.g. the start message). */

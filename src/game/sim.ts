@@ -517,6 +517,15 @@ const HULL_TURN = 0.8;
 const MOVE_FIRE = 0.5;
 const MOVE_HIT = 0.6;
 
+/**
+ * The version of the saved state. Bump it when a saved field changes its meaning (arrays that change
+ * size or type are caught by themselves): older saves are then refused instead of loading wrong.
+ */
+export const SAVE_VERSION = 1;
+
+/** A saved game this build can't load. */
+export class SaveError extends Error {}
+
 export class Sim {
   readonly map: GameMap;
   /** Gameplay randomness: must be consumed identically on every run (replays, co-op lockstep). */
@@ -1318,6 +1327,7 @@ export class Sim {
       if (ArrayBuffer.isView(v)) out[k] = (v as Float32Array).slice();
       else if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') out[k] = v;
     }
+    out.saveVersion = SAVE_VERSION;
     out.config = this.config;
     out.rng = (this.rng as unknown as { s: number }).s;
     out.vr = (this.vr as unknown as { s: number }).s;
@@ -1328,21 +1338,28 @@ export class Sim {
     out.spawners = this.spawners.map((sp) => ({ ...sp, left: sp.left.slice(), timer: sp.timer.slice() }));
     out.hero = this.hero ? { ...this.hero, path: [...this.hero.path], cd: [...this.hero.cd], src: null } : null;
     out.items = [...this.items];
-    out.lastBuild = this.lastBuild;
+    out.lastBuild = this.lastBuild.map((b) => (b ? { ...b } : null));
     out.waveDamage = [...this.waveDamage];
     out.pSrc = this.pSrc.slice(0, this.pCount).map(id);
     out.eBurnBy = this.eBurnBy.map(id);
     return out;
   }
 
+  /** Throws a `SaveError` for a save this build can't load (another version, or arrays of another size). */
   static restore(snap: Record<string, unknown>): Sim {
+    // (saves from before the version was written are version 1)
+    if ((snap.saveVersion ?? 1) !== SAVE_VERSION) throw new SaveError(`save version ${snap.saveVersion}, this build reads ${SAVE_VERSION}`);
     const sim = Sim.create(snap.config as GameConfig);
     const any = sim as unknown as Record<string, unknown>;
     for (const [k, v] of Object.entries(snap)) {
       const cur = any[k];
-      if (ArrayBuffer.isView(cur) && ArrayBuffer.isView(v)) (cur as Float32Array).set(v as Float32Array);
-      else if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') {
-        if (k !== 'rng' && k !== 'vr') any[k] = v;
+      if (ArrayBuffer.isView(cur) && ArrayBuffer.isView(v)) {
+        const a = cur as Float32Array;
+        const b = v as Float32Array;
+        if (a.length !== b.length || a.constructor !== b.constructor) throw new SaveError(`${k}: ${b.constructor.name}(${b.length}) saved, ${a.constructor.name}(${a.length}) here`);
+        a.set(b);
+      } else if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') {
+        if (k !== 'rng' && k !== 'vr' && k !== 'saveVersion') any[k] = v;
       }
     }
     (sim.rng as unknown as { s: number }).s = snap.rng as number;
@@ -1386,7 +1403,9 @@ export class Sim {
     for (const k of snap.strikes as (Strike & { src: number | null })[]) sim.strikes.push({ ...k, src: byId(k.src as unknown as number | null) });
     sim.spawners = snap.spawners as Spawner[];
     (snap.items as number[]).forEach((n, k) => (sim.items[k] = n));
-    sim.lastBuild = snap.lastBuild as Sim['lastBuild'];
+    // (saves from before co-op players each had their own undo hold one build, not a list)
+    const lb = snap.lastBuild as Sim['lastBuild'] | Sim['lastBuild'][number];
+    sim.lastBuild = Array.isArray(lb) ? [lb[0] ?? null, lb[1] ?? null] : [lb ?? null, null];
     sim.waveDamage = new Map(snap.waveDamage as [number, number][]);
     (snap.pSrc as (number | null)[]).forEach((i, p) => (sim.pSrc[p] = byId(i)));
     (snap.eBurnBy as (number | null)[]).forEach((i, e) => (sim.eBurnBy[e] = byId(i)));
@@ -1425,8 +1444,8 @@ export class Sim {
 
   // ============================================================ commands
 
-  /** The most recent build, refundable in full for a few seconds (undo). */
-  private lastBuild: { id: number; tick: number } | null = null;
+  /** Each player's most recent build (0: host or solo, 1: co-op guest), refundable in full for a few seconds (undo). */
+  private lastBuild: ({ id: number; tick: number } | null)[] = [null, null];
   static readonly UNDO_TICKS = 5 * 60;
 
   tower(id: number): Tower | null {
@@ -1446,8 +1465,9 @@ export class Sim {
     return !this.spawning && this.attackers === 0;
   }
 
-  get canUndo(): boolean {
-    const b = this.lastBuild;
+  /** Can player `p` (0, or 1 for the co-op guest) take back their last build? */
+  canUndo(p = 0): boolean {
+    const b = this.lastBuild[p ? 1 : 0];
     return !!b && this.ticks - b.tick <= Sim.UNDO_TICKS && this.towerById.get(b.id)?.level === 0;
   }
 
@@ -1455,9 +1475,11 @@ export class Sim {
   exec(cmd: Command): boolean {
     switch (cmd.t) {
       case 'place': {
+        // (a replay made by another version, or a confused co-op peer, may name a tower this game doesn't have)
+        if (!TOWERS[cmd.type]) return false;
         const t = this.place(cmd.type, cmd.col, cmd.row);
         if (t && cmd.by) t.owner = cmd.by;
-        else if (t) this.lastBuild = { id: t.id, tick: this.ticks };
+        else if (t) this.lastBuild[cmd.p ? 1 : 0] = { id: t.id, tick: this.ticks };
         return !!t;
       }
       case 'sell': {
@@ -1529,14 +1551,21 @@ export class Sim {
         this.startNextWave();
         return true;
       case 'undo': {
-        if (!this.canUndo) return false;
-        const t = this.towerById.get(this.lastBuild!.id)!;
+        const p = cmd.p ? 1 : 0;
+        if (!this.canUndo(p)) return false;
+        const t = this.towerById.get(this.lastBuild[p]!.id)!;
         const refund = t.spent;
         this.sell(t);
         this.money += refund - this.sellValue(t); // full refund
-        this.lastBuild = null;
+        this.lastBuild[p] = null;
         return true;
       }
+      // carrying on after the win is a command like any other, so replays and co-op follow it
+      case 'endless':
+        if (!this.victory || this.endless) return false;
+        this.endless = true;
+        this.victory = false;
+        return true;
       case 'stress':
         this.stress(3000);
         return true;
@@ -3485,6 +3514,9 @@ export class Sim {
       }
     } else if (item === 1) {
       const mine = towerIndex('mine');
+      // a command that fails must leave no trace (only successful ones are logged): give the random numbers back
+      const rng = this.rng as unknown as { s: number };
+      const s0 = rng.s;
       let placed = 0;
       for (let tries = 0; tries < 40 && placed < 6; tries++) {
         const a = this.rng.next() * TWO_PI;
@@ -3492,7 +3524,10 @@ export class Sim {
         const t = this.place(mine, Math.floor((x + Math.cos(a) * r) / TILE), Math.floor((y + Math.sin(a) * r) / TILE), true);
         if (t) placed++;
       }
-      if (!placed) return false;
+      if (!placed) {
+        rng.s = s0;
+        return false;
+      }
     } else {
       this.money += 40 + 15 * this.wave;
       this.burst(x, y, 0xffd84a, 14, FX_GLOW, 1);

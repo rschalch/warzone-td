@@ -31,6 +31,7 @@ export type NetMsg =
   | { m: 'hash'; tick: number; hash: number }
   | { m: 'start'; config: GameConfig }
   | { m: 'speed'; speed: number }
+  | { m: 'endless' }
   | { m: 'chat'; text: string }
   | { m: 'bye' };
 
@@ -62,6 +63,8 @@ export class Session {
   private sentUpTo = -1;
   private outbox: LoggedCommand[] = [];
   private hashes = new Map<number, number>();
+  /** Co-op: a player chose to carry on after the win; applied on each side at the tick of its win. */
+  private keepGoing = false;
 
   constructor(config: GameConfig, opts: { replay?: LoggedCommand[]; link?: Link; restore?: Record<string, unknown>; log?: LoggedCommand[] } = {}) {
     this.config = config;
@@ -79,6 +82,11 @@ export class Session {
     return this.replay ? 'replay' : this.link ? 'coop' : 'local';
   }
 
+  /** This player's index: 0 alone or hosting, 1 the co-op guest. */
+  get player(): number {
+    return this.link?.player ?? 0;
+  }
+
   get finished(): boolean {
     return this.sim.gameOver || (this.sim.victory && !this.sim.endless);
   }
@@ -93,6 +101,15 @@ export class Session {
     }
     if (this.replay) return;
     if (this.link) {
+      if (cmd.t === 'endless') {
+        // both games stand still at the tick of the win, so nothing scheduled would ever come due
+        this.link.send({ m: 'endless' });
+        this.keepGoing = true;
+        this.settleEndless();
+        return;
+      }
+      // each player takes back only their own builds
+      if (cmd.t === 'place' || cmd.t === 'undo') cmd = { ...cmd, p: this.link.player };
       const tick = Math.max(this.sim.ticks + INPUT_DELAY, this.sentUpTo + 1);
       this.schedule(tick, this.link.player, cmd);
       this.outbox.push({ tick, cmd: cmd as Command });
@@ -108,6 +125,22 @@ export class Session {
     if (local) this.results.push({ cmd, ok });
   }
 
+  /** Co-op: carries on once this side has won too (the partner may have got there first). */
+  private settleEndless(): void {
+    if (!this.keepGoing || !this.sim.victory) return;
+    this.keepGoing = false;
+    this.apply({ t: 'endless' }, false);
+  }
+
+  /** Replays: the recorded commands due at the current tick. */
+  private replayDue(): void {
+    const sim = this.sim;
+    while (this.replayAt < this.replay!.length && this.replay![this.replayAt].tick <= sim.ticks) {
+      const c = this.replay![this.replayAt++];
+      if (c.tick === sim.ticks) this.apply(c.cmd, false);
+    }
+  }
+
   private schedule(tick: number, player: number, cmd: SessionCommand): void {
     let list = this.pending.get(tick);
     if (!list) this.pending.set(tick, (list = []));
@@ -121,6 +154,9 @@ export class Session {
       this.peerUpTo = Math.max(this.peerUpTo, msg.upTo);
     } else if (msg.m === 'speed') {
       this.speed = msg.speed;
+    } else if (msg.m === 'endless') {
+      this.keepGoing = true;
+      this.settleEndless();
     } else if (msg.m === 'hash') {
       const mine = this.hashes.get(msg.tick);
       if (mine !== undefined && mine !== msg.hash) this.desync = true;
@@ -132,10 +168,7 @@ export class Session {
   private stepOnce(): boolean {
     const sim = this.sim;
     if (this.replay) {
-      while (this.replayAt < this.replay.length && this.replay[this.replayAt].tick <= sim.ticks) {
-        const c = this.replay[this.replayAt++];
-        if (c.tick === sim.ticks) this.apply(c.cmd, false);
-      }
+      this.replayDue();
     } else if (this.link) {
       if (this.peerUpTo < sim.ticks) return false;
       const due = this.pending.get(sim.ticks);
@@ -151,6 +184,9 @@ export class Session {
     }
     if (this.finished) return true;
     sim.step();
+    // a game that carried on after its win: the order came at the tick of the win, before the game stops there
+    if (this.replay && this.finished) this.replayDue();
+    if (this.keepGoing) this.settleEndless();
     if (this.link && sim.ticks % HASH_EVERY === 0) {
       const h = sim.stateHash();
       this.hashes.set(sim.ticks, h);

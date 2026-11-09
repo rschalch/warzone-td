@@ -1,5 +1,5 @@
 import { Application, Container, type Texture } from 'pixi.js';
-import type { NetLink } from './app/net';
+import { NetLink } from './app/net';
 import { computeScore, getProfile, recordGame, saveCustomMap } from './app/profile';
 import { Session, type SessionCommand } from './app/session';
 import { onSettings, settings, updateSettings } from './app/settings';
@@ -400,15 +400,43 @@ function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
   }
   link?.close();
   link = opts.link ?? null;
-  session = new Session(cfg, { link: opts.link, replay: opts.replay?.log, restore: opts.restore, log: opts.log });
-  const s = session.sim;
+  try {
+    session = new Session(cfg, { link: opts.link, replay: opts.replay?.log, restore: opts.restore, log: opts.log });
+    showGame(session, opts);
+  } catch (e) {
+    // a damaged or foreign replay link, a save from another version: back to the menu, and say why
+    console.error(e);
+    if (opts.restore) void idbSet('save', undefined);
+    const why = opts.restore
+      ? 'That saved game is from another version of the game and can’t be continued.'
+      : opts.replay ? 'That replay can’t be played: the link is damaged or from another version of the game.' : 'That game could not be started.';
+    dropGame();
+    void showMain(why);
+  }
+}
+
+/** Ends the running game without a result (it could not be built, or it broke). */
+function dropGame(): void {
+  link?.close();
+  link = null;
+  session = null;
+  minimap?.destroy();
+  minimap = null;
+  buildView();
+  clearSelection();
+  placing = -1;
+  crashed = false;
+}
+
+function showGame(game: Session, opts: StartOpts): void {
+  const cfg = game.config;
+  const s = game.sim;
   s.fxScale = QUALITY[settings.quality];
   background?.destroy(true);
   background = buildBackground(s.map, app.renderer);
   projection = makeProjection(cameraMode);
   buildView();
   // the detailed (eroded) terrain is built in a worker and swapped in when ready
-  const game = session;
   void refineBackground(s.map, app.renderer).then((tex) => {
     if (!tex) return;
     if (session !== game || !view) return tex.destroy(true);
@@ -429,7 +457,7 @@ function startGame(cfg: GameConfig, opts: StartOpts = {}): void {
   endlessFrom = 0;
   wasClear = true;
   lastSpeed = 1;
-  session.speed = opts.restore ? 0 : 1;
+  game.speed = opts.restore ? 0 : 1;
   if (link) {
     link.onClose = () => {
       session?.dropLink();
@@ -500,7 +528,7 @@ let saving = false;
 
 /** Saves the running solo game (snapshot + log) so it can be continued after a reload. */
 async function saveGame(): Promise<void> {
-  if (!session || session.mode !== 'local' || session.finished || saving || session.sim.wave === 0) return;
+  if (!session || crashed || session.mode !== 'local' || session.finished || saving || session.sim.wave === 0) return;
   saving = true;
   await idbSet('save', { config: session.config, snapshot: session.sim.snapshot(), log: session.log, wave: session.sim.wave, at: Date.now() });
   saving = false;
@@ -576,14 +604,8 @@ async function showEnd(win: boolean): Promise<void> {
     overlay.querySelector('#endmsg')!.textContent = ok ? `Copied (${Math.round(url.length / 1024)} KB link).` : url;
   };
   const endless = overlay.querySelector<HTMLButtonElement>('#endless');
-  if (endless) endless.onclick = () => {
-    s.endless = true;
-    s.victory = false;
-    endlessFrom = s.wave;
-    endShown = false;
-    sound.setMusic(true);
-    hideMenus();
-  };
+  // (a command: replays and the co-op partner carry on too; frame() takes the end screen down)
+  if (endless) endless.onclick = () => issue({ t: 'endless' });
 }
 
 let replayFrom: Replay | undefined;
@@ -1095,7 +1117,38 @@ function banner(): string {
   return '';
 }
 
+/** Set when a frame threw: the game stands still (and is not saved) until the player reloads or leaves it. */
+let crashed = false;
+
+/** An error in a frame would stop Pixi's ticker for good and leave a frozen picture: stop the game and say so. */
 function frame(): void {
+  if (crashed) return;
+  try {
+    runFrame();
+  } catch (e) {
+    crashed = true;
+    console.error(e);
+    const saved = session?.mode === 'local' && session.sim.wave > 0;
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `
+      <div class="card" style="max-width:460px;text-align:center">
+        <h1>SOMETHING BROKE</h1>
+        <p>The game hit an error and has stopped${saved ? '. It was saved at the start of this wave: reload and continue from there' : ''}.</p>
+        <p class="d">${esc(String((e as Error)?.message ?? e).slice(0, 200))}</p>
+        <div class="actions" style="justify-content:center">
+          <button id="reload" class="primary">Reload</button>
+          <button id="leave">Menu</button>
+        </div>
+      </div>`;
+    overlay.querySelector<HTMLButtonElement>('#reload')!.onclick = () => location.reload();
+    overlay.querySelector<HTMLButtonElement>('#leave')!.onclick = () => {
+      dropGame();
+      void showMain();
+    };
+  }
+}
+
+function runFrame(): void {
   const t0 = performance.now();
   const realDt = Math.min(0.1, app.ticker.deltaMS / 1000);
   if (keysHeld.size) {
@@ -1112,6 +1165,15 @@ function frame(): void {
     if (slowmo > 0) slowmo -= realDt;
     session.timeScale = slowmo > 0 ? 0.3 : 1;
     session.advance(realDt);
+    // carrying on after the win: our own order, the co-op partner's, a replay's, or a restored endless game
+    if (s.endless && !endlessFrom) {
+      endlessFrom = s.wave;
+      if (endShown) {
+        endShown = false;
+        sound.setMusic(true);
+        hideMenus();
+      }
+    }
     const t1 = performance.now();
     simTimeAcc += t1 - t0;
     handleResults();
@@ -1139,7 +1201,7 @@ function frame(): void {
       heroSelected, multi, box: view.box, showAuras: keysHeld.has('Tab'), enemy, units,
     });
     hud.update(s, {
-      placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, banner: banner(), enemy, units,
+      placing, selected, multi, heroSelected, speed: session.speed, mode: session.mode, player: session.player, banner: banner(), enemy, units,
       ground: cellCol >= 0 && cellRow >= 0 && cellCol < COLS && cellRow < ROWS ? s.map.grid[cellRow * COLS + cellCol] : -1,
       aiming: targeting && targeting.kind !== 'mines' ? { kind: targeting.kind, index: targeting.index } : null,
     });
@@ -1271,6 +1333,7 @@ async function boot(): Promise<void> {
     },
     Session,
     Sim: SimClass,
+    NetLink,
     randomMap,
     /** Tower type and unit kind by name, for scripted checks. */
     towerIndex: (kind: string) => TOWERS.findIndex((t) => t.kind === kind),

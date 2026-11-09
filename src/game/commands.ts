@@ -3,8 +3,11 @@
 // replays, saved games and co-op lockstep are built on.
 
 export type Command =
-  /** `by` is set when the AI partner builds (it owns the tower; the player's undo skips it). */
-  | { t: 'place'; type: number; col: number; row: number; by?: number }
+  /**
+   * `by` is set when the AI partner builds (it owns the tower; the player's undo skips it); `p` is the
+   * co-op player who built (1: the guest; set by the session), so each takes back only their own.
+   */
+  | { t: 'place'; type: number; col: number; row: number; by?: number; p?: number }
   | { t: 'sell'; ids: number[] }
   | { t: 'upgrade'; ids: number[] }
   | { t: 'mode'; id: number; mode: number }
@@ -19,7 +22,9 @@ export type Command =
   | { t: 'unitMines'; ids: number[]; x: number; y: number }
   | { t: 'fire'; id: number; x: number; y: number }
   | { t: 'wave' }
-  | { t: 'undo' }
+  | { t: 'undo'; p?: number }
+  /** Carry on after the win (endless waves). */
+  | { t: 'endless' }
   | { t: 'item'; item: number; x: number; y: number }
   | { t: 'heroMove'; x: number; y: number }
   | { t: 'heroAbility'; ability: number; x: number; y: number }
